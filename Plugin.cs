@@ -1,35 +1,60 @@
-﻿using System;
+using System;
 using System.IO;
-using System.Linq;
-using System.Reflection;
-using System.Timers;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
-using JetBrains.Annotations;
 using ServerSync;
-using UnityEngine;
 
-namespace ServerSyncModTemplate;
+namespace Homestead;
 
 [BepInPlugin(ModGUID, ModName, ModVersion)]
-public class ServerSyncModTemplatePlugin : BaseUnityPlugin
+[BepInDependency("com.jotunn.jotunn", BepInDependency.DependencyFlags.HardDependency)]
+public partial class HomesteadPlugin : BaseUnityPlugin
 {
-    internal const string ModName = "ServerSyncModTemplate";
+    internal const string ModName = "Homestead";
     internal const string ModVersion = "1.0.0";
-    internal const string Author = "{Azumatt}";
-    private const string ModGUID = $"{Author}.{ModName}";
-    private static string ConfigFileName = $"{ModGUID}.cfg";
-    private static string ConfigFileFullPath = Paths.ConfigPath + Path.DirectorySeparatorChar + ConfigFileName;
+    internal const string Author = "sighsorry";
+    internal const string ModGUID = $"{Author}.{ModName}";
+    internal const string DataStorageFolder = "Homestead";
+    internal const string BlueprintStorageFolder = "Blueprints";
+    internal const string ServerBlueprintStorageFolder = "ServerBlueprints";
+    internal const string PlanGhostStorageFolder = "PlanGhosts";
+    internal const string BlueprintStoreStorageFolder = "Store";
+    internal const string ZoneBundleStorageFolder = "ZoneBundles";
+    internal const string ActivityFileName = "activity.yml";
+
+    private const string ConfigFileName = $"{ModGUID}.cfg";
+    private const string ZoneRuleFileName = "zones.yml";
+    private const long ReloadDelay = TimeSpan.TicksPerSecond;
+
+    private static readonly string ConfigFileFullPath = Path.Combine(Paths.ConfigPath, ConfigFileName);
+    internal static readonly string DataStorageFullPath = Path.Combine(Paths.ConfigPath, DataStorageFolder);
+    internal static readonly string BlueprintStorageFullPath = Path.Combine(DataStorageFullPath, BlueprintStorageFolder);
+    internal static readonly string ServerBlueprintStorageFullPath = Path.Combine(DataStorageFullPath, ServerBlueprintStorageFolder);
+    internal static readonly string PlanGhostStorageFullPath = Path.Combine(ServerBlueprintStorageFullPath, PlanGhostStorageFolder);
+    internal static readonly string BlueprintStoreStorageFullPath = Path.Combine(ServerBlueprintStorageFullPath, BlueprintStoreStorageFolder);
+    internal static readonly string ZoneBundleStorageFullPath = Path.Combine(DataStorageFullPath, ZoneBundleStorageFolder);
+    internal static readonly string ZoneRuleFileFullPath = Path.Combine(DataStorageFullPath, ZoneRuleFileName);
+
+    internal static readonly ManualLogSource HomesteadLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
+    internal static readonly ConfigSync ConfigSync = new(ModGUID)
+    {
+        DisplayName = ModName,
+        CurrentVersion = ModVersion,
+        MinimumRequiredVersion = ModVersion
+    };
+
     internal static string ConnectionError = "";
+    internal static HomesteadPlugin Instance { get; private set; } = null!;
+
     private readonly Harmony _harmony = new(ModGUID);
-    public static readonly ManualLogSource ServerSyncModTemplateLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
-    private static readonly ConfigSync ConfigSync = new(ModGUID) { DisplayName = ModName, CurrentVersion = ModVersion, MinimumRequiredVersion = ModVersion };
-    private FileSystemWatcher _watcher;
     private readonly object _reloadLock = new();
+
+    private FileSystemWatcher? _configWatcher;
+    private FileSystemWatcher? _zoneRuleWatcher;
     private DateTime _lastConfigReloadTime;
-    private const long RELOAD_DELAY = 10000000; // One second
+    private DateTime _lastZoneRuleReloadTime;
 
     public enum Toggle
     {
@@ -39,50 +64,72 @@ public class ServerSyncModTemplatePlugin : BaseUnityPlugin
 
     public void Awake()
     {
+        Instance = this;
+
         bool saveOnSet = Config.SaveOnConfigSet;
         Config.SaveOnConfigSet = false;
 
-        // Uncomment the line below to use the LocalizationManager for localizing your mod.
-        // Make sure to populate the English.yml file in the translation folder with your keys to be localized and the values associated before uncommenting!.
-        //Localizer.Load(); // Use this to initialize the LocalizationManager (for more information on LocalizationManager, see the LocalizationManager documentation https://github.com/blaxxun-boop/LocalizationManager#example-project).
+        BindConfiguration();
 
-        _serverConfigLocked = config("1 - General", "Lock Configuration", Toggle.On, "If on, the configuration is locked and can be changed by server admins only.");
-        _ = ConfigSync.AddLockingConfigEntry(_serverConfigLocked);
+        HomesteadLocalization.Load(HomesteadLogger);
+        EnsureDataDirectories();
+        HomesteadFeatureBootstrap.Initialize(HomesteadLogger, _harmony);
+        SetupWatchers();
 
-
-        Assembly assembly = Assembly.GetExecutingAssembly();
-        _harmony.PatchAll(assembly);
-        SetupWatcher();
-
-        Config.Save();
+        SaveWithRespectToConfigSet();
         if (saveOnSet)
         {
-            Config.SaveOnConfigSet = saveOnSet;
+            Config.SaveOnConfigSet = true;
         }
     }
 
     private void OnDestroy()
     {
         SaveWithRespectToConfigSet();
-        _watcher?.Dispose();
+        HomesteadFeatureBootstrap.Shutdown();
+
+        _configWatcher?.Dispose();
+        _zoneRuleWatcher?.Dispose();
     }
 
-    private void SetupWatcher()
+    private void Update()
     {
-        _watcher = new FileSystemWatcher(Paths.ConfigPath, ConfigFileName);
-        _watcher.Changed += ReadConfigValues;
-        _watcher.Created += ReadConfigValues;
-        _watcher.Renamed += ReadConfigValues;
-        _watcher.IncludeSubdirectories = true;
-        _watcher.SynchronizingObject = ThreadingHelper.SynchronizingObject;
-        _watcher.EnableRaisingEvents = true;
+        HomesteadFeatureBootstrap.Update();
+    }
+
+    private void SetupWatchers()
+    {
+        EnsureDataDirectories();
+
+        _configWatcher = new FileSystemWatcher(Paths.ConfigPath, ConfigFileName);
+        _configWatcher.Changed += ReadConfigValues;
+        _configWatcher.Created += ReadConfigValues;
+        _configWatcher.Renamed += ReadConfigValues;
+        _configWatcher.IncludeSubdirectories = false;
+        _configWatcher.SynchronizingObject = ThreadingHelper.SynchronizingObject;
+        _configWatcher.EnableRaisingEvents = true;
+
+        _zoneRuleWatcher = new FileSystemWatcher(DataStorageFullPath, ZoneRuleFileName);
+        _zoneRuleWatcher.Changed += ReadZoneRuleValues;
+        _zoneRuleWatcher.Created += ReadZoneRuleValues;
+        _zoneRuleWatcher.Renamed += ReadZoneRuleValues;
+        _zoneRuleWatcher.IncludeSubdirectories = false;
+        _zoneRuleWatcher.SynchronizingObject = ThreadingHelper.SynchronizingObject;
+        _zoneRuleWatcher.EnableRaisingEvents = true;
+    }
+
+    private static void EnsureDataDirectories()
+    {
+        Directory.CreateDirectory(DataStorageFullPath);
+        Directory.CreateDirectory(BlueprintStorageFullPath);
+        Directory.CreateDirectory(PlanGhostStorageFullPath);
+        Directory.CreateDirectory(BlueprintStoreStorageFullPath);
+        Directory.CreateDirectory(ZoneBundleStorageFullPath);
     }
 
     private void ReadConfigValues(object sender, FileSystemEventArgs e)
     {
-        DateTime now = DateTime.Now;
-        long time = now.Ticks - _lastConfigReloadTime.Ticks;
-        if (time < RELOAD_DELAY)
+        if (!CanReload(ref _lastConfigReloadTime))
         {
             return;
         }
@@ -91,114 +138,159 @@ public class ServerSyncModTemplatePlugin : BaseUnityPlugin
         {
             if (!File.Exists(ConfigFileFullPath))
             {
-                ServerSyncModTemplateLogger.LogWarning("Config file does not exist. Skipping reload.");
+                HomesteadLogger.LogWarning("Config file does not exist. Skipping reload.");
                 return;
             }
 
             try
             {
-                ServerSyncModTemplateLogger.LogDebug("Reloading configuration...");
-                SaveWithRespectToConfigSet(true);
-                ServerSyncModTemplateLogger.LogInfo("Configuration reload complete.");
+                HomesteadLogger.LogDebug("Reloading configuration...");
+                ReloadConfigFromDisk();
+                HomesteadLogger.LogInfo("Configuration reload complete.");
             }
             catch (Exception ex)
             {
-                ServerSyncModTemplateLogger.LogError($"Error reloading configuration: {ex.Message}");
+                HomesteadLogger.LogError($"Error reloading configuration: {ex}");
             }
         }
+    }
 
-        _lastConfigReloadTime = now;
+    private void ReadZoneRuleValues(object sender, FileSystemEventArgs e)
+    {
+        if (!CanReload(ref _lastZoneRuleReloadTime))
+        {
+            return;
+        }
+
+        lock (_reloadLock)
+        {
+            try
+            {
+                ZoneLimitConfiguration.ReloadFromDisk();
+            }
+            catch (Exception ex)
+            {
+                HomesteadLogger.LogError($"Error reloading zone rule YAML: {ex}");
+            }
+        }
+    }
+
+    private static bool CanReload(ref DateTime lastReloadTime)
+    {
+        DateTime now = DateTime.Now;
+        if (now.Ticks - lastReloadTime.Ticks < ReloadDelay)
+        {
+            return false;
+        }
+
+        lastReloadTime = now;
+        return true;
     }
 
     private void SaveWithRespectToConfigSet(bool reload = false)
     {
         bool originalSaveOnSet = Config.SaveOnConfigSet;
         Config.SaveOnConfigSet = false;
+
         if (reload)
+        {
             Config.Reload();
-        Config.Save();
-        if (originalSaveOnSet)
-        {
-            Config.SaveOnConfigSet = originalSaveOnSet;
         }
-        
-        // If you want to do something once localization completes, LocalizationManager has a hook for that.
-        /*Localizer.OnLocalizationComplete += () =>
-        {
-            // Do something
-            ItemManagerModTemplateLogger.LogDebug("OnLocalizationComplete called");
-        };*/
+
+        Config.Save();
+        Config.SaveOnConfigSet = originalSaveOnSet;
     }
 
-
-    #region ConfigOptions
-
-    private static ConfigEntry<Toggle> _serverConfigLocked = null!;
-
-    private ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description, bool synchronizedSetting = true)
+    private void ReloadConfigFromDisk()
     {
-        ConfigDescription extendedDescription = new(description.Description + (synchronizedSetting ? " [Synced with Server]" : " [Not Synced with Server]"), description.AcceptableValues, description.Tags);
-        ConfigEntry<T> configEntry = Config.Bind(group, name, value, extendedDescription);
-        //var configEntry = Config.Bind(group, name, value, description);
+        bool originalSaveOnSet = Config.SaveOnConfigSet;
+        Config.SaveOnConfigSet = false;
+        Config.Reload();
+        Config.SaveOnConfigSet = originalSaveOnSet;
+    }
 
+    internal ConfigEntry<T> config<T>(
+        string group,
+        string name,
+        T value,
+        ConfigDescription description,
+        bool synchronizedSetting = true)
+    {
+        ConfigDescription extendedDescription = new(
+            description.Description + (synchronizedSetting ? " [Synced with Server]" : " [Client Only]"),
+            description.AcceptableValues,
+            description.Tags);
+
+        ConfigEntry<T> configEntry = Config.Bind(group, name, value, extendedDescription);
         SyncedConfigEntry<T> syncedConfigEntry = ConfigSync.AddConfigEntry(configEntry);
         syncedConfigEntry.SynchronizedConfig = synchronizedSetting;
-
         return configEntry;
     }
 
-    private ConfigEntry<T> config<T>(string group, string name, T value, string description, bool synchronizedSetting = true)
+    internal ConfigEntry<T> config<T>(
+        string group,
+        string name,
+        T value,
+        string description,
+        bool synchronizedSetting = true)
     {
         return config(group, name, value, new ConfigDescription(description), synchronizedSetting);
     }
 
-    private class ConfigurationManagerAttributes
-    {
-        [UsedImplicitly] public int? Order = null!;
-        [UsedImplicitly] public bool? Browsable = null!;
-        [UsedImplicitly] public string? Category = null!;
-        [UsedImplicitly] public Action<ConfigEntryBase>? CustomDrawer = null!;
-    }
-
-    class AcceptableShortcuts() : AcceptableValueBase(typeof(KeyboardShortcut))
-    {
-        public override object Clamp(object value) => value;
-        public override bool IsValid(object value) => true;
-
-        public override string ToDescriptionString() => $"# Acceptable values: {string.Join(", ", UnityInput.Current.SupportedKeyCodes)}";
-    }
-
-    #endregion
 }
 
-public static class KeyboardExtensions
+public static class ToggleExtensions
 {
-    extension(KeyboardShortcut shortcut)
-    {
-        public bool IsKeyDown()
-        {
-            return shortcut.MainKey != KeyCode.None && Input.GetKeyDown(shortcut.MainKey) && shortcut.Modifiers.All(Input.GetKey);
-        }
-
-        public bool IsKeyHeld()
-        {
-            return shortcut.MainKey != KeyCode.None && Input.GetKey(shortcut.MainKey) && shortcut.Modifiers.All(Input.GetKey);
-        }
-    }
-}
-
-public static class ToggleExtentions
-{
-    extension(ServerSyncModTemplatePlugin.Toggle value)
+    extension(HomesteadPlugin.Toggle value)
     {
         public bool IsOn()
         {
-            return value == ServerSyncModTemplatePlugin.Toggle.On;
+            return value == HomesteadPlugin.Toggle.On;
         }
 
         public bool IsOff()
         {
-            return value == ServerSyncModTemplatePlugin.Toggle.Off;
+            return value == HomesteadPlugin.Toggle.Off;
         }
     }
+}
+
+public enum BlueprintAzuCraftyBoxesPullMode
+{
+    Off,
+    ConfirmOnly,
+    OpenAndConfirm
+}
+
+public enum BlueprintTerrainSupportMode
+{
+    Off,
+    On,
+    AdminDebug
+}
+
+public enum BlueprintAreaSaveCreatorMode
+{
+    AllCreators,
+    OwnedAndCreatorless,
+    OwnedOnly
+}
+
+public enum BlueprintStoreIdentityMode
+{
+    PlayerId,
+    SteamId
+}
+
+public enum BuildCameraDistanceMode
+{
+    Fixed,
+    ComfortScaled
+}
+
+public enum BuildCameraRestrictionMode
+{
+    Off,
+    CameraNeedsCoziness,
+    CameraPickUpNeedsCoziness
 }

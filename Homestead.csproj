@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')"/>
     <Import Project="environment.props"/>
@@ -8,8 +8,8 @@
         <ProjectGuid>{4358610B-F3F4-4843-B7AF-98B7BC60DCDE}</ProjectGuid>
         <OutputType>Library</OutputType>
         <AppDesignerFolder>Properties</AppDesignerFolder>
-        <RootNamespace>ServerSyncModTemplate</RootNamespace>
-        <AssemblyName>ServerSyncModTemplate</AssemblyName>
+        <RootNamespace>Homestead</RootNamespace>
+        <AssemblyName>Homestead</AssemblyName>
         <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
         <FileAlignment>512</FileAlignment>
         <LangVersion>preview</LangVersion>
@@ -18,7 +18,7 @@
     <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
         <PlatformTarget>AnyCPU</PlatformTarget>
         <DebugSymbols>true</DebugSymbols>
-        <DebugType>full</DebugType>
+        <DebugType>portable</DebugType>
         <Optimize>false</Optimize>
         <OutputPath>bin\Debug\</OutputPath>
         <DefineConstants>DEBUG;TRACE</DefineConstants>
@@ -28,7 +28,7 @@
     </PropertyGroup>
     <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
         <PlatformTarget>AnyCPU</PlatformTarget>
-        <DebugType>pdbonly</DebugType>
+        <DebugType>portable</DebugType>
         <Optimize>true</Optimize>
         <OutputPath>bin\Release\</OutputPath>
         <DefineConstants>TRACE</DefineConstants>
@@ -62,6 +62,12 @@
             </PropertyGroup>
         </When>
     </Choose>
+    <PropertyGroup>
+        <JotunnPath Condition="'$(JotunnPath)' == '' And Exists('$(BepInExPath)\plugins\ValheimModding-Jotunn\Jotunn.dll')">$(BepInExPath)\plugins\ValheimModding-Jotunn\Jotunn.dll</JotunnPath>
+        <JotunnPath Condition="'$(JotunnPath)' == '' And Exists('$(APPDATA)\com.kesomannen.gale\cache\ValheimModding-Jotunn\2.29.0\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll')">$(APPDATA)\com.kesomannen.gale\cache\ValheimModding-Jotunn\2.29.0\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll</JotunnPath>
+        <JotunnPath Condition="'$(JotunnPath)' == '' And Exists('$(APPDATA)\com.kesomannen.gale\valheim\profiles\asdf\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll')">$(APPDATA)\com.kesomannen.gale\valheim\profiles\asdf\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll</JotunnPath>
+        <JotunnPath Condition="'$(JotunnPath)' == '' And Exists('$(APPDATA)\com.kesomannen.gale\valheim\profiles\zonesaviortest\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll')">$(APPDATA)\com.kesomannen.gale\valheim\profiles\zonesaviortest\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll</JotunnPath>
+    </PropertyGroup>
     <ItemGroup>
         <Reference Include="0Harmony">
             <HintPath>$(BepInExPath)\core\0Harmony.dll</HintPath>
@@ -78,8 +84,15 @@
         <Reference Include="BepInEx">
             <HintPath>$(BepInExPath)\core\BepInEx.dll</HintPath>
         </Reference>
+        <Reference Include="Jotunn" Condition="'$(JotunnPath)' != ''">
+            <HintPath>$(JotunnPath)</HintPath>
+            <Private>False</Private>
+        </Reference>
         <Reference Include="ServerSync">
             <HintPath>Libs\ServerSync.dll</HintPath>
+        </Reference>
+        <Reference Include="Splatform">
+            <HintPath>$(CorlibPath)\Splatform.dll</HintPath>
         </Reference>
         <Reference Include="System"/>
         <Reference Include="System.Core"/>
@@ -94,6 +107,12 @@
         <Reference Include="UnityEngine.CoreModule">
             <HintPath>$(CorlibPath)\UnityEngine.CoreModule.dll</HintPath>
         </Reference>
+        <Reference Include="UnityEngine.PhysicsModule">
+            <HintPath>$(CorlibPath)\UnityEngine.PhysicsModule.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.ParticleSystemModule">
+            <HintPath>$(CorlibPath)\UnityEngine.ParticleSystemModule.dll</HintPath>
+        </Reference>
         <Reference Include="UnityEngine.IMGUIModule">
             <HintPath>$(CorlibPath)\UnityEngine.IMGUIModule.dll</HintPath>
         </Reference>
@@ -103,15 +122,94 @@
         <Reference Include="UnityEngine.UI">
             <HintPath>$(CorlibPath)\UnityEngine.UI.dll</HintPath>
         </Reference>
+        <Reference Include="UnityEngine.TextRenderingModule">
+            <HintPath>$(CorlibPath)\UnityEngine.TextRenderingModule.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.UIModule">
+            <HintPath>$(CorlibPath)\UnityEngine.UIModule.dll</HintPath>
+        </Reference>
         <Reference Include="Unity.TextMeshPro">
             <HintPath>$(GamePath)\valheim_Data\Managed\Unity.TextMeshPro.dll</HintPath>
         </Reference>
+        <Reference Include="System.IO.Compression" />
+        <Reference Include="System.IO.Compression.FileSystem" />
+        <Reference Include="YamlDotNet">
+            <HintPath>$(NuGetPackageRoot)yamldotnet\16.3.0\lib\net47\YamlDotNet.dll</HintPath>
+        </Reference>
     </ItemGroup>
     <ItemGroup>
-        <Compile Include="LocalizationManager.cs"/>
+        <Compile Include="AutoArchiveCommands.cs"/>
+        <Compile Include="AutoArchiveModels.cs"/>
+        <Compile Include="AutoArchiveScanner.cs"/>
+        <Compile Include="AutoArchiveService.cs"/>
+        <Compile Include="AutoArchiveStore.cs"/>
+        <Compile Include="AzuCraftyBoxesCompat.cs"/>
+        <Compile Include="BlueprintTerrainApplier.cs"/>
+        <Compile Include="BuildCounterHud.cs"/>
+        <Compile Include="HomesteadConfigBinding.cs"/>
+        <Compile Include="HomesteadConfigFacades.cs"/>
+        <Compile Include="HomesteadFeatureBootstrap.cs"/>
+        <Compile Include="HomesteadLocalization.cs"/>
+        <Compile Include="HomesteadTimestamp.cs"/>
+        <Compile Include="PlayerActivityTracker.cs"/>
         <Compile Include="Plugin.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
         <Compile Include="VersionHandshake.cs"/>
+        <Compile Include="ZoneAreaCameraZoomGuard.cs"/>
+        <Compile Include="ZoneAreaToolController.cs"/>
+        <Compile Include="ZoneAreaDismantleTool.cs"/>
+        <Compile Include="ZoneAreaSelection.cs"/>
+        <Compile Include="ZoneAreaToolShared.cs"/>
+        <Compile Include="ZoneAreaToolStatusHud.cs"/>
+        <Compile Include="ZoneAreaTargetOverlay.cs"/>
+        <Compile Include="ZoneBoundaryOverlay.cs"/>
+        <Compile Include="ZoneBuildKeyHints.cs"/>
+        <Compile Include="ZoneBuildCamera.cs"/>
+        <Compile Include="ZoneBuildCameraDemisterPatch.cs"/>
+        <Compile Include="ZoneBuildCameraDvergerLight.cs"/>
+        <Compile Include="ZoneBuildCameraPatches.cs"/>
+        <Compile Include="ZoneBuildCameraWardCompat.cs"/>
+        <Compile Include="ZoneBlueprintCommands.cs"/>
+        <Compile Include="ZoneDvergrCirclet.cs"/>
+        <Compile Include="ZoneBlueprintModels.cs"/>
+        <Compile Include="ZoneBlueprintGhostOwner.cs"/>
+        <Compile Include="ZoneBlueprintNetworkPayload.cs"/>
+        <Compile Include="ZoneBlueprintPlanRpc.cs"/>
+        <Compile Include="ZoneBlueprintPlacementTool.cs"/>
+        <Compile Include="ZoneBlueprintChestCommands.cs"/>
+        <Compile Include="ZoneBlueprintPlanChest.cs"/>
+        <Compile Include="ZoneBlueprintPreviewBuilder.cs"/>
+        <Compile Include="ZoneBlueprintSaveTool.cs"/>
+        <Compile Include="ZoneBlueprintChestLifecycle.cs"/>
+        <Compile Include="ZoneBlueprintChestMapPins.cs"/>
+        <Compile Include="ZoneBlueprintChestZdoRegistry.cs"/>
+        <Compile Include="ZoneBlueprintStoreActions.cs"/>
+        <Compile Include="ZoneBlueprintStore.cs"/>
+        <Compile Include="ZoneBlueprintStoreChest.cs"/>
+        <Compile Include="ZoneBlueprintStoreChestPatches.cs"/>
+        <Compile Include="ZoneBlueprintStoreChestPrefab.cs"/>
+        <Compile Include="ZoneBlueprintStoreChestRegistry.cs"/>
+        <Compile Include="ZoneBlueprintStoreDraftRepository.cs"/>
+        <Compile Include="ZoneBlueprintStorePanelLayout.cs"/>
+        <Compile Include="ZoneBlueprintStorePurchaseEscrow.cs"/>
+        <Compile Include="ZoneBlueprintStorePreviewPayload.cs"/>
+        <Compile Include="ZoneBlueprintVisuals.cs"/>
+        <Compile Include="ZoneBundleCommands.cs"/>
+        <Compile Include="ZoneBundleModels.cs"/>
+        <Compile Include="ZoneBundleSerialization.cs"/>
+        <Compile Include="ZoneBundleTerrain.cs"/>
+        <Compile Include="ZoneBundleTerrainApplier.cs"/>
+        <Compile Include="ZoneBundleZdoData.cs"/>
+        <Compile Include="ZoneGridSnap.cs"/>
+        <Compile Include="ZonePlacementOffset.cs"/>
+        <Compile Include="ZoneLimitConfiguration.cs"/>
+        <Compile Include="ZoneMaterialEscrow.cs"/>
+        <Compile Include="ZonePlacementAdjust.cs"/>
+        <Compile Include="ZonePieceCounter.cs"/>
+        <Compile Include="ZoneTerrainContactSampler.cs"/>
+        <Compile Include="ZoneToolAim.cs"/>
+        <Compile Include="ZonePlayerIdentity.cs"/>
+        <Compile Include="ZoneWorldEditTerrainCompat.cs"/>
     </ItemGroup>
     <ItemGroup>
         <Content Include=".gitignore"/>
@@ -126,6 +224,7 @@
         <Content Include="Thunderstore\icon.png"/>
         <Content Include="Thunderstore\manifest.json"/>
         <EmbeddedResource Include="translations\English.yml"/>
+        <EmbeddedResource Include="translations\Korean.yml"/>
         <Content Include="UpdateManifest.ps1"/>
     </ItemGroup>
     <ItemGroup>
@@ -177,7 +276,7 @@
     </Target>
     <Target Name="CopyReadMeToTSFolder" AfterTargets="CopyOutputDLL" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') ">
         <Warning Text="README.md not found in project directory. A default README.md file will be created for the Thunderstore package" Condition="!Exists('README.md')"/>
-        <WriteLinesToFile File="README.md" Lines="Default Readme file from one of Azumatt's Templates. Replace this with actual content." Overwrite="false" Condition="!Exists('README.md')"/>
+        <WriteLinesToFile File="README.md" Lines="Homestead archives inactive player build zones and restores saved zone bundles for Valheim servers." Overwrite="false" Condition="!Exists('README.md')"/>
         <Copy SourceFiles="README.md" DestinationFolder="$(PackageDir)" OverwriteReadOnlyFiles="true"/>
         <Copy SourceFiles="README.md" DestinationFolder="$(ProjectDir)\Thunderstore" OverwriteReadOnlyFiles="true"/>
     </Target>
@@ -194,10 +293,11 @@ if (!System.IO.File.Exists(ManifestFile))
 string content = @"{
   ""name"": """ + AssemblyName + @""",
   ""version_number"": ""1.0.0"",
-  ""website_url"": ""https://discord.gg/pdHgy6Bsng"",
-  ""description"": ""Your mod description goes here. Do not forget to replace the icon.png file with your own. Must be 256x256. Your Readme.md file will be copied from the one in your project folder."",
+  ""website_url"": """",
+  ""description"": ""Archives inactive player build zones and restores saved zone bundles for Valheim servers."",
   ""dependencies"": [
-    ""denikson-BepInExPack_Valheim-5.4.2105""
+    ""denikson-BepInExPack_Valheim-5.4.2202"",
+    ""ValheimModding-Jotunn-2.29.0""
 ]
 }";
 System.IO.File.WriteAllText(ManifestFile, content);

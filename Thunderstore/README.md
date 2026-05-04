@@ -4,21 +4,35 @@ Homestead is a Valheim BepInEx/Jotunn mod for dedicated-server homestead mainten
 
 It combines inactive-player zone archiving, zone bundle restore, native WearNTear blueprints, blueprint trading, area save/dismantle tools, zone limits, build camera controls, placement helpers, zone UI, and Dvergr circlet quality-of-life features.
 
-![](https://i.ibb.co/qM3Bkd39/areasave.gif) <br>
-![](https://i.ibb.co/Wpnhwd60/blueprintbuild.gif) <br>
-![](https://i.ibb.co/Pv4LZnKm/blueprintstore.gif) <br>
-![](https://i.ibb.co/ymQJrHRd/buildcamera.gif) <br>
-![](https://i.ibb.co/qYddZS39/buyandwithdraw.gif) <br>
-![](https://i.ibb.co/Qjz7SDZg/dismantle.gif) <br>
-![](https://i.ibb.co/G3czYNtr/zonearchive.gif) <br>
-![](https://i.ibb.co/FL5GVNbn/01-hammertab.png) <br>
-![](https://i.ibb.co/C5vLNbRs/fullshot.png) <br>
-![](https://i.ibb.co/Y7QdKQ7P/store.png) <br>
+## Requirements
 
+Required runtime dependencies:
 
+- `denikson-BepInExPack_Valheim`
+- `ValheimModding-Jotunn`
 
-Folder structure
-```
+Bundled into `Homestead.dll`:
+
+- `ServerSync`
+- `YamlDotNet`
+
+Only BepInExPack Valheim and Jotunn are runtime dependencies. ServerSync and YamlDotNet are bundled, and external admin/building mods are not required for Homestead's current zone bundle, blueprint, store, or archive workflows.
+
+If Circlet Extended is installed, Homestead disables its own Dvergr circlet handling to avoid feature conflicts.
+
+## Who Should Install It?
+
+| Target | Recommendation |
+| --- | --- |
+| Dedicated server | Required for zone archiving, zone reset, server blueprint store data, synced configs, and authoritative commands. |
+| Admin client | Recommended for in-game admin commands, zone restore workflows, and visual tools. |
+| Regular client | Required for the Homestead hammer tab, native blueprints, blueprint store UI, placement helpers, zone UI, Dvergr circlet features, and synced client/server behavior. |
+
+## Data Folders
+
+Homestead stores generated data under one profile folder:
+
+```text
 BepInEx/config/Homestead/
   Blueprints/
   ServerBlueprints/
@@ -29,6 +43,8 @@ BepInEx/config/Homestead/
   activity.yml
   zones.yml
 ```
+
+There are no per-world subfolders. Back up `BepInEx/config/Homestead/` if you want to preserve saved blueprints, store listings, archive records, diagnostic reports, activity data, and zone bundles.
 
 ## Feature Overview
 
@@ -46,6 +62,7 @@ BepInEx/config/Homestead/
 | Build camera | Adds a configurable build camera with server-side restrictions and optional Dvergr light follow. |
 | Zone UI | Shows the current zone number and ground boundary for client-side zone lookup. |
 | Dvergr circlet | Adds per-item light toggle, range/intensity adjustment, usage-based durability drain, repair station config, and tooltip hints. |
+| Localization | Uses Jotunn localization with English and Korean translation files. |
 
 ## Player Workflows
 
@@ -303,3 +320,8 @@ hs_archive_scan reset
 Homestead is safest on a dedicated server because archive scans, ZDO inspection, file writes, and reset workflows need authoritative server state.
 
 Normal clients do not run inactive-player archive/reset logic. Clients install Homestead for synced config, build tools, blueprint UI, store UI, key hints, zone UI, and Dvergr circlet features.
+
+## More Documentation
+
+- [Command Reference](docs/Commands.md)
+- [Dependency And Runtime Notes](docs/DependenciesAndRuntimeNotes.md)

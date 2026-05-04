@@ -1,23 +1,23 @@
-﻿{
-  "author": "Azumatt",
+{
+  "author": "sighsorry",
   "classifications": [
     "ServerSync Mod"
   ],
-  "name": "ServerSyncModTemplate",
-  "identity": "Server.Sync.Mod.Template",
-  "shortName": "ssmt",
+  "name": "Homestead",
+  "identity": "sighsorry.Homestead",
+  "shortName": "zonesavior",
   "tags": {
     "language": "C#",
     "type": "project"
   },
-  "sourceName": "ServerSyncModTemplate",
+  "sourceName": "Homestead",
   "preferNameDirectory": "true",
   "symbols": {
     "AuthorName": {
       "type": "parameter",
       "description": "The name of the person that you want to call the author of the mod.",
       "datatype": "string",
-      "defaultValue": "Azumatt",
+      "defaultValue": "sighsorry",
       "replaces": "{Azumatt}"
     }
   },
@@ -25,7 +25,7 @@
     {
       "modifiers": [
         {
-          "exclude": [ ".git/**", ".idea/**", ".vs/**", "obj/**", "bin/**", "ServerSyncModTemplate.sln", "ServerSyncModTemplate.sln.DotSettings.user" ]
+          "exclude": [ ".git/**", ".idea/**", ".vs/**", "obj/**", "bin/**", "Homestead.sln", "Homestead.sln.DotSettings.user" ]
         }
       ]
     }

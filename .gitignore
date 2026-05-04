@@ -1,8 +1,9 @@
 bin/
 obj/
 /packages/
+*.zip
 riderModule.iml
 /_ReSharper.Caches/
 .idea/
 .vs/
-ServerSyncModTemplate.sln.DotSettings.user
+ZoneSavior.sln.DotSettings.user
