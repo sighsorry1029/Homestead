@@ -28,6 +28,8 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private const string ProgressSfxPrefab = "sfx_build_hammer_wood";
     private const string ConfirmSfxPrefab = "vfx_StaminaUpgrade";
     private const float CleanupCheckInterval = 30f;
+    private const float FailedPlanReloadRetryInterval = 5f;
+    private const float FailedPlanWarningInterval = 60f;
     private static int _lastConfirmInputFrame = -1;
 
     private ZNetView? _nview;
@@ -45,9 +47,13 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private bool _confirmInProgress;
     private string _lastReadySignature = "";
     private string _lastPreviewStyleSignature = "";
+    private string _failedBlueprintName = "";
+    private string _lastPlanLoadFailure = "";
     private int _lastInventorySignatureHash;
     private bool _hasInventorySignature;
     private float _nextCleanupCheck;
+    private float _nextFailedPlanReloadAt;
+    private float _nextFailedPlanWarningAt;
 
     private void Awake()
     {
@@ -129,6 +135,13 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         Touch();
         Tick();
 
+        long creator = _nview.GetZDO().GetLong(ZDOVars.s_creator, 0L);
+        if (creator != 0L && player.GetPlayerID() != creator)
+        {
+            Message(player, HomesteadLocalization.Text("hs_blueprint_other_creator"), MessageHud.MessageType.Center);
+            return true;
+        }
+
         string name = GetBlueprintName();
         if (!ReloadPlan())
         {
@@ -144,7 +157,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         Dictionary<string, int> deposited = GetDepositedMaterials();
         if (_confirmInProgress)
         {
-            Message(player, "Blueprint confirmation is already in progress.", MessageHud.MessageType.Center);
+            Message(player, HomesteadLocalization.Text("hs_blueprint_confirmation_in_progress"), MessageHud.MessageType.Center);
             return true;
         }
 
@@ -161,7 +174,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     private IEnumerator ConfirmAsync(Player player, string name, Vector3 anchorPosition, Quaternion anchorRotation, Dictionary<string, int> deposited)
     {
-        ZoneBundleCommandResult result = ZoneBundleCommandResult.Fail("Blueprint confirmation did not complete.");
+        HomesteadCommandResult result = HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete"));
         yield return ZoneBlueprintCommands.FinalizeBlueprintPlanAsync(name, player, anchorPosition, anchorRotation, deposited, value => result = value);
         _confirmInProgress = false;
         Message(player, result.Message, result.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
@@ -299,6 +312,11 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return true;
         }
 
+        if (ShouldSkipFailedPlanReload(name, force))
+        {
+            return false;
+        }
+
         if (!TryGetAnchorTransform(out Vector3 anchorPosition, out Quaternion anchorRotation))
         {
             _blueprint = null;
@@ -319,6 +337,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             _stationRequirements = ZoneBlueprintCommands.CollectCraftingStations(_plan);
             _loadedBlueprintName = name;
             _lastReadySignature = "";
+            ClearPlanLoadFailure();
             return true;
         }
         catch (Exception localEx) when (ZoneBlueprintPlanRpc.TryGetCachedPreview(name, out ZoneBlueprintFile serverPreview))
@@ -331,11 +350,12 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
                 _stationRequirements = ZoneBlueprintCommands.CollectCraftingStations(_plan);
                 _loadedBlueprintName = name;
                 _lastReadySignature = "";
+                ClearPlanLoadFailure();
                 return true;
             }
             catch (Exception previewEx)
             {
-                HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to load Homestead server blueprint preview '{name}': {previewEx.Message} (local: {localEx.Message})");
+                RecordPlanLoadFailure(name, $"Failed to load Homestead server blueprint preview '{name}': {previewEx.Message} (local: {localEx.Message})", logWarning: true);
             }
 
             _blueprint = null;
@@ -349,8 +369,9 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
         catch (Exception ex)
         {
-            HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to load Homestead blueprint plan '{name}': {ex.Message}");
             ZoneBlueprintPlanRpc.RequestPreview(name);
+            RecordPlanLoadFailure(name, $"Failed to load Homestead blueprint plan '{name}': {ex.Message}", logWarning: !ZoneBlueprintPlanRpc.IsPreviewPending(name));
+
             _blueprint = null;
             _plan = null;
             _requirements = [];
@@ -360,6 +381,41 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             ClearPreview();
             return false;
         }
+    }
+
+    private bool ShouldSkipFailedPlanReload(string name, bool force)
+    {
+        if (force || _plan != null || !string.Equals(_failedBlueprintName, name, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return Time.realtimeSinceStartup < _nextFailedPlanReloadAt;
+    }
+
+    private void RecordPlanLoadFailure(string name, string message, bool logWarning)
+    {
+        float now = Time.realtimeSinceStartup;
+        bool messageChanged = !string.Equals(_lastPlanLoadFailure, message, StringComparison.Ordinal);
+        _failedBlueprintName = name;
+        _lastPlanLoadFailure = message;
+        _nextFailedPlanReloadAt = now + FailedPlanReloadRetryInterval;
+
+        if (!logWarning || (!messageChanged && now < _nextFailedPlanWarningAt))
+        {
+            return;
+        }
+
+        HomesteadPlugin.HomesteadLogger.LogWarning(message);
+        _nextFailedPlanWarningAt = now + FailedPlanWarningInterval;
+    }
+
+    private void ClearPlanLoadFailure()
+    {
+        _failedBlueprintName = "";
+        _lastPlanLoadFailure = "";
+        _nextFailedPlanReloadAt = 0f;
+        _nextFailedPlanWarningAt = 0f;
     }
 
     private void AbsorbContainerMaterials()
@@ -1023,18 +1079,12 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             ReadRequiredFloat(zdo, AnchorRotYKey),
             ReadRequiredFloat(zdo, AnchorRotZKey),
             ReadRequiredFloat(zdo, AnchorRotWKey));
-        return IsFinite(position.x) && IsFinite(position.y) && IsFinite(position.z) &&
-               IsFinite(rotation.x) && IsFinite(rotation.y) && IsFinite(rotation.z) && IsFinite(rotation.w);
+        return ZoneTransformPayload.IsFinite(position) && ZoneTransformPayload.IsFinite(rotation);
     }
 
     private static float ReadRequiredFloat(ZDO zdo, string key)
     {
         return zdo.GetFloat(key, float.NaN);
-    }
-
-    private static bool IsFinite(float value)
-    {
-        return !float.IsNaN(value) && !float.IsInfinity(value);
     }
 
     private void OnDestroyed()
@@ -1297,6 +1347,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     {
         private static void Postfix(InventoryGrid __instance)
         {
+            ZoneBlueprintChestInventoryScroll.TryKeepContainerGridAtTop(__instance);
             InventoryGui gui = InventoryGui.instance;
             if (gui == null || gui.m_containerGrid != __instance || !TryGetAnchor(gui.m_currentContainer, out ZoneBlueprintPlanAnchor anchor))
             {
@@ -1456,57 +1507,62 @@ internal static class ZoneBlueprintPlanChestPrefab
         RegisterPrefab();
     }
 
-    public static ZoneBundleCommandResult PlacePlanChest(string blueprintName, Player player, Vector3 anchor, Quaternion anchorRotation, Vector3 chestPosition, Quaternion chestRotation)
+    public static HomesteadCommandResult PlacePlanChest(string blueprintName, Player player, Vector3 anchor, Quaternion anchorRotation, Vector3 chestPosition, Quaternion chestRotation)
     {
         long playerId = player.GetPlayerID();
         return PlacePlanChest(
             blueprintName,
             playerId,
-            ZonePlayerIdentity.ResolveLocalPlatformId(playerId),
+            HomesteadPlayerIdentity.ResolveLocalPlatformId(playerId),
             anchor,
             anchorRotation,
             chestPosition,
             chestRotation);
     }
 
-    public static ZoneBundleCommandResult PlacePlanChest(string blueprintName, long playerId, string ownerPlatformId, Vector3 anchor, Quaternion anchorRotation, Vector3 chestPosition, Quaternion chestRotation)
+    public static HomesteadCommandResult PlacePlanChest(string blueprintName, long playerId, string ownerPlatformId, Vector3 anchor, Quaternion anchorRotation, Vector3 chestPosition, Quaternion chestRotation, long vfxExcludePeer = 0L)
     {
         RegisterPrefab();
         if (!ZoneBlueprintChestLifecycle.CanPlaceChests(ownerPlatformId, requestedCount: 1, out string limitReason))
         {
-            return ZoneBundleCommandResult.Fail(limitReason);
+            return HomesteadCommandResult.Fail(limitReason);
         }
 
         GameObject? prefab = GetPrefab();
         if (!prefab)
         {
-            return ZoneBundleCommandResult.Fail("Homestead blueprint chest prefab is not ready yet.");
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_chest_prefab_not_ready"));
         }
 
-        GameObject chest = Object.Instantiate(prefab, chestPosition, chestRotation);
-        Piece piece = chest.GetComponent<Piece>();
-        if (piece != null)
+        GameObject? chest = null;
+        try
         {
-            piece.SetCreator(playerId);
-            piece.m_placeEffect.Create(chest.transform.position, chest.transform.rotation, chest.transform);
-        }
+            chest = Object.Instantiate(prefab, chestPosition, chestRotation);
+            Piece piece = chest.GetComponent<Piece>();
+            if (piece != null)
+            {
+                piece.SetCreator(playerId);
+            }
 
-        ZNetView nview = chest.GetComponent<ZNetView>();
-        if (nview != null && nview.IsValid())
+            ZNetView nview = chest.GetComponent<ZNetView>();
+            if (nview != null && nview.IsValid())
+            {
+                ZoneBlueprintChestLifecycle.SetOwnerPlatformId(nview.GetZDO(), ownerPlatformId);
+            }
+
+            ZoneBlueprintPlanAnchor planAnchor = chest.GetComponent<ZoneBlueprintPlanAnchor>() ?? chest.AddComponent<ZoneBlueprintPlanAnchor>();
+            planAnchor.SetPlan(blueprintName, anchor, anchorRotation);
+            ZoneChestPlacement.PlayPlaceEffect(chest);
+            ZoneChestPlacement.SafeOnPlaced(chest, _logger, "Blueprint chest");
+            ZoneBlueprintChestVfx.BroadcastPlace(ZoneBlueprintChestVfx.ModePlan, ZoneTransformPayload.From(chestPosition, chestRotation), vfxExcludePeer);
+            ZoneLimitCompat.RebuildCounts();
+            return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_blueprint_chest_placed", blueprintName));
+        }
+        catch (Exception ex)
         {
-            ZoneBlueprintChestLifecycle.SetOwnerPlatformId(nview.GetZDO(), ownerPlatformId);
+            ZoneChestPlacement.DestroySpawned(chest);
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_blueprint_chest_place_failed", ex.Message));
         }
-
-        WearNTear wearNTear = chest.GetComponent<WearNTear>();
-        if (wearNTear != null)
-        {
-            wearNTear.OnPlaced();
-        }
-
-        ZoneBlueprintPlanAnchor planAnchor = chest.GetComponent<ZoneBlueprintPlanAnchor>() ?? chest.AddComponent<ZoneBlueprintPlanAnchor>();
-        planAnchor.SetPlan(blueprintName, anchor, anchorRotation);
-        ZonePieceCounter.RebuildCounts();
-        return ZoneBundleCommandResult.Ok($"Placed Homestead blueprint chest for '{blueprintName}'. Add materials, then crouch-use the chest to confirm.");
     }
 
     public static GameObject? CreatePreview()
@@ -1538,6 +1594,12 @@ internal static class ZoneBlueprintPlanChestPrefab
     {
         RegisterPrefab();
         return GetPrefab()?.GetComponent<Piece>()?.m_icon;
+    }
+
+    public static bool PlayPlaceEffect(Vector3 position, Quaternion rotation)
+    {
+        RegisterPrefab();
+        return ZoneChestPlacement.PlayPlaceEffect(GetPrefab(), position, rotation);
     }
 
     private static void RegisterPrefab()

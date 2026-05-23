@@ -67,14 +67,14 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
         _active = true;
         _blueprintName = blueprintName;
         _suppressInputFrames = 2;
-        _placementYaw = player.transform.rotation.eulerAngles.y;
+        _placementYaw = 0f;
         _chestRotation = GetAimYawRotation(player);
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
 
         if (!ZoneBlueprintCommands.TryLoadBlueprint(blueprintName, out ZoneBlueprintFile blueprint))
         {
-            Message(player, $"Homestead blueprint '{blueprintName}' could not be loaded.");
+            Message(player, HomesteadLocalization.Format("hs_blueprint_load_failed_plain", blueprintName));
             DeactivateInternal();
             return;
         }
@@ -105,7 +105,7 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
         }
 
         Player player = Player.m_localPlayer;
-        if (player == null || !IsHoldingBuildTool(player))
+        if (player == null || !ZonePlacementInput.IsHoldingBuildTool(player))
         {
             DeactivateInternal();
             return;
@@ -142,28 +142,8 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
             ResetOffsets();
         }
 
-        float scroll = Input.GetAxis("Mouse ScrollWheel");
-        if (Mathf.Abs(scroll) > 0.001f)
-        {
-            ZoneAreaCameraZoomGuard.SuppressWheelZoomThisFrame();
-            float deltaYaw = scroll > 0f ? PlacementControlConfig.RotationStep : -PlacementControlConfig.RotationStep;
-            _placementYaw = Mathf.Repeat(_placementYaw + deltaYaw, 360f);
-        }
-
-        if (PlacementControlConfig.IsPlacementAdjustModifierHeld() &&
-            (Input.GetKeyDown(KeyCode.PageUp) || Input.GetKeyDown(KeyCode.PageDown)))
-        {
-            float direction = Input.GetKeyDown(KeyCode.PageUp) ? 1f : -1f;
-            _heightOffset = RoundHeightOffset(_heightOffset + direction * PlacementControlConfig.HeightStep);
-        }
-
-        Vector3 nudge = PlacementControlConfig.IsPlacementAdjustModifierHeld()
-            ? ZonePlacementOffset.GetArrowKeyLocalNudge()
-            : Vector3.zero;
-        if (nudge.sqrMagnitude > 0.0001f)
-        {
-            _horizontalOffset += nudge * PlacementControlConfig.HorizontalStep;
-        }
+        ZonePlacementInput.ApplyYawScroll(ref _placementYaw);
+        ZonePlacementInput.ApplyOffset(ref _horizontalOffset, ref _heightOffset);
 
         _anchorRotation = Quaternion.Euler(0f, _placementYaw, 0f);
         _anchor = GetAdjustedAnchor(aimPoint, _anchorRotation);
@@ -197,7 +177,7 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
             return;
         }
 
-        ZoneBundleCommandResult result = ZoneBlueprintCommands.PlaceBlueprintPlanAt(_blueprintName, player, _anchor, _anchorRotation, _chestRotation);
+        HomesteadCommandResult result = ZoneBlueprintCommands.PlaceBlueprintPlanAt(_blueprintName, player, _anchor, _anchorRotation, _chestRotation);
         Message(player, result.Message, result.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
     }
 
@@ -320,30 +300,9 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
         return GetYawRotation(player.transform.rotation);
     }
 
-    private static float RoundHeightOffset(float value)
-    {
-        return Mathf.Round(value * 1000f) / 1000f;
-    }
-
-    private static bool IsHoldingBuildTool(Player player)
-    {
-        ItemDrop.ItemData rightItem = ((Humanoid)player).GetRightItem();
-        return rightItem?.m_shared?.m_buildPieces != null;
-    }
-
     private static bool ShouldBlockInput()
     {
-        if (Hud.IsPieceSelectionVisible() ||
-            global::Console.IsVisible() ||
-            TextInput.IsVisible() ||
-            Menu.IsVisible() ||
-            InventoryGui.IsVisible() ||
-            Minimap.IsOpen())
-        {
-            return true;
-        }
-
-        return Chat.instance != null && Chat.instance.HasFocus();
+        return ZoneAreaToolShared.ShouldBlockInput();
     }
 
     private static void Message(Player player, string message)

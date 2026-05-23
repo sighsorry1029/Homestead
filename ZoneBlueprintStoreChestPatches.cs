@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -78,7 +78,7 @@ internal static class ZoneBlueprintStoreChestPatchHelper
 
     public static void MessagePayoutDepositBlocked()
     {
-        Player.m_localPlayer?.Message(MessageHud.MessageType.TopLeft, "Blueprint payout chests only allow withdrawals.");
+        Player.m_localPlayer?.Message(MessageHud.MessageType.TopLeft, HomesteadLocalization.Text("hs_store_payout_withdrawals_only"));
     }
 }
 
@@ -178,6 +178,7 @@ internal static class ZoneBlueprintStoreInventoryGridUpdateGuiPatch
 {
     private static void Postfix(InventoryGrid __instance)
     {
+        ZoneBlueprintChestInventoryScroll.TryKeepContainerGridAtTop(__instance);
         InventoryGui gui = InventoryGui.instance;
         if (gui == null ||
             gui.m_containerGrid != __instance ||

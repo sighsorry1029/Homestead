@@ -11,19 +11,19 @@ internal static class BlueprintTerrainApplier
         Quaternion inverseAnchorRotation,
         IEnumerable<TerrainContactSource> sources)
     {
-        List<TerrainWorldContact> contacts = ZoneTerrainContactSampler.CaptureWorldContacts(
+        List<TerrainWorldContact> contacts = BlueprintTerrainContactSampler.CaptureWorldContacts(
             sources,
             BlueprintConfig.TerrainSupportContactTolerance);
-        return ZoneTerrainContactSampler.ToBlueprintContacts(anchor, inverseAnchorRotation, contacts);
+        return BlueprintTerrainContactSampler.ToBlueprintContacts(anchor, inverseAnchorRotation, contacts);
     }
 
     public static bool ApplySupportContacts(IEnumerable<Vector3> supportContacts)
     {
-        return ZoneBundleTerrain.ApplyWorldSupportContacts(supportContacts);
+        return HomesteadTerrainSupport.ApplyWorldSupportContacts(supportContacts);
     }
 
     public static IEnumerator ApplySupportContactsAsync(IEnumerable<Vector3> supportContacts, System.Action<bool> onComplete)
     {
-        return ZoneBundleTerrain.ApplyWorldSupportContactsAsync(supportContacts, onComplete);
+        return HomesteadTerrainSupport.ApplyWorldSupportContactsAsync(supportContacts, onComplete);
     }
 }

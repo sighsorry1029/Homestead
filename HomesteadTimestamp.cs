@@ -2,7 +2,6 @@ using System;
 using System.Globalization;
 
 namespace Homestead;
-
 internal static class HomesteadTimestamp
 {
     public static string Now()

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using BepInEx.Configuration;
 using HarmonyLib;
 using TMPro;
@@ -13,11 +15,16 @@ internal static class ZoneBuildKeyHints
 {
     private const string TemplatePath = "BuildHints/Keyboard/AltPlace";
     private const string FallbackTemplatePath = "BuildHints/Keyboard/Snap";
+    private const float BuildCameraConditionRefreshInterval = 0.35f;
 
     private static GameObject? _offsetHint;
     private static GameObject? _gridHint;
     private static GameObject? _toolHint;
     private static GameObject? _buildCameraHint;
+    private static readonly Dictionary<int, HintWidgets> HintWidgetCache = [];
+    private static Player? _cachedBuildCameraConditionPlayer;
+    private static float _nextBuildCameraConditionRefresh;
+    private static string _cachedBuildCameraCondition = "";
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(KeyHints), nameof(KeyHints.Awake))]
@@ -53,6 +60,7 @@ internal static class ZoneBuildKeyHints
         _gridHint = CreateHint(template, parent, "HomesteadGridHint", 1);
         _toolHint = CreateHint(template, parent, "HomesteadToolHint", 2);
         _buildCameraHint = CreateHint(template, parent, "HomesteadBuildCameraHint", 3);
+        HintWidgetCache.Clear();
     }
 
     private static GameObject CreateHint(Transform template, Transform parent, string name, int siblingIndex)
@@ -87,16 +95,17 @@ internal static class ZoneBuildKeyHints
         string buildCameraCondition = "";
         if (showBuildHints && player != null && ZoneBuildCamera.IsEnabled())
         {
-            buildCameraCondition = ZoneBuildCamera.GetKeyHintConditionText(player);
+            buildCameraCondition = GetCachedBuildCameraConditionText(player);
         }
 
+        GetPlacementAdjustHintKeys(out string adjustKey0, out string adjustKey1, out float adjustHintWidth);
         SetHint(
             _offsetHint,
             showBuildHints && (PlacementControlConfig.PlacementAdjustEnabled || zoneToolActive),
             HomesteadLocalization.Text("hs_keyhint_adjust_offset"),
-            FormatPlacementAdjustKey("PgUp/PgDn"),
-            FormatPlacementAdjustKey("Arrows"),
-            PlacementControlConfig.PlacementAdjustModifierKey.MainKey == KeyCode.None ? 104f : 132f);
+            adjustKey0,
+            adjustKey1,
+            adjustHintWidth);
 
         SetHint(
             _gridHint,
@@ -108,15 +117,17 @@ internal static class ZoneBuildKeyHints
 
         if (ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive)
         {
+            string scaleKey = string.IsNullOrWhiteSpace(PlacementControlConfig.AreaUniformScaleInputLabel) ? "" : "+" + PlacementControlConfig.PlacementAdjustModifierLabel;
+            string depthKey = BlueprintConfig.AreaToolDepthModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolDepthModifierLabel;
+            string widthKey = BlueprintConfig.AreaToolWidthModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolWidthModifierLabel;
+            string shapeKeys = string.Join("/", new[] { scaleKey, depthKey, widthKey }.Where(value => !string.IsNullOrWhiteSpace(value)));
             SetHint(
                 _toolHint,
                 showBuildHints,
-                string.IsNullOrWhiteSpace(BlueprintConfig.AreaToolRotationInputLabel)
-                    ? HomesteadLocalization.Text("hs_keyhint_area_size")
-                    : HomesteadLocalization.Text("hs_keyhint_area_size_rotate"),
+                HomesteadLocalization.Text("hs_keyhint_area_shape"),
                 "Wheel",
-                BlueprintConfig.AreaToolRotationInputLabel,
-                118f);
+                shapeKeys,
+                166f);
         }
         else if (ZoneBlueprintPlacementTool.IsActive)
         {
@@ -148,58 +159,112 @@ internal static class ZoneBuildKeyHints
 
     private static void HideHomesteadHints()
     {
-        _offsetHint?.SetActive(false);
-        _gridHint?.SetActive(false);
-        _toolHint?.SetActive(false);
-        _buildCameraHint?.SetActive(false);
+        SetActiveIfChanged(_offsetHint, false);
+        SetActiveIfChanged(_gridHint, false);
+        SetActiveIfChanged(_toolHint, false);
+        SetActiveIfChanged(_buildCameraHint, false);
     }
 
     private static void SetHint(GameObject hint, bool visible, string label, string key0, string key1, float preferredTextWidth)
     {
-        hint.SetActive(visible);
+        HintWidgets widgets = GetHintWidgets(hint);
+        SetActiveIfChanged(hint, visible);
+        widgets.LastVisible = visible;
+
         if (!visible)
         {
             return;
         }
 
-        SetText(hint.transform.Find("Text"), label, preferredTextWidth);
-        SetKeyText(hint, 0, key0);
-        SetKeyText(hint, 1, key1);
+        SetText(widgets, label, preferredTextWidth);
+        SetKeyText(widgets.Key0Root, widgets.Key0Text, key0, ref widgets.LastKey0);
+        SetKeyText(widgets.Key1Root, widgets.Key1Text, key1, ref widgets.LastKey1);
     }
 
-    private static void SetText(Transform? transform, string text, float preferredWidth)
+    private static void SetText(HintWidgets widgets, string text, float preferredWidth)
     {
-        if (transform == null || !transform.TryGetComponent(out TextMeshProUGUI label))
+        TextMeshProUGUI? label = widgets.Label;
+        if (label != null && !string.Equals(widgets.LastLabel, text, StringComparison.Ordinal))
         {
-            return;
+            Localization.instance?.RemoveTextFromCache(label);
+            label.text = text;
+            widgets.LastLabel = text;
         }
 
-        label.text = text;
-        if (transform.TryGetComponent(out LayoutElement layout))
+        LayoutElement? layout = widgets.Layout;
+        if (layout != null && Math.Abs(widgets.LastPreferredWidth - preferredWidth) > 0.1f)
         {
             layout.preferredWidth = preferredWidth;
+            widgets.LastPreferredWidth = preferredWidth;
         }
     }
 
-    private static void SetKeyText(GameObject hint, int index, string text)
+    private static void SetKeyText(Transform? keyRoot, TextMeshProUGUI? label, string text, ref string lastText)
     {
-        Transform? keyRoot = GetKeyRoot(hint, index);
         if (keyRoot == null)
         {
             return;
         }
 
-        keyRoot.gameObject.SetActive(!string.IsNullOrWhiteSpace(text));
-        Transform keyText = keyRoot.Find("Key");
-        if (keyText != null && keyText.TryGetComponent(out TextMeshProUGUI label))
+        SetActiveIfChanged(keyRoot.gameObject, !string.IsNullOrWhiteSpace(text));
+        if (label != null && !string.Equals(lastText, text, StringComparison.Ordinal))
         {
+            Localization.instance?.RemoveTextFromCache(label);
             label.text = text;
+            lastText = text;
         }
+    }
+
+    private static HintWidgets GetHintWidgets(GameObject hint)
+    {
+        int id = hint.GetInstanceID();
+        if (HintWidgetCache.TryGetValue(id, out HintWidgets widgets))
+        {
+            return widgets;
+        }
+
+        TextMeshProUGUI? label = FindLabelText(hint);
+        Transform? key0Root = GetKeyRoot(hint, 0);
+        Transform? key1Root = GetKeyRoot(hint, 1);
+        widgets = new HintWidgets
+        {
+            Label = label,
+            Layout = label != null && label.TryGetComponent(out LayoutElement layout) ? layout : null,
+            Key0Root = key0Root,
+            Key1Root = key1Root,
+            Key0Text = key0Root != null ? FindKeyText(key0Root) : null,
+            Key1Text = key1Root != null ? FindKeyText(key1Root) : null,
+            LastVisible = hint.activeSelf,
+            LastPreferredWidth = float.NaN
+        };
+        HintWidgetCache[id] = widgets;
+        return widgets;
+    }
+
+    private static void SetActiveIfChanged(GameObject? target, bool active)
+    {
+        if (target != null && target && target.activeSelf != active)
+        {
+            target.SetActive(active);
+        }
+    }
+
+    private static string GetCachedBuildCameraConditionText(Player player)
+    {
+        if (_cachedBuildCameraConditionPlayer != player || Time.unscaledTime >= _nextBuildCameraConditionRefresh)
+        {
+            _cachedBuildCameraConditionPlayer = player;
+            _cachedBuildCameraCondition = ZoneBuildCamera.GetKeyHintConditionText(player);
+            _nextBuildCameraConditionRefresh = Time.unscaledTime + BuildCameraConditionRefreshInterval;
+        }
+
+        return _cachedBuildCameraCondition;
     }
 
     private static Transform? GetKeyRoot(GameObject hint, int index)
     {
-        return hint.transform.Find(index == 0 ? "key_bkg" : $"key_bkg ({index})");
+        List<Transform> roots = FindKeyRoots(hint);
+        return index >= 0 && index < roots.Count ? roots[index] : null;
     }
 
     private static void EnsureKeyCount(GameObject hint, int count)
@@ -222,6 +287,69 @@ internal static class ZoneBuildKeyHints
         }
     }
 
+    private static TextMeshProUGUI? FindLabelText(GameObject hint)
+    {
+        TextMeshProUGUI[] texts = hint.GetComponentsInChildren<TextMeshProUGUI>(includeInactive: true);
+        return texts.FirstOrDefault(text => !IsKeyText(text.transform)) ??
+               texts.OrderByDescending(text => text.fontSize).FirstOrDefault();
+    }
+
+    private static TextMeshProUGUI? FindKeyText(Transform keyRoot)
+    {
+        return keyRoot.GetComponentsInChildren<TextMeshProUGUI>(includeInactive: true)
+            .FirstOrDefault(text => IsKeyText(text.transform)) ??
+               keyRoot.GetComponentInChildren<TextMeshProUGUI>(includeInactive: true);
+    }
+
+    private static List<Transform> FindKeyRoots(GameObject hint)
+    {
+        List<Transform> roots = hint.GetComponentsInChildren<Transform>(includeInactive: true)
+            .Where(transform => transform != hint.transform && IsKeyRoot(transform))
+            .OrderBy(transform => transform.GetSiblingIndex())
+            .ToList();
+        if (roots.Count > 0)
+        {
+            return roots;
+        }
+
+        return hint.GetComponentsInChildren<TextMeshProUGUI>(includeInactive: true)
+            .Where(text => IsKeyText(text.transform))
+            .Select(text => text.transform.parent ?? text.transform)
+            .Distinct()
+            .OrderBy(transform => transform.GetSiblingIndex())
+            .ToList();
+    }
+
+    private static bool IsKeyRoot(Transform transform)
+    {
+        string name = transform.name;
+        return name.IndexOf("key_bkg", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("keybkg", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("key background", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.Equals("key_bkg", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsKeyText(Transform transform)
+    {
+        if (transform.name.Equals("Key", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        Transform? current = transform.parent;
+        while (current != null)
+        {
+            if (IsKeyRoot(current))
+            {
+                return true;
+            }
+
+            current = current.parent;
+        }
+
+        return false;
+    }
+
     private static string FormatShortcut(KeyboardShortcut shortcut)
     {
         string text = shortcut.ToString();
@@ -233,10 +361,33 @@ internal static class ZoneBuildKeyHints
         return text.Replace(" + ", "+");
     }
 
-    private static string FormatPlacementAdjustKey(string key)
+    private static void GetPlacementAdjustHintKeys(out string key0, out string key1, out float preferredWidth)
     {
-        return PlacementControlConfig.PlacementAdjustModifierKey.MainKey == KeyCode.None
-            ? key
-            : $"{PlacementControlConfig.PlacementAdjustModifierLabel}+{key}";
+        if (PlacementControlConfig.PlacementAdjustModifierKey.MainKey == KeyCode.None)
+        {
+            key0 = "Arrows";
+            key1 = "PgUp/PgDn";
+            preferredWidth = 104f;
+            return;
+        }
+
+        key0 = PlacementControlConfig.PlacementAdjustModifierLabel;
+        key1 = "+Arrows/+PgUpDn";
+        preferredWidth = 128f;
+    }
+
+    private sealed class HintWidgets
+    {
+        public TextMeshProUGUI? Label;
+        public LayoutElement? Layout;
+        public Transform? Key0Root;
+        public Transform? Key1Root;
+        public TextMeshProUGUI? Key0Text;
+        public TextMeshProUGUI? Key1Text;
+        public bool LastVisible;
+        public string LastLabel = "";
+        public string LastKey0 = "";
+        public string LastKey1 = "";
+        public float LastPreferredWidth;
     }
 }

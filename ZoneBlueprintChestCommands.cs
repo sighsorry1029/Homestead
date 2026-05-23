@@ -13,7 +13,7 @@ internal static class ZoneBlueprintChestCommands
 
     private static ManualLogSource _logger = null!;
     private static bool _initialized;
-    private static bool _rpcsRegistered;
+    private static readonly ZoneRpcRegistrar RpcRegistrar = new();
 
     public static void Initialize(ManualLogSource logger)
     {
@@ -35,14 +35,11 @@ internal static class ZoneBlueprintChestCommands
 
     internal static void RegisterRpcs()
     {
-        if (_rpcsRegistered || ZRoutedRpc.instance == null)
+        RpcRegistrar.EnsureRegistered(routedRpc =>
         {
-            return;
-        }
-
-        _rpcsRegistered = true;
-        ZRoutedRpc.instance.Register<ZPackage>(RequestRpcName, RPC_HandleRequest);
-        ZRoutedRpc.instance.Register<ZPackage>(ResultRpcName, RPC_HandleResult);
+            routedRpc.Register<ZPackage>(RequestRpcName, RPC_HandleRequest);
+            routedRpc.Register<ZPackage>(ResultRpcName, RPC_HandleResult);
+        });
     }
 
     private static void HandleClearCommand(Terminal.ConsoleEventArgs args)
@@ -62,7 +59,7 @@ internal static class ZoneBlueprintChestCommands
 
         RegisterRpcs();
         ZPackage package = new();
-        package.Write(ZoneBundleSerialization.Serialize(request));
+        package.Write(HomesteadYaml.Serialize(request));
         ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(), RequestRpcName, package);
         context?.AddString($"{ClearCommand} request sent to server.");
     }
@@ -83,7 +80,7 @@ internal static class ZoneBlueprintChestCommands
             }
             else
             {
-                BlueprintChestCommandRequest request = ZoneBundleSerialization.Deserialize<BlueprintChestCommandRequest>(package.ReadString());
+                BlueprintChestCommandRequest request = HomesteadYaml.Deserialize<BlueprintChestCommandRequest>(package.ReadString());
                 result = Execute(request);
             }
         }
@@ -94,7 +91,7 @@ internal static class ZoneBlueprintChestCommands
         }
 
         ZPackage response = new();
-        response.Write(ZoneBundleSerialization.Serialize(result));
+        response.Write(HomesteadYaml.Serialize(result));
         ZRoutedRpc.instance.InvokeRoutedRPC(sender, ResultRpcName, response);
     }
 
@@ -107,7 +104,7 @@ internal static class ZoneBlueprintChestCommands
 
         try
         {
-            BlueprintChestCommandResult result = ZoneBundleSerialization.Deserialize<BlueprintChestCommandResult>(package.ReadString());
+            BlueprintChestCommandResult result = HomesteadYaml.Deserialize<BlueprintChestCommandResult>(package.ReadString());
             ShowResult(result, Console.instance);
         }
         catch (Exception ex)
@@ -167,14 +164,14 @@ internal static class ZoneBlueprintChestCommands
 
             if (!request.DryRun)
             {
-                ZoneBundleZdoHelper.Destroy(zdo);
+                SavedZdoHelper.Destroy(zdo);
                 result.Deleted++;
             }
         }
 
         if (!request.DryRun)
         {
-            ZoneBundleZdoHelper.FlushDestroyed();
+            SavedZdoHelper.FlushDestroyed();
         }
 
         result.Message = BuildMessage(result);

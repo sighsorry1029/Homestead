@@ -34,6 +34,7 @@ internal static class ZoneBuildCameraDvergerLight
     private static readonly BindingFlags StaticMethodFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
     private static readonly BindingFlags InstanceFieldFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
     private static readonly List<Light> TempLights = new();
+    private static readonly List<GameObject> TempVisualRoots = new();
     private static readonly HashSet<int> TempSourceIdSet = new();
     private static readonly List<int> TempRemoveSourceIds = new();
     private static CircletExtendedApi? _circletExtendedApi;
@@ -108,7 +109,7 @@ internal static class ZoneBuildCameraDvergerLight
 
     private static bool IsAnySupportedCircletEquipped(Player player)
     {
-        if (IsDvergrCircletItem(player.m_helmetItem))
+        if (ZoneDvergrCirclet.TryGetEquippedDvergrCirclet(player, out _))
         {
             return true;
         }
@@ -186,6 +187,21 @@ internal static class ZoneBuildCameraDvergerLight
         {
             AppendLightsFromRoot(vis.m_helmetItemInstance, output);
         }
+
+        if (ZoneDvergrCirclet.TryGetEquippedDvergrCirclet(player, out ItemDrop.ItemData? azuItem) &&
+            azuItem != null &&
+            AzuExtendedPlayerInventoryCompat.TryGetCustomEquipVisualRoots(vis, azuItem, TempVisualRoots))
+        {
+            foreach (GameObject root in TempVisualRoots)
+            {
+                if (root)
+                {
+                    AppendLightsFromRoot(root, output);
+                }
+            }
+        }
+
+        _ = ZoneDvergrCirclet.TryAppendFallbackLight(output);
 
         if (TryGetCircletExtendedItemInstance(vis, out GameObject? circletExtendedInstance) && circletExtendedInstance)
         {

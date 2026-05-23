@@ -44,26 +44,34 @@ internal static class ZoneBlueprintNetworkPayload
         }
     }
 
+    public static void ResetForWorldSession()
+    {
+        WorkQueue.Clear();
+        _queuedBytes = 0;
+        IngressBySender.Clear();
+        _nextIngressCleanup = 0f;
+    }
+
     public static bool TryEnqueue(string label, ManualLogSource logger, long sender, int estimatedBytes, Action execute, out string reason)
     {
         reason = "";
         estimatedBytes = Math.Max(1, estimatedBytes);
         if (WorkQueue.Count >= MaxQueuedWorkItems)
         {
-            reason = $"Blueprint RPC queue is busy ({WorkQueue.Count}/{MaxQueuedWorkItems}). Try again shortly.";
+            reason = HomesteadLocalization.Format("hs_blueprint_rpc_queue_busy", WorkQueue.Count, MaxQueuedWorkItems);
             return false;
         }
 
         if (sender != 0L && WorkQueue.Count(item => item.Sender == sender) >= MaxQueuedWorkItemsPerSender)
         {
-            reason = $"Blueprint RPC queue is busy for this player ({MaxQueuedWorkItemsPerSender} pending). Try again shortly.";
+            reason = HomesteadLocalization.Format("hs_blueprint_rpc_queue_busy_player", MaxQueuedWorkItemsPerSender);
             return false;
         }
 
         int maxQueuedBytes = MaxQueuedPayloadBytes;
         if (_queuedBytes + estimatedBytes > maxQueuedBytes)
         {
-            reason = $"Blueprint RPC queue is full ({FormatBytes(_queuedBytes)} / {FormatBytes(maxQueuedBytes)} queued). Try again shortly.";
+            reason = HomesteadLocalization.Format("hs_blueprint_rpc_queue_full", FormatBytes(_queuedBytes), FormatBytes(maxQueuedBytes));
             return false;
         }
 
@@ -114,7 +122,7 @@ internal static class ZoneBlueprintNetworkPayload
 
         if (window.Count >= MaxIngressRequestsPerSender)
         {
-            reason = $"Blueprint RPC ingress is busy for this player ({MaxIngressRequestsPerSender}/{IngressWindowSeconds:0.#}s). Try again shortly.";
+            reason = HomesteadLocalization.Format("hs_blueprint_rpc_ingress_busy_player", MaxIngressRequestsPerSender, IngressWindowSeconds);
             return false;
         }
 
@@ -158,7 +166,7 @@ internal static class ZoneBlueprintNetworkPayload
         byte[] compressed = package.ReadByteArray().ToArray();
         if (compressed.Length > MaxCompressedEnvelopeBytes)
         {
-            throw new InvalidDataException($"Homestead RPC payload is too large ({FormatBytes(compressed.Length)} compressed).");
+            throw new InvalidDataException(HomesteadLocalization.Format("hs_rpc_payload_too_large_compressed", FormatBytes(compressed.Length)));
         }
 
         byte[] blueprintPayload = [];
@@ -167,7 +175,7 @@ internal static class ZoneBlueprintNetworkPayload
             blueprintPayload = package.ReadByteArray().ToArray();
             if (blueprintPayload.Length > MaxCompressedBlueprintPayloadBytes)
             {
-                throw new InvalidDataException($"Homestead blueprint payload is too large ({FormatBytes(blueprintPayload.Length)} compressed).");
+                throw new InvalidDataException(HomesteadLocalization.Format("hs_blueprint_payload_too_large_throw", FormatBytes(blueprintPayload.Length)));
             }
         }
 
@@ -189,12 +197,12 @@ internal static class ZoneBlueprintNetworkPayload
         }
 
         payload = CompressUtf8(yaml ?? "");
-        if (payload.Length > MaxCompressedBlueprintPayloadBytes)
-        {
-            reason = $"Blueprint payload is too large ({FormatBytes(payload.Length)} compressed / {FormatBytes(MaxCompressedBlueprintPayloadBytes)} limit).";
-            payload = [];
-            return false;
-        }
+            if (payload.Length > MaxCompressedBlueprintPayloadBytes)
+            {
+                reason = HomesteadLocalization.Format("hs_blueprint_payload_too_large_compressed", FormatBytes(payload.Length), FormatBytes(MaxCompressedBlueprintPayloadBytes));
+                payload = [];
+                return false;
+            }
 
         reason = "";
         return true;
@@ -221,7 +229,7 @@ internal static class ZoneBlueprintNetworkPayload
         TEnvelope envelope = new()
         {
             Type = type,
-            PayloadYaml = ZoneBundleSerialization.Serialize(payload)
+            PayloadYaml = HomesteadYaml.Serialize(payload)
         };
         if (payload is IZoneBlueprintPayloadCarrier carrier && carrier.BlueprintPayload.Length > 0)
         {
@@ -234,7 +242,7 @@ internal static class ZoneBlueprintNetworkPayload
     public static TPayload ReadPayload<TPayload, TEnvelope>(TEnvelope envelope)
         where TEnvelope : IZoneBlueprintRpcEnvelope
     {
-        TPayload payload = ZoneBundleSerialization.Deserialize<TPayload>(envelope.PayloadYaml);
+        TPayload payload = HomesteadYaml.Deserialize<TPayload>(envelope.PayloadYaml);
         if (payload is IZoneBlueprintPayloadCarrier carrier && envelope.BlueprintPayload.Length > 0)
         {
             carrier.BlueprintPayload = envelope.BlueprintPayload;
@@ -253,11 +261,11 @@ internal static class ZoneBlueprintNetworkPayload
 
         try
         {
-            blueprint = ZoneBundleSerialization.Deserialize<ZoneBlueprintFile>(yaml);
+            blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(yaml);
         }
         catch (Exception ex)
         {
-            reason = $"Invalid blueprint payload: {ex.Message}";
+            reason = HomesteadLocalization.Format("hs_blueprint_payload_invalid", ex.Message);
             return false;
         }
 
@@ -279,11 +287,11 @@ internal static class ZoneBlueprintNetworkPayload
 
         try
         {
-            blueprint = ZoneBundleSerialization.Deserialize<ZoneBlueprintFile>(yaml);
+            blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(yaml);
         }
         catch (Exception ex)
         {
-            reason = $"Invalid blueprint payload: {ex.Message}";
+            reason = HomesteadLocalization.Format("hs_blueprint_payload_invalid", ex.Message);
             return false;
         }
 
@@ -301,19 +309,19 @@ internal static class ZoneBlueprintNetworkPayload
         reason = "";
         if (payload == null || payload.Length == 0)
         {
-            reason = "Blueprint payload is missing.";
+            reason = HomesteadLocalization.Text("hs_blueprint_payload_missing");
             return false;
         }
 
         if (payload.Length > MaxCompressedBlueprintPayloadBytes)
         {
-            reason = $"Blueprint payload is too large ({FormatBytes(payload.Length)} compressed / {FormatBytes(MaxCompressedBlueprintPayloadBytes)} limit).";
+            reason = HomesteadLocalization.Format("hs_blueprint_payload_too_large_compressed", FormatBytes(payload.Length), FormatBytes(MaxCompressedBlueprintPayloadBytes));
             return false;
         }
 
         if (!string.Equals(encoding, GzipEncoding, StringComparison.OrdinalIgnoreCase))
         {
-            reason = $"Unsupported blueprint payload encoding '{encoding}'.";
+            reason = HomesteadLocalization.Format("hs_blueprint_payload_encoding_unsupported", encoding);
             return false;
         }
 
@@ -324,7 +332,7 @@ internal static class ZoneBlueprintNetworkPayload
         }
         catch (Exception ex)
         {
-            reason = $"Invalid blueprint payload: {ex.Message}";
+            reason = HomesteadLocalization.Format("hs_blueprint_payload_invalid", ex.Message);
             return false;
         }
     }
@@ -338,12 +346,12 @@ internal static class ZoneBlueprintNetworkPayload
             return false;
         }
 
-        previewYaml = ZoneBundleSerialization.Serialize(preview);
+        previewYaml = HomesteadYaml.Serialize(preview);
         int bytes = Encoding.UTF8.GetByteCount(previewYaml);
         int maxUploadBytes = BlueprintConfig.NetworkSettings.MaxUploadBytes;
         if (bytes > maxUploadBytes)
         {
-            reason = $"Blueprint preview payload is too large ({FormatBytes(bytes)} / {FormatBytes(maxUploadBytes)}).";
+            reason = HomesteadLocalization.Format("hs_blueprint_preview_payload_too_large", FormatBytes(bytes), FormatBytes(maxUploadBytes));
             previewYaml = "";
             return false;
         }
@@ -373,14 +381,14 @@ internal static class ZoneBlueprintNetworkPayload
         int maxIconBytes = BlueprintConfig.NetworkSettings.MaxIconBytes;
         if (maxIconBytes <= 0)
         {
-            reason = "Blueprint store icon uploads are disabled by server config.";
+            reason = HomesteadLocalization.Text("hs_store_icon_upload_disabled");
             return false;
         }
 
         int estimatedBytes = EstimateBase64Bytes(payload);
         if (estimatedBytes > maxIconBytes)
         {
-            reason = $"Blueprint store icon is too large ({FormatBytes(estimatedBytes)} / {FormatBytes(maxIconBytes)}).";
+            reason = HomesteadLocalization.Format("hs_store_icon_too_large", FormatBytes(estimatedBytes), FormatBytes(maxIconBytes));
             return false;
         }
 
@@ -389,13 +397,13 @@ internal static class ZoneBlueprintNetworkPayload
             byte[] bytes = Convert.FromBase64String(payload);
             if (bytes.Length > maxIconBytes)
             {
-                reason = $"Blueprint store icon is too large ({FormatBytes(bytes.Length)} / {FormatBytes(maxIconBytes)}).";
+                reason = HomesteadLocalization.Format("hs_store_icon_too_large", FormatBytes(bytes.Length), FormatBytes(maxIconBytes));
                 return false;
             }
         }
         catch (Exception ex)
         {
-            reason = $"Invalid blueprint store icon payload: {ex.Message}";
+            reason = HomesteadLocalization.Format("hs_store_icon_payload_invalid", ex.Message);
             return false;
         }
 
@@ -416,7 +424,7 @@ internal static class ZoneBlueprintNetworkPayload
         int maxUploadBytes = BlueprintConfig.NetworkSettings.MaxUploadBytes;
         if (bytes > maxUploadBytes)
         {
-            reason = $"Blueprint upload is too large ({FormatBytes(bytes)} / {FormatBytes(maxUploadBytes)}).";
+            reason = HomesteadLocalization.Format("hs_blueprint_upload_too_large", FormatBytes(bytes), FormatBytes(maxUploadBytes));
             return false;
         }
 
@@ -431,8 +439,10 @@ internal static class ZoneBlueprintNetworkPayload
         int count = blueprint?.Entries?.Count ?? 0;
         if (count > limit)
         {
-            string kind = upload ? "upload" : "preview";
-            reason = $"Blueprint {kind} has too many WearNTear entries ({count} / {limit}).";
+            string kind = upload
+                ? HomesteadLocalization.Text("hs_blueprint_payload_kind_upload")
+                : HomesteadLocalization.Text("hs_blueprint_payload_kind_preview");
+            reason = HomesteadLocalization.Format("hs_blueprint_entry_count_too_high", kind, count, limit);
             return false;
         }
 
@@ -473,7 +483,7 @@ internal static class ZoneBlueprintNetworkPayload
             output.Write(buffer, 0, read);
             if (output.Length > maxOutputBytes)
             {
-                throw new InvalidDataException($"Homestead RPC payload is too large ({FormatBytes((int)output.Length)} uncompressed).");
+                throw new InvalidDataException(HomesteadLocalization.Format("hs_rpc_payload_too_large_uncompressed", FormatBytes((int)output.Length)));
             }
         }
 

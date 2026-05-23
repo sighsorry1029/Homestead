@@ -12,7 +12,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
 {
     private const float MinSideLength = 1f;
     private const float SizeStep = 1f;
-    private const float TargetOverlayRefreshInterval = 0.12f;
+    private const float TargetOverlayRefreshInterval = 0.3f;
     private const float RequestCooldownSeconds = 1f;
     private const float RequestCooldownCleanupSeconds = 60f;
     private const string RequestRpcName = HomesteadPlugin.ModGUID + "_AreaDismantleRequest";
@@ -21,7 +21,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
 
     private static ManualLogSource? _logger;
     private static ZoneAreaDismantleTool? _instance;
-    private static bool _rpcsRegistered;
+    private static readonly ZoneRpcRegistrar RpcRegistrar = new();
     private static float? _lastAreaYaw;
     private static readonly Dictionary<long, float> NextRequestAtBySender = [];
     private static float _nextCooldownCleanup;
@@ -31,7 +31,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
     private ZoneAreaToolController? _areaTool;
     private bool _active;
 
-    private static float MaxSelectableSide => Mathf.Max(MinSideLength, AreaToolConfig.DismantleMaxSide);
+    private static float MaxSelectableSide => Mathf.Max(MinSideLength, BlueprintConfig.AreaDismantleMaxSide);
     public static bool IsActive => _instance?._areaTool?.Active == true;
 
     private ZoneAreaToolController AreaTool => _areaTool ??= new ZoneAreaToolController(
@@ -41,9 +41,9 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
             MinSide = MinSideLength,
             SizeStep = SizeStep,
             MaxSide = () => MaxSelectableSide,
-            DefaultWidth = () => AreaToolConfig.DismantleDefaultWidth,
-            DefaultDepth = () => AreaToolConfig.DismantleDefaultDepth,
-            Color = () => AreaToolConfig.DismantleColor,
+            DefaultWidth = () => BlueprintConfig.AreaDismantleDefaultWidth,
+            DefaultDepth = () => BlueprintConfig.AreaDismantleDefaultDepth,
+            Color = () => BlueprintConfig.AreaDismantleBoundaryColor,
             RangeLineName = "HomesteadAreaDismantleRadius",
             TargetOverlayName = "HomesteadAreaDismantleTarget",
             TargetOverlayRefreshInterval = TargetOverlayRefreshInterval,
@@ -63,14 +63,11 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
 
     internal static void RegisterRpcs()
     {
-        if (_rpcsRegistered || ZRoutedRpc.instance == null)
+        RpcRegistrar.EnsureRegistered(routedRpc =>
         {
-            return;
-        }
-
-        _rpcsRegistered = true;
-        ZRoutedRpc.instance.Register<ZPackage>(RequestRpcName, RPC_HandleRequest);
-        ZRoutedRpc.instance.Register<ZPackage>(ResultRpcName, RPC_HandleResult);
+            routedRpc.Register<ZPackage>(RequestRpcName, RPC_HandleRequest);
+            routedRpc.Register<ZPackage>(ResultRpcName, RPC_HandleResult);
+        });
     }
 
     public static void Activate(Player player)
@@ -293,17 +290,17 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
                 continue;
             }
 
-            if (!IsLoadedWearNTear(zdo))
-            {
-                continue;
-            }
-
             if (zdo.GetLong(ZDOVars.s_creator, 0L) != playerId)
             {
                 continue;
             }
 
             if (!ZoneBlueprintCommands.TryReadWearNTear(zdo, out GameObject prefab))
+            {
+                continue;
+            }
+
+            if (!IsLoadedWearNTear(zdo))
             {
                 continue;
             }
@@ -421,12 +418,12 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
         {
             if (target.Zdo != null && target.Zdo.IsValid())
             {
-                ZoneBundleZdoHelper.Destroy(target.Zdo);
+                SavedZdoHelper.Destroy(target.Zdo);
                 destroyed++;
             }
         }
 
-        ZoneBundleZdoHelper.FlushDestroyed();
+        SavedZdoHelper.FlushDestroyed();
         int materialTotal = refunds.Values.Sum(refund => refund.Amount);
         int stackTotal = DropRefundStacks(refunds.Values, area.Center);
 

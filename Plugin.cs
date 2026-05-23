@@ -10,10 +10,13 @@ namespace Homestead;
 
 [BepInPlugin(ModGUID, ModName, ModVersion)]
 [BepInDependency("com.jotunn.jotunn", BepInDependency.DependencyFlags.HardDependency)]
+[BepInDependency("com.maxsch.valheim.contentswithin", BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency("sighsorry.InventorySlots", BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency("sighsorry.VeiledRecipes", BepInDependency.DependencyFlags.SoftDependency)]
 public partial class HomesteadPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Homestead";
-    internal const string ModVersion = "1.0.0";
+    internal const string ModVersion = "1.0.8";
     internal const string Author = "sighsorry";
     internal const string ModGUID = $"{Author}.{ModName}";
     internal const string DataStorageFolder = "Homestead";
@@ -21,11 +24,8 @@ public partial class HomesteadPlugin : BaseUnityPlugin
     internal const string ServerBlueprintStorageFolder = "ServerBlueprints";
     internal const string PlanGhostStorageFolder = "PlanGhosts";
     internal const string BlueprintStoreStorageFolder = "Store";
-    internal const string ZoneBundleStorageFolder = "ZoneBundles";
-    internal const string ActivityFileName = "activity.yml";
 
     private const string ConfigFileName = $"{ModGUID}.cfg";
-    private const string ZoneRuleFileName = "zones.yml";
     private const long ReloadDelay = TimeSpan.TicksPerSecond;
 
     private static readonly string ConfigFileFullPath = Path.Combine(Paths.ConfigPath, ConfigFileName);
@@ -34,8 +34,6 @@ public partial class HomesteadPlugin : BaseUnityPlugin
     internal static readonly string ServerBlueprintStorageFullPath = Path.Combine(DataStorageFullPath, ServerBlueprintStorageFolder);
     internal static readonly string PlanGhostStorageFullPath = Path.Combine(ServerBlueprintStorageFullPath, PlanGhostStorageFolder);
     internal static readonly string BlueprintStoreStorageFullPath = Path.Combine(ServerBlueprintStorageFullPath, BlueprintStoreStorageFolder);
-    internal static readonly string ZoneBundleStorageFullPath = Path.Combine(DataStorageFullPath, ZoneBundleStorageFolder);
-    internal static readonly string ZoneRuleFileFullPath = Path.Combine(DataStorageFullPath, ZoneRuleFileName);
 
     internal static readonly ManualLogSource HomesteadLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
     internal static readonly ConfigSync ConfigSync = new(ModGUID)
@@ -52,9 +50,7 @@ public partial class HomesteadPlugin : BaseUnityPlugin
     private readonly object _reloadLock = new();
 
     private FileSystemWatcher? _configWatcher;
-    private FileSystemWatcher? _zoneRuleWatcher;
     private DateTime _lastConfigReloadTime;
-    private DateTime _lastZoneRuleReloadTime;
 
     public enum Toggle
     {
@@ -89,7 +85,6 @@ public partial class HomesteadPlugin : BaseUnityPlugin
         HomesteadFeatureBootstrap.Shutdown();
 
         _configWatcher?.Dispose();
-        _zoneRuleWatcher?.Dispose();
     }
 
     private void Update()
@@ -109,13 +104,6 @@ public partial class HomesteadPlugin : BaseUnityPlugin
         _configWatcher.SynchronizingObject = ThreadingHelper.SynchronizingObject;
         _configWatcher.EnableRaisingEvents = true;
 
-        _zoneRuleWatcher = new FileSystemWatcher(DataStorageFullPath, ZoneRuleFileName);
-        _zoneRuleWatcher.Changed += ReadZoneRuleValues;
-        _zoneRuleWatcher.Created += ReadZoneRuleValues;
-        _zoneRuleWatcher.Renamed += ReadZoneRuleValues;
-        _zoneRuleWatcher.IncludeSubdirectories = false;
-        _zoneRuleWatcher.SynchronizingObject = ThreadingHelper.SynchronizingObject;
-        _zoneRuleWatcher.EnableRaisingEvents = true;
     }
 
     private static void EnsureDataDirectories()
@@ -124,7 +112,6 @@ public partial class HomesteadPlugin : BaseUnityPlugin
         Directory.CreateDirectory(BlueprintStorageFullPath);
         Directory.CreateDirectory(PlanGhostStorageFullPath);
         Directory.CreateDirectory(BlueprintStoreStorageFullPath);
-        Directory.CreateDirectory(ZoneBundleStorageFullPath);
     }
 
     private void ReadConfigValues(object sender, FileSystemEventArgs e)
@@ -151,26 +138,6 @@ public partial class HomesteadPlugin : BaseUnityPlugin
             catch (Exception ex)
             {
                 HomesteadLogger.LogError($"Error reloading configuration: {ex}");
-            }
-        }
-    }
-
-    private void ReadZoneRuleValues(object sender, FileSystemEventArgs e)
-    {
-        if (!CanReload(ref _lastZoneRuleReloadTime))
-        {
-            return;
-        }
-
-        lock (_reloadLock)
-        {
-            try
-            {
-                ZoneLimitConfiguration.ReloadFromDisk();
-            }
-            catch (Exception ex)
-            {
-                HomesteadLogger.LogError($"Error reloading zone rule YAML: {ex}");
             }
         }
     }
@@ -280,6 +247,13 @@ public enum BlueprintStoreIdentityMode
 {
     PlayerId,
     SteamId
+}
+
+public enum BlueprintStoreNotificationMode
+{
+    Off,
+    BadgeOnly,
+    AutoOpenPanel
 }
 
 public enum BuildCameraDistanceMode

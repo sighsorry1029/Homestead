@@ -62,7 +62,7 @@ internal static class ZoneBlueprintChestZdoRegistry
     public static bool TryGetActiveCount(string ownerPlatformId, out int count)
     {
         count = 0;
-        ownerPlatformId = ZonePlayerIdentity.NormalizePlatformId(ownerPlatformId);
+        ownerPlatformId = HomesteadPlayerIdentity.NormalizePlatformId(ownerPlatformId);
         if (string.IsNullOrWhiteSpace(ownerPlatformId) || !CanIndex)
         {
             return false;

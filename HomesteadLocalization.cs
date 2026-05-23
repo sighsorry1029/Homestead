@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using BepInEx;
 using BepInEx.Logging;
 using Jotunn.Entities;
 using Jotunn.Managers;
@@ -27,6 +29,7 @@ internal static class HomesteadLocalization
         CustomLocalization localization = LocalizationManager.Instance.GetLocalization();
         AddEmbeddedYaml(localization, "English");
         AddEmbeddedYaml(localization, "Korean");
+        AddExternalYamlFiles(localization);
     }
 
     public static string Token(string key)
@@ -79,5 +82,57 @@ internal static class HomesteadLocalization
 
         using StreamReader reader = new(stream, Encoding.UTF8);
         localization.AddYamlFile(language, reader.ReadToEnd());
+    }
+
+    private static void AddExternalYamlFiles(CustomLocalization localization)
+    {
+        string pluginPath = Paths.PluginPath;
+        if (string.IsNullOrWhiteSpace(pluginPath) || !Directory.Exists(pluginPath))
+        {
+            return;
+        }
+
+        HashSet<string> loadedLanguages = new(StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> files = Directory.EnumerateFiles(pluginPath, HomesteadPlugin.ModName + ".*.yml", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(pluginPath, HomesteadPlugin.ModName + ".*.yaml", SearchOption.AllDirectories))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+
+        foreach (string file in files)
+        {
+            if (!TryGetExternalLanguage(file, out string language))
+            {
+                continue;
+            }
+
+            if (!loadedLanguages.Add(language))
+            {
+                _logger?.LogWarning($"Duplicate external Homestead localization for language '{language}' skipped: {file}");
+                continue;
+            }
+
+            try
+            {
+                localization.AddYamlFile(language, File.ReadAllText(file, Encoding.UTF8));
+                _logger?.LogInfo($"Loaded external Homestead localization '{language}' from {file}");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning($"Failed to load external Homestead localization '{file}': {ex.Message}");
+            }
+        }
+    }
+
+    private static bool TryGetExternalLanguage(string file, out string language)
+    {
+        language = "";
+        string fileName = Path.GetFileNameWithoutExtension(file);
+        string prefix = HomesteadPlugin.ModName + ".";
+        if (!fileName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        language = fileName.Substring(prefix.Length).Trim();
+        return !string.IsNullOrWhiteSpace(language);
     }
 }

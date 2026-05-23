@@ -138,22 +138,25 @@
         </Reference>
     </ItemGroup>
     <ItemGroup>
-        <Compile Include="AutoArchiveCommands.cs"/>
-        <Compile Include="AutoArchiveModels.cs"/>
-        <Compile Include="AutoArchiveScanner.cs"/>
-        <Compile Include="AutoArchiveService.cs"/>
-        <Compile Include="AutoArchiveStore.cs"/>
         <Compile Include="AzuCraftyBoxesCompat.cs"/>
+        <Compile Include="AzuExtendedPlayerInventoryCompat.cs"/>
         <Compile Include="BlueprintTerrainApplier.cs"/>
-        <Compile Include="BuildCounterHud.cs"/>
+        <Compile Include="BlueprintTerrainContactSampler.cs"/>
         <Compile Include="HomesteadConfigBinding.cs"/>
+        <Compile Include="HomesteadCommandResult.cs"/>
         <Compile Include="HomesteadConfigFacades.cs"/>
         <Compile Include="HomesteadFeatureBootstrap.cs"/>
         <Compile Include="HomesteadLocalization.cs"/>
+        <Compile Include="HomesteadPlayerIdentity.cs"/>
+        <Compile Include="SavedZdoData.cs"/>
+        <Compile Include="HomesteadTerrainSupport.cs"/>
         <Compile Include="HomesteadTimestamp.cs"/>
-        <Compile Include="PlayerActivityTracker.cs"/>
+        <Compile Include="HomesteadYaml.cs"/>
+        <Compile Include="InventorySlotsCompat.cs"/>
+        <Compile Include="ZoneHammerRefreshScheduler.cs"/>
         <Compile Include="Plugin.cs"/>
-        <Compile Include="Properties\AssemblyInfo.cs"/>
+        <Compile Include="Properties\HomesteadAssemblyInfo.cs"/>
+        <Compile Include="VeiledRecipesCompat.cs"/>
         <Compile Include="VersionHandshake.cs"/>
         <Compile Include="ZoneAreaCameraZoomGuard.cs"/>
         <Compile Include="ZoneAreaToolController.cs"/>
@@ -162,53 +165,82 @@
         <Compile Include="ZoneAreaToolShared.cs"/>
         <Compile Include="ZoneAreaToolStatusHud.cs"/>
         <Compile Include="ZoneAreaTargetOverlay.cs"/>
-        <Compile Include="ZoneBoundaryOverlay.cs"/>
         <Compile Include="ZoneBuildKeyHints.cs"/>
         <Compile Include="ZoneBuildCamera.cs"/>
         <Compile Include="ZoneBuildCameraDemisterPatch.cs"/>
         <Compile Include="ZoneBuildCameraDvergerLight.cs"/>
         <Compile Include="ZoneBuildCameraPatches.cs"/>
         <Compile Include="ZoneBuildCameraWardCompat.cs"/>
+        <Compile Include="ZoneContentsWithinCompat.cs"/>
         <Compile Include="ZoneBlueprintCommands.cs"/>
         <Compile Include="ZoneDvergrCirclet.cs"/>
+        <Compile Include="ZoneDvergrCircletEquipment.cs"/>
+        <Compile Include="ZoneDvergrCircletLocalVisual.cs"/>
+        <Compile Include="ZoneDvergrCircletPatches.cs"/>
+        <Compile Include="ZoneDvergrCircletRemoteSync.cs"/>
+        <Compile Include="ZoneDvergrCircletState.cs"/>
+        <Compile Include="ZoneDvergrCircletVisuals.cs"/>
         <Compile Include="ZoneBlueprintModels.cs"/>
         <Compile Include="ZoneBlueprintGhostOwner.cs"/>
         <Compile Include="ZoneBlueprintNetworkPayload.cs"/>
         <Compile Include="ZoneBlueprintPlanRpc.cs"/>
         <Compile Include="ZoneBlueprintPlacementTool.cs"/>
         <Compile Include="ZoneBlueprintChestCommands.cs"/>
+        <Compile Include="ZoneBlueprintChestInventoryScroll.cs"/>
         <Compile Include="ZoneBlueprintPlanChest.cs"/>
         <Compile Include="ZoneBlueprintPreviewBuilder.cs"/>
         <Compile Include="ZoneBlueprintSaveTool.cs"/>
+        <Compile Include="ZoneBlueprintChestVfx.cs"/>
+        <Compile Include="ZoneChestPlacement.cs"/>
         <Compile Include="ZoneBlueprintChestLifecycle.cs"/>
         <Compile Include="ZoneBlueprintChestMapPins.cs"/>
         <Compile Include="ZoneBlueprintChestZdoRegistry.cs"/>
         <Compile Include="ZoneBlueprintStoreActions.cs"/>
+        <Compile Include="ZoneBlueprintStoreBlueprintHelpers.cs"/>
         <Compile Include="ZoneBlueprintStore.cs"/>
         <Compile Include="ZoneBlueprintStoreChest.cs"/>
         <Compile Include="ZoneBlueprintStoreChestPatches.cs"/>
         <Compile Include="ZoneBlueprintStoreChestPrefab.cs"/>
         <Compile Include="ZoneBlueprintStoreChestRegistry.cs"/>
         <Compile Include="ZoneBlueprintStoreDraftRepository.cs"/>
+        <Compile Include="ZoneBlueprintStoreDtoHelpers.cs"/>
+        <Compile Include="ZoneBlueprintStoreEconomy.cs"/>
+        <Compile Include="ZoneBlueprintStoreIdentity.cs"/>
+        <Compile Include="ZoneBlueprintStoreIdentityHelpers.cs"/>
+        <Compile Include="ZoneBlueprintStoreListActions.cs"/>
+        <Compile Include="ZoneBlueprintStoreListingActions.cs"/>
+        <Compile Include="ZoneBlueprintStoreMaintenance.cs"/>
+        <Compile Include="ZoneBlueprintStoreNotifications.cs"/>
+        <Compile Include="ZoneBlueprintStoreNotificationsUi.cs"/>
+        <Compile Include="ZoneBlueprintStoreOfferActions.cs"/>
+        <Compile Include="ZoneBlueprintStoreOffersUi.cs"/>
         <Compile Include="ZoneBlueprintStorePanelLayout.cs"/>
+        <Compile Include="ZoneBlueprintStorePanelRuntime.cs"/>
+        <Compile Include="ZoneBlueprintStorePlacementHelpers.cs"/>
+        <Compile Include="ZoneBlueprintStorePreviewActions.cs"/>
+        <Compile Include="ZoneBlueprintStorePreviewTool.cs"/>
+        <Compile Include="ZoneBlueprintStorePriceHelpers.cs"/>
+        <Compile Include="ZoneBlueprintStorePriceEditorUi.cs"/>
+        <Compile Include="ZoneBlueprintStorePriceInputUi.cs"/>
+        <Compile Include="ZoneBlueprintStorePurchaseActions.cs"/>
         <Compile Include="ZoneBlueprintStorePurchaseEscrow.cs"/>
+        <Compile Include="ZoneBlueprintStorePriceIconStrip.cs"/>
         <Compile Include="ZoneBlueprintStorePreviewPayload.cs"/>
+        <Compile Include="ZoneBlueprintStoreRpcTransport.cs"/>
+        <Compile Include="ZoneBlueprintStoreUi.cs"/>
+        <Compile Include="ZoneBlueprintStoreVisualHelpers.cs"/>
+        <Compile Include="ZoneBlueprintStoreWithdrawActions.cs"/>
         <Compile Include="ZoneBlueprintVisuals.cs"/>
-        <Compile Include="ZoneBundleCommands.cs"/>
-        <Compile Include="ZoneBundleModels.cs"/>
-        <Compile Include="ZoneBundleSerialization.cs"/>
-        <Compile Include="ZoneBundleTerrain.cs"/>
-        <Compile Include="ZoneBundleTerrainApplier.cs"/>
-        <Compile Include="ZoneBundleZdoData.cs"/>
         <Compile Include="ZoneGridSnap.cs"/>
         <Compile Include="ZonePlacementOffset.cs"/>
-        <Compile Include="ZoneLimitConfiguration.cs"/>
+        <Compile Include="ZonePlacementInput.cs"/>
+        <Compile Include="ZoneLimitCompat.cs"/>
         <Compile Include="ZoneMaterialEscrow.cs"/>
         <Compile Include="ZonePlacementAdjust.cs"/>
-        <Compile Include="ZonePieceCounter.cs"/>
-        <Compile Include="ZoneTerrainContactSampler.cs"/>
+        <Compile Include="ZoneTransformPayload.cs"/>
         <Compile Include="ZoneToolAim.cs"/>
-        <Compile Include="ZonePlayerIdentity.cs"/>
+        <Compile Include="ZoneRpcRegistrar.cs"/>
+        <Compile Include="ZoneSessionResetRegistry.cs"/>
         <Compile Include="ZoneWorldEditTerrainCompat.cs"/>
     </ItemGroup>
     <ItemGroup>
@@ -220,9 +252,10 @@
         </Content>
         <Content Include="LICENSE.txt"/>
         <Content Include="README.md"/>
-        <Content Include="Thunderstore\CHANGELOG.md"/>
-        <Content Include="Thunderstore\icon.png"/>
-        <Content Include="Thunderstore\manifest.json"/>
+        <Content Include="Thunderstore\Homestead\CHANGELOG.md"/>
+        <Content Include="Thunderstore\Homestead\icon.png"/>
+        <Content Include="Thunderstore\Homestead\manifest.json"/>
+        <Content Include="Thunderstore\Homestead\README.md"/>
         <EmbeddedResource Include="translations\English.yml"/>
         <EmbeddedResource Include="translations\Korean.yml"/>
         <Content Include="UpdateManifest.ps1"/>
@@ -265,7 +298,8 @@
             <PackageName>$(AssemblyName)_v$(Major).$(Minor).$(Patch)</PackageName>
             <PackageVersion>$(Major).$(Minor).$(Patch)</PackageVersion>
             <VersionString>$(Major).$(Minor).$(Patch)</VersionString>
-            <PackageDir>$(ProjectDir)\Thunderstore\$(PackageName)</PackageDir>
+            <ThunderstorePackageRoot>$(ProjectDir)\Thunderstore\Homestead</ThunderstorePackageRoot>
+            <PackageDir>$(ThunderstorePackageRoot)\$(PackageName)</PackageDir>
         </PropertyGroup>
     </Target>
     <Target Name="CopyOutputDLL" AfterTargets="GetAssemblyVersion">
@@ -275,59 +309,31 @@
         <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath3)" OverwriteReadOnlyFiles="true" Condition="Exists('$(CopyOutputDLLPath3)')"/>
     </Target>
     <Target Name="CopyReadMeToTSFolder" AfterTargets="CopyOutputDLL" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') ">
-        <Warning Text="README.md not found in project directory. A default README.md file will be created for the Thunderstore package" Condition="!Exists('README.md')"/>
-        <WriteLinesToFile File="README.md" Lines="Homestead archives inactive player build zones and restores saved zone bundles for Valheim servers." Overwrite="false" Condition="!Exists('README.md')"/>
-        <Copy SourceFiles="README.md" DestinationFolder="$(PackageDir)" OverwriteReadOnlyFiles="true"/>
-        <Copy SourceFiles="README.md" DestinationFolder="$(ProjectDir)\Thunderstore" OverwriteReadOnlyFiles="true"/>
+        <Warning Text="Thunderstore\Homestead\README.md not found." Condition="!Exists('$(ThunderstorePackageRoot)\README.md')"/>
+        <WriteLinesToFile File="$(ThunderstorePackageRoot)\README.md" Lines="Homestead adds player-facing Valheim construction tools, native blueprints, blueprint trading, build camera controls, placement helpers, and Dvergr circlet QoL." Overwrite="false" Condition="!Exists('$(ThunderstorePackageRoot)\README.md')"/>
+        <Copy SourceFiles="$(ThunderstorePackageRoot)\README.md" DestinationFolder="$(PackageDir)" OverwriteReadOnlyFiles="true"/>
     </Target>
-    <UsingTask TaskName="WriteManifestFile" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
-        <ParameterGroup>
-            <ManifestFile ParameterType="System.String" Required="true"/>
-            <AssemblyName ParameterType="System.String" Required="true"/>
-        </ParameterGroup>
-        <Task>
-            <Code Type="Fragment" Language="cs">
-                <![CDATA[
-if (!System.IO.File.Exists(ManifestFile))
-{
-string content = @"{
-  ""name"": """ + AssemblyName + @""",
-  ""version_number"": ""1.0.0"",
-  ""website_url"": """",
-  ""description"": ""Archives inactive player build zones and restores saved zone bundles for Valheim servers."",
-  ""dependencies"": [
-    ""denikson-BepInExPack_Valheim-5.4.2202"",
-    ""ValheimModding-Jotunn-2.29.0""
-]
-}";
-System.IO.File.WriteAllText(ManifestFile, content);
-}
-]]>
-
-            </Code>
-        </Task>
-    </UsingTask>
-    <Target Name="UpdateManifestVersion" AfterTargets="CopyReadmeToTSFolder" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') ">
-        <WriteManifestFile ManifestFile="$(ProjectDir)Thunderstore\manifest.json" AssemblyName="$(AssemblyName)"/>
+    <Target Name="UpdateManifestVersion" AfterTargets="CopyReadMeToTSFolder" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') ">
+        <Error Text="manifest.json not found in Thunderstore\Homestead directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
         <ItemGroup>
-            <ManifestFile Include="$(ProjectDir)Thunderstore\manifest.json"/>
+            <ManifestFile Include="$(ThunderstorePackageRoot)\manifest.json"/>
         </ItemGroup>
         <Message Text="ManifestFile is @(ManifestFile)"/>
-        <Message Text="Updating version number in Thunderstore\manifest.json" Condition="Exists(@(ManifestFile))"/>
+        <Message Text="Updating version number in Thunderstore\Homestead\manifest.json" Condition="Exists(@(ManifestFile))"/>
         <Exec Command="powershell.exe -ExecutionPolicy Bypass -Command &quot;&amp; { &amp; '$(ProjectDir)UpdateManifest.ps1' -manifestFile '@(ManifestFile)' -versionString '$(PackageVersion)' }&quot;"/>
     </Target>
     <Target Name="MakeThunderstorePackage" AfterTargets="UpdateManifestVersion" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-        <Error Text="manifest.json not found in Thunderstore directory." Condition="!Exists('$(ProjectDir)\Thunderstore\manifest.json')"/>
-        <Error Text="icon.png not found in Thunderstore directory. Please note that Thunderstore requires this image to be 256x256 in dimension" Condition="!Exists('$(ProjectDir)\Thunderstore\icon.png')"/>
+        <Error Text="manifest.json not found in Thunderstore\Homestead directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
+        <Error Text="icon.png not found in Thunderstore\Homestead directory. Please note that Thunderstore requires this image to be 256x256 in dimension" Condition="!Exists('$(ThunderstorePackageRoot)\icon.png')"/>
         <ItemGroup>
             <PackageFiles Include="$(TargetDir)$(AssemblyName).dll" Condition="Exists('$(TargetDir)$(AssemblyName).dll')"/>
-            <PackageFiles Include="$(ProjectDir)\Thunderstore\CHANGELOG.md" Condition="Exists('$(ProjectDir)\Thunderstore\CHANGELOG.md')"/>
-            <PackageFiles Include="$(ProjectDir)\Thunderstore\manifest.json" Condition="Exists('$(ProjectDir)\Thunderstore\manifest.json')"/>
-            <PackageFiles Include="$(ProjectDir)\Thunderstore\icon.png" Condition="Exists('$(ProjectDir)\Thunderstore\icon.png')"/>
+            <PackageFiles Include="$(ThunderstorePackageRoot)\CHANGELOG.md" Condition="Exists('$(ThunderstorePackageRoot)\CHANGELOG.md')"/>
+            <PackageFiles Include="$(ThunderstorePackageRoot)\manifest.json" Condition="Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
+            <PackageFiles Include="$(ThunderstorePackageRoot)\icon.png" Condition="Exists('$(ThunderstorePackageRoot)\icon.png')"/>
         </ItemGroup>
         <MakeDir Directories="$(PackageDir)"/>
         <Copy SourceFiles="@(PackageFiles)" DestinationFolder="$(PackageDir)"/>
-        <ZipDirectory SourceDirectory="$(PackageDir)" DestinationFile="Thunderstore\$(PackageName).zip" Overwrite="true"/>
+        <ZipDirectory SourceDirectory="$(PackageDir)" DestinationFile="$(ThunderstorePackageRoot)\$(PackageName).zip" Overwrite="true"/>
         <RemoveDir Directories="$(PackageDir)"/>
     </Target>
     <Target Name="MakeNexusPackage" AfterTargets="MakeThunderstorePackage" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">

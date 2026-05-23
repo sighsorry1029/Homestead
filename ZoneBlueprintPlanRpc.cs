@@ -9,10 +9,11 @@ internal static class ZoneBlueprintPlanRpc
 {
     private const string RequestRpcName = HomesteadPlugin.ModGUID + "_BlueprintPlanRequest";
     private const string ResponseRpcName = HomesteadPlugin.ModGUID + "_BlueprintPlanResponse";
+    private const float MaxRequestedChestDistanceFromAnchor = 512f;
 
     private static ManualLogSource _logger = null!;
     private static bool _initialized;
-    private static bool _rpcsRegistered;
+    private static readonly ZoneRpcRegistrar RpcRegistrar = new();
     private static readonly Dictionary<string, ZoneBlueprintFile> PreviewCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> PendingPreviewRequests = new(StringComparer.OrdinalIgnoreCase);
 
@@ -33,15 +34,21 @@ internal static class ZoneBlueprintPlanRpc
         RegisterRpcs();
     }
 
-    public static void RequestPlace(string name, ZoneBlueprintFile blueprint, Vector3 anchor, Quaternion anchorRotation, Quaternion chestRotation)
+    public static void ResetForWorldSession()
+    {
+        PreviewCache.Clear();
+        PendingPreviewRequests.Clear();
+    }
+
+    public static void RequestPlace(string name, ZoneBlueprintFile blueprint, Vector3 anchor, Quaternion anchorRotation, Vector3 chestPosition, Quaternion chestRotation)
     {
         if (ZNet.instance == null)
         {
-            Message("World is not ready.", MessageHud.MessageType.Center);
+            Message(HomesteadLocalization.Text("hs_common_world_not_ready"), MessageHud.MessageType.Center);
             return;
         }
 
-        string blueprintYaml = ZoneBundleSerialization.Serialize(blueprint);
+        string blueprintYaml = HomesteadYaml.Serialize(blueprint);
         if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintYaml, enforceUploadLimit: true, out byte[] blueprintPayload, out string reason))
         {
             Message(reason, MessageHud.MessageType.Center);
@@ -56,12 +63,12 @@ internal static class ZoneBlueprintPlanRpc
                     Name = name,
                     BlueprintEncoding = ZoneBlueprintNetworkPayload.GzipEncoding,
                     BlueprintPayload = blueprintPayload,
-                    Anchor = ToTransformPayload(anchor, anchorRotation),
-                    Chest = ToTransformPayload(Vector3.zero, chestRotation)
+                    Anchor = ZoneTransformPayload.From(anchor, anchorRotation),
+                    Chest = ZoneTransformPayload.From(chestPosition, chestRotation)
                 },
                 sender: 0L,
                 playerId: Player.m_localPlayer != null ? Player.m_localPlayer.GetPlayerID() : 0L,
-                ownerPlatformId: Player.m_localPlayer != null ? ZonePlayerIdentity.ResolveLocalPlatformId(Player.m_localPlayer.GetPlayerID()) : "");
+                ownerPlatformId: Player.m_localPlayer != null ? HomesteadPlayerIdentity.ResolveLocalPlatformId(Player.m_localPlayer.GetPlayerID()) : "");
             HandleResponse(response);
             return;
         }
@@ -71,8 +78,8 @@ internal static class ZoneBlueprintPlanRpc
             Name = name,
             BlueprintEncoding = ZoneBlueprintNetworkPayload.GzipEncoding,
             BlueprintPayload = blueprintPayload,
-            Anchor = ToTransformPayload(anchor, anchorRotation),
-            Chest = ToTransformPayload(Vector3.zero, chestRotation)
+            Anchor = ZoneTransformPayload.From(anchor, anchorRotation),
+            Chest = ZoneTransformPayload.From(chestPosition, chestRotation)
         });
     }
 
@@ -97,16 +104,30 @@ internal static class ZoneBlueprintPlanRpc
         return PreviewCache.TryGetValue(name, out blueprint!);
     }
 
-    private static void RegisterRpcs()
+    public static bool IsPreviewPending(string name)
     {
-        if (_rpcsRegistered || ZRoutedRpc.instance == null)
+        return !string.IsNullOrWhiteSpace(name) && PendingPreviewRequests.Contains(name);
+    }
+
+    private static void CachePreview(string name, ZoneBlueprintFile blueprint)
+    {
+        if (string.IsNullOrWhiteSpace(name) || blueprint == null)
         {
             return;
         }
 
-        _rpcsRegistered = true;
-        ZRoutedRpc.instance.Register<ZPackage>(RequestRpcName, RPC_HandleRequest);
-        ZRoutedRpc.instance.Register<ZPackage>(ResponseRpcName, RPC_HandleResponse);
+        blueprint.Name = name;
+        PreviewCache[name] = blueprint;
+        PendingPreviewRequests.Remove(name);
+    }
+
+    private static void RegisterRpcs()
+    {
+        RpcRegistrar.EnsureRegistered(routedRpc =>
+        {
+            routedRpc.Register<ZPackage>(RequestRpcName, RPC_HandleRequest);
+            routedRpc.Register<ZPackage>(ResponseRpcName, RPC_HandleResponse);
+        });
     }
 
     private static void SendRequest<TPayload>(string type, TPayload payload)
@@ -119,7 +140,7 @@ internal static class ZoneBlueprintPlanRpc
 
         ZoneBlueprintPlanRpcEnvelope envelope = CreateEnvelope(type, payload);
         ZPackage package = new();
-        ZoneBlueprintNetworkPayload.WriteEnvelope(package, ZoneBundleSerialization.Serialize(envelope), envelope.BlueprintPayload);
+        ZoneBlueprintNetworkPayload.WriteEnvelope(package, HomesteadYaml.Serialize(envelope), envelope.BlueprintPayload);
         ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(), RequestRpcName, package);
     }
 
@@ -163,7 +184,7 @@ internal static class ZoneBlueprintPlanRpc
             try
             {
                 string requestYaml = ZoneBlueprintNetworkPayload.ReadEnvelope(rawPayload, out byte[] blueprintPayload);
-                ZoneBlueprintPlanRpcEnvelope request = ZoneBundleSerialization.Deserialize<ZoneBlueprintPlanRpcEnvelope>(requestYaml);
+                ZoneBlueprintPlanRpcEnvelope request = HomesteadYaml.Deserialize<ZoneBlueprintPlanRpcEnvelope>(requestYaml);
                 request.BlueprintPayload = blueprintPayload;
                 response = ExecuteRequest(request, sender);
             }
@@ -198,7 +219,7 @@ internal static class ZoneBlueprintPlanRpc
         try
         {
             string responseYaml = ZoneBlueprintNetworkPayload.ReadEnvelope(package, out byte[] blueprintPayload);
-            ZoneBlueprintPlanRpcEnvelope response = ZoneBundleSerialization.Deserialize<ZoneBlueprintPlanRpcEnvelope>(responseYaml);
+            ZoneBlueprintPlanRpcEnvelope response = HomesteadYaml.Deserialize<ZoneBlueprintPlanRpcEnvelope>(responseYaml);
             response.BlueprintPayload = blueprintPayload;
             HandleResponse(response);
         }
@@ -222,8 +243,8 @@ internal static class ZoneBlueprintPlanRpc
 
         return request.Type switch
         {
-            ZoneBlueprintPlanRpcType.Place => ExecutePlace(ReadPayload<ZoneBlueprintPlanPlaceRequest>(request), sender, playerId, ZonePlayerIdentity.ResolvePlatformId(null, sender, playerId)),
-            _ => CreateEnvelope(request.Type, new ZoneBlueprintPlanPlaceResponse { Success = false, Message = $"Unknown blueprint plan action '{request.Type}'." })
+            ZoneBlueprintPlanRpcType.Place => ExecutePlace(ReadPayload<ZoneBlueprintPlanPlaceRequest>(request), sender, playerId, HomesteadPlayerIdentity.ResolvePlatformId(null, sender, playerId)),
+            _ => CreateEnvelope(request.Type, new ZoneBlueprintPlanPlaceResponse { Success = false, Message = HomesteadLocalization.Format("hs_blueprint_plan_unknown_action", request.Type) })
         };
     }
 
@@ -239,10 +260,13 @@ internal static class ZoneBlueprintPlanRpc
             };
         }
 
-        if (!TryReadTransform(request.Anchor, out Vector3 anchor, out Quaternion anchorRotation) ||
-            !TryReadTransform(request.Chest, out _, out Quaternion chestRotation))
+        if (!ZoneTransformPayload.TryRead(request.Anchor, out Vector3 anchor, out Quaternion anchorRotation) ||
+            !ZoneTransformPayload.TryRead(request.Chest, out Vector3 requestedChestPosition, out Quaternion chestRotation) ||
+            !ZoneTransformPayload.IsFinite(anchor) ||
+            !ZoneTransformPayload.IsFinite(anchorRotation) ||
+            !ZoneTransformPayload.IsFinite(chestRotation))
         {
-            return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail("Blueprint placement payload is missing transform data."));
+            return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(HomesteadLocalization.Text("hs_blueprint_place_payload_missing_transform")));
         }
 
         if (!ZoneBlueprintNetworkPayload.TryDeserializeBlueprintUpload(request.BlueprintPayload, request.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string uploadReason))
@@ -250,7 +274,7 @@ internal static class ZoneBlueprintPlanRpc
             return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(uploadReason));
         }
 
-        ZoneBundleCommandResult save = ZoneBlueprintCommands.SaveUploadedBlueprintForPlan(request.Name, blueprint, playerId, out string savedName);
+        HomesteadCommandResult save = ZoneBlueprintCommands.SaveUploadedBlueprintForPlan(request.Name, blueprint, playerId, out string savedName);
         if (!save.Success)
         {
             return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(save.Message));
@@ -262,27 +286,28 @@ internal static class ZoneBlueprintPlanRpc
             ZoneBlueprintCommands.BlueprintLoadPlan plan = ZoneBlueprintCommands.CreateLoadPlanForBlueprint(serverBlueprint, anchor, anchorRotation);
             if (plan.Entries.Count == 0)
             {
-                return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail($"Blueprint '{savedName}' has no valid WearNTear entries."));
+                return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(HomesteadLocalization.Format("hs_blueprint_no_valid_entries", savedName)));
             }
 
-            if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(ZoneBundleSerialization.Serialize(serverBlueprint), enforceUploadLimit: false, out byte[] responsePayload, out string payloadReason))
+            if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(HomesteadYaml.Serialize(serverBlueprint), enforceUploadLimit: false, out byte[] responsePayload, out string payloadReason))
             {
                 return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(payloadReason));
             }
 
-            Vector3 chestPosition = ZoneBlueprintCommands.GetPlanChestPosition(serverBlueprint, anchor, anchorRotation, chestRotation);
+            Vector3 chestPosition = ResolvePlanChestPosition(serverBlueprint, anchor, anchorRotation, requestedChestPosition, chestRotation);
             ownerPlatformId = string.IsNullOrWhiteSpace(ownerPlatformId)
-                ? ZonePlayerIdentity.ResolvePlatformId(null, sender, playerId)
+                ? HomesteadPlayerIdentity.ResolvePlatformId(null, sender, playerId)
                 : ownerPlatformId;
-            ZoneBundleCommandResult place = ZoneBlueprintPlanChestPrefab.PlacePlanChest(savedName, playerId, ownerPlatformId, anchor, anchorRotation, chestPosition, chestRotation);
+            HomesteadCommandResult place = ZoneBlueprintPlanChestPrefab.PlacePlanChest(savedName, playerId, ownerPlatformId, anchor, anchorRotation, chestPosition, chestRotation, sender);
             return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, new ZoneBlueprintPlanPlaceResponse
             {
                 Success = place.Success,
                 Message = place.Success && !string.Equals(savedName, request.Name, StringComparison.OrdinalIgnoreCase)
-                    ? $"{place.Message} Server saved it as '{savedName}' because the requested name already existed."
+                    ? HomesteadLocalization.Format("hs_blueprint_server_saved_as_existing", place.Message, savedName)
                     : place.Message,
                 RequestedName = request.Name,
                 BlueprintName = savedName,
+                Chest = place.Success ? ZoneTransformPayload.From(chestPosition, chestRotation) : null,
                 BlueprintEncoding = ZoneBlueprintNetworkPayload.GzipEncoding,
                 BlueprintPayload = place.Success ? responsePayload : []
             });
@@ -325,7 +350,7 @@ internal static class ZoneBlueprintPlanRpc
     private static void SendResponse(long target, ZoneBlueprintPlanRpcEnvelope response)
     {
         ZPackage package = new();
-        ZoneBlueprintNetworkPayload.WriteEnvelope(package, ZoneBundleSerialization.Serialize(response), response.BlueprintPayload);
+        ZoneBlueprintNetworkPayload.WriteEnvelope(package, HomesteadYaml.Serialize(response), response.BlueprintPayload);
         ZRoutedRpc.instance.InvokeRoutedRPC(target, ResponseRpcName, package);
     }
 
@@ -344,7 +369,7 @@ internal static class ZoneBlueprintPlanRpc
             {
                 if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(payload.BlueprintPayload, payload.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
                 {
-                    PreviewCache[payload.Name] = blueprint;
+                    CachePreview(payload.Name, blueprint);
                 }
                 else
                 {
@@ -360,13 +385,20 @@ internal static class ZoneBlueprintPlanRpc
         }
 
         ZoneBlueprintPlanPlaceResponse place = ReadPayload<ZoneBlueprintPlanPlaceResponse>(response);
+        if (place.Success)
+        {
+            TryPlayPlanChestPlaceVfx(place.Chest);
+        }
+
         if (place.Success && !string.IsNullOrWhiteSpace(place.BlueprintName) && place.BlueprintPayload.Length > 0)
         {
             try
             {
                 if (ZoneBlueprintNetworkPayload.TryDecodeBlueprintPayloadToYaml(place.BlueprintPayload, place.BlueprintEncoding, out string yaml, out string reason))
                 {
-                    ZoneBlueprintCommands.EnsureLocalBlueprintCopy(place.BlueprintName, yaml);
+                    ZoneBlueprintFile blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(yaml);
+                    CachePreview(place.BlueprintName, blueprint);
+                    ZoneBlueprintCommands.EnsureLocalPlanBlueprintCopy(place.BlueprintName, yaml);
                 }
                 else
                 {
@@ -385,40 +417,57 @@ internal static class ZoneBlueprintPlanRpc
         }
     }
 
+    private static void TryPlayPlanChestPlaceVfx(ZoneBlueprintStoreTransformPayload? chest)
+    {
+        if (ZNet.instance != null && ZNet.instance.IsServer())
+        {
+            return;
+        }
+
+        if (!ZoneTransformPayload.TryRead(chest, out Vector3 position, out Quaternion rotation) ||
+            !ZoneTransformPayload.IsFinite(position) ||
+            !ZoneTransformPayload.IsFinite(rotation))
+        {
+            return;
+        }
+
+        ZoneBlueprintPlanChestPrefab.PlayPlaceEffect(position, rotation);
+    }
+
     private static bool TryResolveRequester(long sender, out long playerId, out string reason)
     {
         playerId = 0L;
         reason = "";
         if (ZNet.instance == null || ZDOMan.instance == null)
         {
-            reason = "World is not ready.";
+            reason = HomesteadLocalization.Text("hs_common_world_not_ready");
             return false;
         }
 
         ZNetPeer peer = ZNet.instance.GetPeer(sender);
         if (peer == null || !peer.IsReady())
         {
-            reason = "Player is not ready.";
+            reason = HomesteadLocalization.Text("hs_common_player_not_ready");
             return false;
         }
 
         if (peer.m_characterID.IsNone())
         {
-            reason = "Could not resolve your character.";
+            reason = HomesteadLocalization.Text("hs_store_character_missing");
             return false;
         }
 
         ZDO character = ZDOMan.instance.GetZDO(peer.m_characterID);
         if (character == null)
         {
-            reason = "Could not resolve your character.";
+            reason = HomesteadLocalization.Text("hs_store_character_missing");
             return false;
         }
 
         playerId = character.GetLong(ZDOVars.s_playerID, 0L);
         if (playerId == 0L)
         {
-            reason = "Could not resolve your playerID.";
+            reason = HomesteadLocalization.Text("hs_dismantle_playerid_missing");
             return false;
         }
 
@@ -435,27 +484,28 @@ internal static class ZoneBlueprintPlanRpc
         return ZoneBlueprintNetworkPayload.ReadPayload<TPayload, ZoneBlueprintPlanRpcEnvelope>(envelope);
     }
 
-    private static ZoneBlueprintStoreTransformPayload ToTransformPayload(Vector3 position, Quaternion rotation)
+    private static Vector3 ResolvePlanChestPosition(
+        ZoneBlueprintFile blueprint,
+        Vector3 anchor,
+        Quaternion anchorRotation,
+        Vector3 requestedChestPosition,
+        Quaternion chestRotation)
     {
-        return new ZoneBlueprintStoreTransformPayload
+        if (!ZoneTransformPayload.IsFinite(requestedChestPosition) ||
+            requestedChestPosition.sqrMagnitude < 0.0001f ||
+            !IsWithinHorizontalDistance(anchor, requestedChestPosition, MaxRequestedChestDistanceFromAnchor))
         {
-            Pos = [position.x, position.y, position.z],
-            Rot = [rotation.x, rotation.y, rotation.z, rotation.w]
-        };
-    }
-
-    private static bool TryReadTransform(ZoneBlueprintStoreTransformPayload? payload, out Vector3 position, out Quaternion rotation)
-    {
-        position = Vector3.zero;
-        rotation = Quaternion.identity;
-        if (payload == null || payload.Pos.Length < 3 || payload.Rot.Length < 4)
-        {
-            return false;
+            return ZoneBlueprintCommands.GetPlanChestPosition(blueprint, anchor, anchorRotation, chestRotation);
         }
 
-        position = new Vector3(payload.Pos[0], payload.Pos[1], payload.Pos[2]);
-        rotation = new Quaternion(payload.Rot[0], payload.Rot[1], payload.Rot[2], payload.Rot[3]);
-        return true;
+        return requestedChestPosition;
+    }
+
+    private static bool IsWithinHorizontalDistance(Vector3 origin, Vector3 target, float maxDistance)
+    {
+        float dx = target.x - origin.x;
+        float dz = target.z - origin.z;
+        return dx * dx + dz * dz <= maxDistance * maxDistance;
     }
 
     private static void Message(string message, MessageHud.MessageType type)

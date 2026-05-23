@@ -59,8 +59,7 @@ internal static class ZoneBlueprintStorePreviewPayload
             ReadRequiredFloat(zdo, PreviewAnchorRotYKey),
             ReadRequiredFloat(zdo, PreviewAnchorRotZKey),
             ReadRequiredFloat(zdo, PreviewAnchorRotWKey));
-        if (!IsFinite(anchor.x) || !IsFinite(anchor.y) || !IsFinite(anchor.z) ||
-            !IsFinite(rotation.x) || !IsFinite(rotation.y) || !IsFinite(rotation.z) || !IsFinite(rotation.w))
+        if (!ZoneTransformPayload.IsFinite(anchor) || !ZoneTransformPayload.IsFinite(rotation))
         {
             return false;
         }
@@ -72,11 +71,6 @@ internal static class ZoneBlueprintStorePreviewPayload
     private static float ReadRequiredFloat(ZDO zdo, string key)
     {
         return zdo.GetFloat(key, float.NaN);
-    }
-
-    private static bool IsFinite(float value)
-    {
-        return !float.IsNaN(value) && !float.IsInfinity(value);
     }
 
     public static ZoneBlueprintFile CreatePreviewBlueprint(ZoneBlueprintFile source)

@@ -6,12 +6,14 @@ namespace Homestead;
 internal sealed class ZoneAreaTargetOverlay
 {
     private const int MaxHighlightedTargets = 1600;
+    private const int MaxCandidateInspections = 2500;
     public const float BoundaryCandidatePadding = 24f;
     private static readonly Color IncludedBoundaryColor = new(1f, 0.9f, 0.12f, 1f);
     private static readonly Color ExcludedBoundaryColor = new(1f, 0.45f, 0.05f, 1f);
 
     private readonly Dictionary<ZDOID, bool> _highlighted = [];
     private readonly Dictionary<ZDOID, bool> _nextHighlighted = [];
+    private readonly List<OverlayCandidate> _candidateBuffer = [];
 
     public ZoneAreaTargetOverlay(Transform parent, string objectPrefix)
     {
@@ -20,14 +22,44 @@ internal sealed class ZoneAreaTargetOverlay
     public void Draw(IReadOnlyList<ZDO> candidates, ZoneAreaSelection selection)
     {
         _nextHighlighted.Clear();
-        int count = 0;
-        foreach (ZDO zdo in candidates)
+        _candidateBuffer.Clear();
+        float candidateRadius = selection.HalfDiagonal + BoundaryCandidatePadding;
+        float candidateRadiusSqr = candidateRadius * candidateRadius;
+        for (int i = 0; i < candidates.Count; i++)
         {
-            if (count >= MaxHighlightedTargets)
+            ZDO zdo = candidates[i];
+            if (zdo == null || !zdo.IsValid())
+            {
+                continue;
+            }
+
+            Vector3 position = zdo.GetPosition();
+            if (HorizontalDistanceSqr(position, selection.Center) > candidateRadiusSqr)
+            {
+                continue;
+            }
+
+            if (!TryEstimateBoundaryPriority(position, selection, out float boundaryPriority))
+            {
+                continue;
+            }
+
+            _candidateBuffer.Add(new OverlayCandidate(zdo, boundaryPriority));
+        }
+
+        _candidateBuffer.Sort((left, right) => left.BoundaryPriority.CompareTo(right.BoundaryPriority));
+
+        int count = 0;
+        int inspected = 0;
+        foreach (OverlayCandidate candidate in _candidateBuffer)
+        {
+            if (count >= MaxHighlightedTargets || inspected >= MaxCandidateInspections)
             {
                 break;
             }
 
+            inspected++;
+            ZDO zdo = candidate.Zdo;
             if (!TryClassifyBoundary(zdo, selection, out bool included))
             {
                 continue;
@@ -44,6 +76,7 @@ internal sealed class ZoneAreaTargetOverlay
                 count++;
             }
         }
+        _candidateBuffer.Clear();
 
         foreach (KeyValuePair<ZDOID, bool> previous in _highlighted)
         {
@@ -69,6 +102,7 @@ internal sealed class ZoneAreaTargetOverlay
 
         _highlighted.Clear();
         _nextHighlighted.Clear();
+        _candidateBuffer.Clear();
     }
 
     public void Destroy()
@@ -124,7 +158,7 @@ internal sealed class ZoneAreaTargetOverlay
         }
 
         Vector3 scale = zdo.GetVec3(ZDOVars.s_scaleHash, prefab.transform.localScale);
-        if (!ZoneBundleTerrain.TryGetWearNTearBounds(prefab, position, zdo.GetRotation(), scale, out Bounds bounds))
+        if (!HomesteadTerrainSupport.TryGetWearNTearBounds(prefab, position, zdo.GetRotation(), scale, out Bounds bounds))
         {
             return false;
         }
@@ -175,4 +209,34 @@ internal sealed class ZoneAreaTargetOverlay
         return dx * dx + dz * dz;
     }
 
+    private static bool TryEstimateBoundaryPriority(Vector3 position, ZoneAreaSelection selection, out float boundaryPriority)
+    {
+        Vector3 local = Quaternion.Inverse(selection.Rotation) * (position - selection.Center);
+        float halfWidth = selection.Width * 0.5f;
+        float halfDepth = selection.Depth * 0.5f;
+        float absX = Mathf.Abs(local.x);
+        float absZ = Mathf.Abs(local.z);
+        float edgeX = Mathf.Abs(absX - halfWidth);
+        float edgeZ = Mathf.Abs(absZ - halfDepth);
+        float outsideX = Mathf.Max(absX - halfWidth, 0f);
+        float outsideZ = Mathf.Max(absZ - halfDepth, 0f);
+        float insideToNearestEdge = Mathf.Min(halfWidth - absX, halfDepth - absZ);
+
+        boundaryPriority = Mathf.Min(edgeX, edgeZ);
+        return outsideX <= BoundaryCandidatePadding &&
+               outsideZ <= BoundaryCandidatePadding &&
+               insideToNearestEdge <= BoundaryCandidatePadding;
+    }
+
+    private readonly struct OverlayCandidate
+    {
+        public OverlayCandidate(ZDO zdo, float boundaryPriority)
+        {
+            Zdo = zdo;
+            BoundaryPriority = boundaryPriority;
+        }
+
+        public ZDO Zdo { get; }
+        public float BoundaryPriority { get; }
+    }
 }

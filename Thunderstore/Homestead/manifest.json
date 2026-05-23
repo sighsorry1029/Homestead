@@ -1,0 +1,10 @@
+{
+  "name": "Homestead",
+  "version_number": "1.0.8",
+  "website_url": "https://github.com/sighsorry1029/Homestead",
+  "description": "Player-facing Valheim construction tools: native blueprints, blueprint trading, area save/dismantle, build camera controls, placement helpers, and Dvergr circlet QoL.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2202",
+    "ValheimModding-Jotunn-2.29.0"
+  ]
+}

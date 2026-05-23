@@ -1,8 +1,15 @@
 using System;
 using System.Collections.Generic;
+using BepInEx.Logging;
 using HarmonyLib;
 
+using Plugin = Homestead.HomesteadPlugin;
 namespace Homestead;
+
+internal static class VersionHandshakeLogger
+{
+    public static ManualLogSource Log => Plugin.HomesteadLogger;
+}
 
 [HarmonyPatch(typeof(ZNet), nameof(ZNet.OnNewConnection))]
 public static class RegisterAndCheckVersion
@@ -10,14 +17,14 @@ public static class RegisterAndCheckVersion
     private static void Prefix(ZNetPeer peer, ref ZNet __instance)
     {
         // Register version check call
-        HomesteadPlugin.HomesteadLogger.LogDebug("Registering version RPC handler");
-        peer.m_rpc.Register($"{HomesteadPlugin.ModName}_VersionCheck", new Action<ZRpc, ZPackage>(RpcHandlers.RPC_Homestead_Version));
+        VersionHandshakeLogger.Log.LogDebug("Registering version RPC handler");
+        peer.m_rpc.Register($"{Plugin.ModName}_VersionCheck", new Action<ZRpc, ZPackage>(RpcHandlers.RPC_ModVersion));
 
         // Make calls to check versions
-        HomesteadPlugin.HomesteadLogger.LogInfo("Invoking version check");
+        VersionHandshakeLogger.Log.LogInfo("Invoking version check");
         ZPackage zpackage = new();
-        zpackage.Write(HomesteadPlugin.ModVersion);
-        peer.m_rpc.Invoke($"{HomesteadPlugin.ModName}_VersionCheck", zpackage);
+        zpackage.Write(Plugin.ModVersion);
+        peer.m_rpc.Invoke($"{Plugin.ModName}_VersionCheck", zpackage);
     }
 }
 
@@ -28,7 +35,7 @@ public static class VerifyClient
     {
         if (!__instance.IsServer() || RpcHandlers.ValidatedPeers.Contains(rpc)) return true;
         // Disconnect peer if they didn't send mod version at all
-        HomesteadPlugin.HomesteadLogger.LogWarning($"Peer ({rpc.m_socket.GetHostName()}) never sent version or couldn't due to previous disconnect, disconnecting");
+        VersionHandshakeLogger.Log.LogWarning($"Peer ({rpc.m_socket.GetHostName()}) never sent version or couldn't due to previous disconnect, disconnecting");
         rpc.Invoke("Error", 3);
         return false; // Prevent calling underlying method
     }
@@ -44,7 +51,7 @@ public class ShowConnectionError
         {
             __instance.m_connectionFailedError.fontSizeMax = 25;
             __instance.m_connectionFailedError.fontSizeMin = 15;
-            __instance.m_connectionFailedError.text += $"\n{HomesteadPlugin.ConnectionError}";
+            __instance.m_connectionFailedError.text += $"\n{Plugin.ConnectionError}";
         }
     }
 }
@@ -56,7 +63,7 @@ public static class RemoveDisconnectedPeerFromVerified
     {
         if (!__instance.IsServer()) return;
         // Remove peer from validated list
-        HomesteadPlugin.HomesteadLogger.LogInfo($"Peer ({peer.m_rpc.m_socket.GetHostName()}) disconnected, removing from validated list");
+        VersionHandshakeLogger.Log.LogInfo($"Peer ({peer.m_rpc.m_socket.GetHostName()}) disconnected, removing from validated list");
         _ = RpcHandlers.ValidatedPeers.Remove(peer.m_rpc);
     }
 }
@@ -65,16 +72,16 @@ public static class RpcHandlers
 {
     public static readonly List<ZRpc> ValidatedPeers = new();
 
-    public static void RPC_Homestead_Version(ZRpc rpc, ZPackage pkg)
+    public static void RPC_ModVersion(ZRpc rpc, ZPackage pkg)
     {
         string? version = pkg.ReadString();
-        HomesteadPlugin.HomesteadLogger.LogInfo($"Version check, local: {HomesteadPlugin.ModVersion},  remote: {version}");
-        if (version != HomesteadPlugin.ModVersion)
+        VersionHandshakeLogger.Log.LogInfo($"Version check, local: {Plugin.ModVersion},  remote: {version}");
+        if (version != Plugin.ModVersion)
         {
-            HomesteadPlugin.ConnectionError = $"{HomesteadPlugin.ModName} Installed: {HomesteadPlugin.ModVersion}\n Needed: {version}";
+            Plugin.ConnectionError = $"{Plugin.ModName} Installed: {Plugin.ModVersion}\n Needed: {version}";
             if (!ZNet.instance.IsServer()) return;
             // Different versions - force disconnect client from server
-            HomesteadPlugin.HomesteadLogger.LogWarning($"Peer ({rpc.m_socket.GetHostName()}) has incompatible version, disconnecting...");
+            VersionHandshakeLogger.Log.LogWarning($"Peer ({rpc.m_socket.GetHostName()}) has incompatible version, disconnecting...");
             rpc.Invoke("Error", 3);
         }
         else
@@ -82,12 +89,12 @@ public static class RpcHandlers
             if (!ZNet.instance.IsServer())
             {
                 // Enable mod on client if versions match
-                HomesteadPlugin.HomesteadLogger.LogInfo("Received same version from server!");
+                VersionHandshakeLogger.Log.LogInfo("Received same version from server!");
             }
             else
             {
                 // Add client to validated list
-                HomesteadPlugin.HomesteadLogger.LogInfo($"Adding peer ({rpc.m_socket.GetHostName()}) to validated list");
+                VersionHandshakeLogger.Log.LogInfo($"Adding peer ({rpc.m_socket.GetHostName()}) to validated list");
                 ValidatedPeers.Add(rpc);
             }
         }

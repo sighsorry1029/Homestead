@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -75,7 +75,73 @@ internal static class ZoneBlueprintStoreChestPrefab
         RegisterPrefab();
     }
 
-    public static ZoneBundleCommandResult PlacePurchaseChest(
+    private static bool TryValidatePlacement(
+        StoreChestPlacementRequest request,
+        int requestedCount,
+        out GameObject prefab,
+        out HomesteadCommandResult failure)
+    {
+        RegisterPrefab();
+        prefab = null!;
+        failure = HomesteadCommandResult.Fail("");
+        if (!ZoneBlueprintChestLifecycle.CanPlaceChests(request.OwnerPlatformId, requestedCount, out string limitReason))
+        {
+            failure = HomesteadCommandResult.Fail(limitReason);
+            return false;
+        }
+
+        GameObject? resolvedPrefab = GetPrefab(request.Definition);
+        if (!resolvedPrefab)
+        {
+            failure = HomesteadCommandResult.Fail(GetPrefabNotReadyMessage(request.Mode));
+            return false;
+        }
+
+        prefab = resolvedPrefab;
+        return true;
+    }
+
+    private static GameObject SpawnChest(StoreChestPlacementRequest request, GameObject prefab)
+    {
+        GameObject chest = Object.Instantiate(prefab, request.Position, request.Rotation);
+        ZNetView nview = chest.GetComponent<ZNetView>();
+        if (nview != null && nview.IsValid())
+        {
+            ZDO zdo = nview.GetZDO();
+            zdo.Set(ZDOVars.s_creator, request.OwnerPlayerId);
+            zdo.Set(ZDOVars.s_creatorName, request.OwnerName);
+            ZoneBlueprintChestLifecycle.SetOwnerPlatformId(zdo, request.OwnerPlatformId);
+        }
+
+        return chest;
+    }
+
+    private static ZoneBlueprintStoreChest GetStoreChest(GameObject chest)
+    {
+        return chest.GetComponent<ZoneBlueprintStoreChest>() ?? chest.AddComponent<ZoneBlueprintStoreChest>();
+    }
+
+    private static void CompletePlacement(StoreChestPlacementRequest request, GameObject chest, bool broadcast)
+    {
+        ZoneChestPlacement.PlayPlaceEffect(chest);
+        ZoneChestPlacement.SafeOnPlaced(chest, _logger, "Store chest");
+        if (broadcast)
+        {
+            ZoneBlueprintChestVfx.BroadcastPlace(request.Mode, ZoneTransformPayload.From(request.Position, request.Rotation), request.VfxExcludePeer);
+        }
+    }
+
+    private static string GetPrefabNotReadyMessage(string mode)
+    {
+        return mode switch
+        {
+            ZoneBlueprintStoreChest.ModePrice => HomesteadLocalization.Text("hs_store_price_chest_prefab_not_ready"),
+            ZoneBlueprintStoreChest.ModePayout => HomesteadLocalization.Text("hs_store_payout_chest_prefab_not_ready"),
+            _ => HomesteadLocalization.Text("hs_store_purchase_chest_prefab_not_ready")
+        };
+    }
+
+    public static HomesteadCommandResult PlacePurchaseChest(
         ZoneBlueprintStoreListing listing,
         IReadOnlyList<ZoneBlueprintStorePriceItem> priceItems,
         string offerId,
@@ -85,45 +151,41 @@ internal static class ZoneBlueprintStoreChestPrefab
         Vector3 position,
         Quaternion rotation,
         Vector3 previewAnchor,
-        Quaternion previewRotation)
+        Quaternion previewRotation,
+        long vfxExcludePeer = 0L)
     {
-        RegisterPrefab();
-        if (!ZoneBlueprintChestLifecycle.CanPlaceChests(buyerPlatformId, requestedCount: 1, out string limitReason))
+        StoreChestPlacementRequest placement = new(
+            PurchaseChest,
+            ZoneBlueprintStoreChest.ModePurchase,
+            buyerPlayerId,
+            buyerName,
+            buyerPlatformId,
+            position,
+            rotation,
+            vfxExcludePeer);
+        if (!TryValidatePlacement(placement, requestedCount: 1, out GameObject prefab, out HomesteadCommandResult failure))
         {
-            return ZoneBundleCommandResult.Fail(limitReason);
+            return failure;
         }
 
-        GameObject? prefab = GetPrefab(PurchaseChest);
-        if (!prefab)
+        GameObject? chest = null;
+        try
         {
-            return ZoneBundleCommandResult.Fail(HomesteadLocalization.Text("hs_store_purchase_chest_prefab_not_ready"));
-        }
+            chest = SpawnChest(placement, prefab);
+            ZoneBlueprintStoreChest storeChest = GetStoreChest(chest);
+            storeChest.SetPurchase(listing, priceItems, offerId, buyerPlayerId, buyerName, buyerPlatformId, previewAnchor, previewRotation);
+            CompletePlacement(placement, chest, broadcast: true);
 
-        GameObject chest = Object.Instantiate(prefab, position, rotation);
-        ZNetView nview = chest.GetComponent<ZNetView>();
-        if (nview != null && nview.IsValid())
+            return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_store_purchase_chest_placed", listing.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)));
+        }
+        catch (Exception ex)
         {
-            ZDO zdo = nview.GetZDO();
-            zdo.Set(ZDOVars.s_creator, buyerPlayerId);
-            zdo.Set(ZDOVars.s_creatorName, buyerName);
-            ZoneBlueprintChestLifecycle.SetOwnerPlatformId(zdo, buyerPlatformId);
+            ZoneChestPlacement.DestroySpawned(chest);
+            return HomesteadCommandResult.Fail(FormatStoreChestPlaceFailed(ex));
         }
-
-        Piece piece = chest.GetComponent<Piece>();
-        if (piece != null)
-        {
-            piece.m_placeEffect.Create(chest.transform.position, chest.transform.rotation, chest.transform);
-        }
-
-        WearNTear wearNTear = chest.GetComponent<WearNTear>();
-        wearNTear?.OnPlaced();
-
-        ZoneBlueprintStoreChest storeChest = chest.GetComponent<ZoneBlueprintStoreChest>() ?? chest.AddComponent<ZoneBlueprintStoreChest>();
-        storeChest.SetPurchase(listing, priceItems, offerId, buyerPlayerId, buyerName, buyerPlatformId, previewAnchor, previewRotation);
-        return ZoneBundleCommandResult.Ok(HomesteadLocalization.Format("hs_store_purchase_chest_placed", listing.Name, ZoneBlueprintStore.FormatPrice(priceItems)));
     }
 
-    public static ZoneBundleCommandResult PlacePriceChest(
+    public static HomesteadCommandResult PlacePriceChest(
         string listingId,
         string blueprintName,
         string blueprintFile,
@@ -135,74 +197,76 @@ internal static class ZoneBlueprintStoreChestPrefab
         Vector3 position,
         Quaternion rotation,
         Vector3 previewAnchor,
-        Quaternion previewRotation)
+        Quaternion previewRotation,
+        long vfxExcludePeer = 0L)
     {
-        RegisterPrefab();
-        if (!ZoneBlueprintChestLifecycle.CanPlaceChests(sellerPlatformId, requestedCount: 1, out string limitReason))
+        StoreChestPlacementRequest placement = new(
+            PriceChest,
+            ZoneBlueprintStoreChest.ModePrice,
+            sellerPlayerId,
+            sellerName,
+            sellerPlatformId,
+            position,
+            rotation,
+            vfxExcludePeer);
+        if (!TryValidatePlacement(placement, requestedCount: 1, out GameObject prefab, out HomesteadCommandResult failure))
         {
-            return ZoneBundleCommandResult.Fail(limitReason);
+            return failure;
         }
 
-        GameObject? prefab = GetPrefab(PriceChest);
-        if (!prefab)
+        GameObject? chest = null;
+        try
         {
-            return ZoneBundleCommandResult.Fail(HomesteadLocalization.Text("hs_store_price_chest_prefab_not_ready"));
-        }
+            chest = SpawnChest(placement, prefab);
+            ZoneBlueprintStoreChest storeChest = GetStoreChest(chest);
+            storeChest.SetPriceDraft(listingId, blueprintName, blueprintFile, iconPngBase64, entryCount, sellerPlayerId, sellerName, sellerPlatformId, previewAnchor, previewRotation);
+            CompletePlacement(placement, chest, broadcast: true);
 
-        GameObject chest = Object.Instantiate(prefab, position, rotation);
-        ZNetView nview = chest.GetComponent<ZNetView>();
-        if (nview != null && nview.IsValid())
+            return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_store_price_chest_placed", blueprintName));
+        }
+        catch (Exception ex)
         {
-            ZDO zdo = nview.GetZDO();
-            zdo.Set(ZDOVars.s_creator, sellerPlayerId);
-            zdo.Set(ZDOVars.s_creatorName, sellerName);
-            ZoneBlueprintChestLifecycle.SetOwnerPlatformId(zdo, sellerPlatformId);
+            ZoneChestPlacement.DestroySpawned(chest);
+            return HomesteadCommandResult.Fail(FormatStoreChestPlaceFailed(ex));
         }
-
-        Piece piece = chest.GetComponent<Piece>();
-        if (piece != null)
-        {
-            piece.m_placeEffect.Create(chest.transform.position, chest.transform.rotation, chest.transform);
-        }
-
-        WearNTear wearNTear = chest.GetComponent<WearNTear>();
-        wearNTear?.OnPlaced();
-
-        ZoneBlueprintStoreChest storeChest = chest.GetComponent<ZoneBlueprintStoreChest>() ?? chest.AddComponent<ZoneBlueprintStoreChest>();
-        storeChest.SetPriceDraft(listingId, blueprintName, blueprintFile, iconPngBase64, entryCount, sellerPlayerId, sellerName, sellerPlatformId, previewAnchor, previewRotation);
-        return ZoneBundleCommandResult.Ok(HomesteadLocalization.Format("hs_store_price_chest_placed", blueprintName));
     }
 
-    public static ZoneBundleCommandResult PlacePayoutChests(
+    public static HomesteadCommandResult PlacePayoutChests(
         IReadOnlyList<ZoneBlueprintStorePriceItem> payoutItems,
         long sellerPlayerId,
         string sellerName,
         string sellerPlatformId,
         Vector3 basePosition,
         Quaternion rotation,
-        bool positionIsAnchor)
+        bool positionIsAnchor,
+        out List<ZoneBlueprintStoreTransformPayload> chestTransforms,
+        long vfxExcludePeer = 0L)
     {
-        RegisterPrefab();
-        GameObject? prefab = GetPrefab(PayoutChest);
-        if (!prefab)
-        {
-            return ZoneBundleCommandResult.Fail(HomesteadLocalization.Text("hs_store_payout_chest_prefab_not_ready"));
-        }
-
+        chestTransforms = [];
         if (!ZoneMaterialEscrow.TrySplitIntoStacks(payoutItems, out List<ZoneBlueprintStorePriceItem> stacks, out string reason))
         {
-            return ZoneBundleCommandResult.Fail(reason);
+            return HomesteadCommandResult.Fail(reason);
         }
 
         const int chestCapacity = 32;
         int chestCount = Mathf.CeilToInt(stacks.Count / (float)chestCapacity);
         if (chestCount <= 0)
         {
-            return ZoneBundleCommandResult.Fail(HomesteadLocalization.Text("hs_store_no_payout_materials"));
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_store_no_payout_materials"));
         }
-        if (!ZoneBlueprintChestLifecycle.CanPlaceChests(sellerPlatformId, chestCount, out string limitReason))
+
+        StoreChestPlacementRequest validationPlacement = new(
+            PayoutChest,
+            ZoneBlueprintStoreChest.ModePayout,
+            sellerPlayerId,
+            sellerName,
+            sellerPlatformId,
+            basePosition,
+            rotation,
+            vfxExcludePeer);
+        if (!TryValidatePlacement(validationPlacement, chestCount, out GameObject prefab, out HomesteadCommandResult failure))
         {
-            return ZoneBundleCommandResult.Fail(limitReason);
+            return failure;
         }
 
         List<GameObject> spawned = [];
@@ -217,47 +281,54 @@ internal static class ZoneBlueprintStoreChestPrefab
                 float zOffset = (positionIsAnchor ? 0f : 2.2f) + (chestIndex / 4) * 1.8f;
                 Vector3 localOffset = new((chestIndex % 4) * 1.8f - Mathf.Min(chestCount - 1, 3) * 0.9f, 0f, zOffset);
                 Vector3 position = basePosition + rotation * localOffset;
-                position.y = SampleGroundY(position.x, position.z, position.y);
+                if (positionIsAnchor)
+                {
+                    position.y = basePosition.y;
+                }
+                else
+                {
+                    position.y = SampleGroundY(position.x, position.z, position.y);
+                }
 
-                GameObject chest = Object.Instantiate(prefab, position, rotation);
+                StoreChestPlacementRequest placement = new(
+                    PayoutChest,
+                    ZoneBlueprintStoreChest.ModePayout,
+                    sellerPlayerId,
+                    sellerName,
+                    sellerPlatformId,
+                    position,
+                    rotation,
+                    vfxExcludePeer);
+                GameObject chest = SpawnChest(placement, prefab);
                 spawned.Add(chest);
-                ZNetView nview = chest.GetComponent<ZNetView>();
-                if (nview != null && nview.IsValid())
-                {
-                    ZDO zdo = nview.GetZDO();
-                    zdo.Set(ZDOVars.s_creator, sellerPlayerId);
-                    zdo.Set(ZDOVars.s_creatorName, sellerName);
-                    ZoneBlueprintChestLifecycle.SetOwnerPlatformId(zdo, sellerPlatformId);
-                }
-
-                Piece piece = chest.GetComponent<Piece>();
-                if (piece != null)
-                {
-                    piece.m_placeEffect.Create(chest.transform.position, chest.transform.rotation, chest.transform);
-                }
-
-                WearNTear wearNTear = chest.GetComponent<WearNTear>();
-                wearNTear?.OnPlaced();
-
-                ZoneBlueprintStoreChest storeChest = chest.GetComponent<ZoneBlueprintStoreChest>() ?? chest.AddComponent<ZoneBlueprintStoreChest>();
+                ZoneBlueprintStoreChest storeChest = GetStoreChest(chest);
                 storeChest.SetPayout(sellerPlayerId, sellerName, sellerPlatformId);
+                CompletePlacement(placement, chest, broadcast: false);
                 if (!storeChest.PreparePayoutInventory(chestStacks))
                 {
                     throw new InvalidOperationException(HomesteadLocalization.Text("hs_store_payout_chest_fill_failed"));
                 }
+
+                chestTransforms.Add(ZoneTransformPayload.From(position, rotation));
             }
         }
         catch (Exception ex)
         {
             foreach (GameObject chest in spawned.Where(chest => chest != null && chest))
             {
-                Object.Destroy(chest);
+                ZoneChestPlacement.DestroySpawned(chest);
             }
 
-            return ZoneBundleCommandResult.Fail(HomesteadLocalization.Format("hs_store_payout_chest_place_failed", ex.Message));
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_store_payout_chest_place_failed", ex.Message));
         }
 
-        return ZoneBundleCommandResult.Ok(HomesteadLocalization.Format("hs_store_payout_chest_placed", chestCount));
+        ZoneBlueprintChestVfx.BroadcastPlace(ZoneBlueprintStoreChest.ModePayout, chestTransforms, vfxExcludePeer);
+        return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_store_payout_chest_placed", chestCount));
+    }
+
+    private static string FormatStoreChestPlaceFailed(Exception ex)
+    {
+        return HomesteadLocalization.Format("hs_store_chest_place_failed", ex.Message);
     }
 
     public static GameObject? CreatePreview(string mode)
@@ -285,14 +356,7 @@ internal static class ZoneBlueprintStoreChestPrefab
     {
         RegisterPrefab();
         GameObject? prefab = GetPrefab(GetDefinitionForMode(mode));
-        Piece piece = prefab != null && prefab ? prefab.GetComponent<Piece>() : null!;
-        if (piece == null)
-        {
-            return false;
-        }
-
-        piece.m_placeEffect.Create(position, rotation, null);
-        return true;
+        return ZoneChestPlacement.PlayPlaceEffect(prefab, position, rotation);
     }
 
     internal static Sprite? GetIconForPrefabHash(int prefabHash)
@@ -435,5 +499,37 @@ internal static class ZoneBlueprintStoreChestPrefab
         public Container.PrivacySetting Privacy { get; }
         public int PrefabHash { get; }
         public bool Registered { get; set; }
+    }
+
+    private sealed class StoreChestPlacementRequest
+    {
+        public StoreChestPlacementRequest(
+            ChestPrefabDefinition definition,
+            string mode,
+            long ownerPlayerId,
+            string ownerName,
+            string ownerPlatformId,
+            Vector3 position,
+            Quaternion rotation,
+            long vfxExcludePeer)
+        {
+            Definition = definition;
+            Mode = mode;
+            OwnerPlayerId = ownerPlayerId;
+            OwnerName = ownerName;
+            OwnerPlatformId = ownerPlatformId;
+            Position = position;
+            Rotation = rotation;
+            VfxExcludePeer = vfxExcludePeer;
+        }
+
+        public ChestPrefabDefinition Definition { get; }
+        public string Mode { get; }
+        public long OwnerPlayerId { get; }
+        public string OwnerName { get; }
+        public string OwnerPlatformId { get; }
+        public Vector3 Position { get; }
+        public Quaternion Rotation { get; }
+        public long VfxExcludePeer { get; }
     }
 }

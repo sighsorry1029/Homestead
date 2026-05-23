@@ -6,62 +6,79 @@ namespace Homestead;
 
 internal static class HomesteadFeatureBootstrap
 {
+    private static Player? _lastLocalPlayer;
+
     public static void Initialize(ManualLogSource logger, Harmony harmony)
     {
-        ZoneLimitConfiguration.Initialize(HomesteadPlugin.ConfigSync, logger);
-        ZonePieceCounter.Initialize(logger);
+        ZoneSessionResetRegistry.Initialize(logger);
         ZoneBlueprintCommands.Initialize(logger);
         ZoneBlueprintSaveTool.Initialize(logger);
         ZoneAreaDismantleTool.Initialize(logger);
         ZoneBlueprintPlacementTool.Initialize(logger);
+        ZoneBlueprintChestVfx.Initialize(logger);
         ZoneBlueprintPlanChestPrefab.Initialize(logger);
         ZoneBlueprintChestZdoRegistry.Initialize(logger);
         ZoneBlueprintChestMapPins.Initialize(logger);
         ZoneBlueprintChestCommands.Initialize(logger);
         ZoneBlueprintStore.Initialize(logger);
-        ZoneBundleCommands.Initialize(logger);
-        AutoArchiveStore.Initialize(logger);
-        AutoArchiveService.Initialize(logger);
-        AutoArchiveCommands.Initialize(logger);
         ZoneBuildCamera.Initialize(logger);
         ZoneGridSnap.Initialize(logger);
         ZonePlacementAdjust.Initialize(logger);
         ZoneDvergrCirclet.Initialize(logger);
+        RegisterSessionResetters();
 
         harmony.PatchAll(Assembly.GetExecutingAssembly());
+        VeiledRecipesCompat.Initialize(logger);
         AzuCraftyBoxesCompat.Initialize(logger, harmony);
         ZoneWorldEditTerrainCompat.Initialize(logger, harmony);
     }
 
+    private static void RegisterSessionResetters()
+    {
+        ZoneSessionResetRegistry.Register("Blueprint RPC queue", ZoneBlueprintNetworkPayload.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Blueprint menu", ZoneBlueprintSaveToolMenu.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Blueprint plan RPC", ZoneBlueprintPlanRpc.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Blueprint store", ZoneBlueprintStore.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("ContentsWithin preview", ZoneContentsWithinBlueprintChestPreview.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Dvergr circlet", ZoneDvergrCirclet.ResetForWorldSession);
+    }
+
     public static void Update()
     {
-        ZoneBundleCommands.RegisterRpcs();
         ZoneBlueprintNetworkPayload.Update();
         ZoneBlueprintChestZdoRegistry.Update();
         ZoneBlueprintChestCommands.RegisterRpcs();
+        ZoneBlueprintChestVfx.Update();
         ZoneAreaDismantleTool.RegisterRpcs();
-        AutoArchiveCommands.RegisterRpcs();
-        ZoneWorldEditTerrainCompat.Update();
         ZoneBlueprintSaveToolMenu.Update();
         ZoneBlueprintPlanRpc.Update();
         ZoneBlueprintStore.Update();
-        AutoArchiveService.Update();
         ZoneBuildCamera.Update();
-        ZoneBoundaryOverlay.Update();
         ZoneGridSnap.Update();
         ZoneDvergrCirclet.Update();
+        VeiledRecipesCompat.Update();
         AzuCraftyBoxesCompat.Update();
+        ZoneWorldEditTerrainCompat.Update();
     }
 
     public static void Shutdown()
     {
-        ZonePieceCounter.Clear();
         ZoneBuildCamera.Shutdown();
-        ZoneBoundaryOverlay.Shutdown();
+        ZoneSessionResetRegistry.ResetForWorldSession("shutdown");
         ZoneBlueprintChestMapPins.Shutdown();
         ZoneBlueprintChestZdoRegistry.Shutdown();
-        AutoArchiveService.Shutdown();
-        AutoArchiveStore.Flush(force: true);
         ZoneBlueprintStoreDraftRepository.Flush(force: true);
+    }
+
+    public static void OnLocalPlayerSet()
+    {
+        Player? player = Player.m_localPlayer;
+        if (player == null || player == _lastLocalPlayer)
+        {
+            return;
+        }
+
+        _lastLocalPlayer = player;
+        ZoneSessionResetRegistry.ResetForWorldSession("local player changed");
     }
 }

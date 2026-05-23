@@ -32,6 +32,16 @@ internal static class ZoneAreaToolShared
         depth = Mathf.Clamp(depth * scale, minSide, maxSide);
     }
 
+    public static void ResizeDepth(ref float depth, float delta, float minSide, float maxSide)
+    {
+        depth = Mathf.Clamp(depth + delta, minSide, maxSide);
+    }
+
+    public static void ResizeWidth(ref float width, float delta, float minSide, float maxSide)
+    {
+        width = Mathf.Clamp(width + delta, minSide, maxSide);
+    }
+
     public static void DrawGroundRectangle(LineRenderer line, ZoneAreaSelection area, Vector3 center, float heightOffset, Color color)
     {
         line.enabled = true;
@@ -100,20 +110,30 @@ internal static class ZoneAreaToolShared
         return $"{Mathf.RoundToInt(width)}x{Mathf.RoundToInt(depth)}m";
     }
 
-    public static float RoundOffset(float value)
+    public static string FormatScaleInput()
     {
-        return Mathf.Round(value * 1000f) / 1000f;
+        return string.IsNullOrWhiteSpace(PlacementControlConfig.AreaUniformScaleInputLabel)
+            ? HomesteadLocalization.Text("hs_common_unbound")
+            : PlacementControlConfig.AreaUniformScaleInputLabel;
+    }
+
+    public static string FormatDepthInput()
+    {
+        return string.IsNullOrWhiteSpace(BlueprintConfig.AreaToolDepthInputLabel)
+            ? HomesteadLocalization.Text("hs_common_unbound")
+            : BlueprintConfig.AreaToolDepthInputLabel;
+    }
+
+    public static string FormatWidthInput()
+    {
+        return string.IsNullOrWhiteSpace(BlueprintConfig.AreaToolWidthInputLabel)
+            ? HomesteadLocalization.Text("hs_common_unbound")
+            : BlueprintConfig.AreaToolWidthInputLabel;
     }
 
     public static bool TryGetAimPoint(Player player, float maxSelectableSide, out Vector3 point)
     {
         return ZoneToolAim.TryGetAimPoint(player, maxSelectableSide * 2f, out point);
-    }
-
-    public static bool IsHoldingBuildTool(Player player)
-    {
-        ItemDrop.ItemData rightItem = ((Humanoid)player).GetRightItem();
-        return rightItem?.m_shared?.m_buildPieces != null;
     }
 
     public static bool ShouldBlockInput()

@@ -424,7 +424,7 @@ internal static class ZoneMaterialEscrow
             return 0;
         }
 
-        GameObject? prefab = ZoneBlueprintStore.FindItemPrefab(requirement.PrefabName);
+        GameObject? prefab = ZoneBlueprintStoreVisuals.FindItemPrefab(requirement.PrefabName);
         ItemDrop? itemDrop = prefab ? prefab.GetComponent<ItemDrop>() : null;
         if (itemDrop == null)
         {
@@ -622,7 +622,7 @@ internal static class ZoneMaterialEscrow
         reason = "";
         foreach (ZoneBlueprintStorePriceItem item in ToPriceItems(ToRequirements(payoutItems)))
         {
-            GameObject? prefab = ZoneBlueprintStore.FindItemPrefab(item.PrefabName);
+            GameObject? prefab = ZoneBlueprintStoreVisuals.FindItemPrefab(item.PrefabName);
             ItemDrop? itemDrop = prefab ? prefab.GetComponent<ItemDrop>() : null;
             if (itemDrop == null)
             {
@@ -664,7 +664,7 @@ internal static class ZoneMaterialEscrow
 
         foreach (ZoneBlueprintStorePriceItem stack in stacks)
         {
-            GameObject? prefab = ZoneBlueprintStore.FindItemPrefab(stack.PrefabName);
+            GameObject? prefab = ZoneBlueprintStoreVisuals.FindItemPrefab(stack.PrefabName);
             ItemDrop? itemDrop = prefab ? prefab.GetComponent<ItemDrop>() : null;
             if (itemDrop == null || stack.Amount <= 0)
             {
@@ -702,7 +702,7 @@ internal static class ZoneMaterialEscrow
     {
         foreach (ZoneBlueprintStorePriceItem item in ToPriceItems(ToRequirements(priceItems)))
         {
-            GameObject? prefab = ZoneBlueprintStore.FindItemPrefab(item.PrefabName);
+            GameObject? prefab = ZoneBlueprintStoreVisuals.FindItemPrefab(item.PrefabName);
             ItemDrop? itemDrop = prefab ? prefab.GetComponent<ItemDrop>() : null;
             if (itemDrop == null || item.Amount <= 0)
             {

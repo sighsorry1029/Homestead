@@ -58,7 +58,7 @@ internal static class ZoneBlueprintChestMapPins
             return;
         }
 
-        string ownerPlatformId = ZonePlayerIdentity.ResolveLocalPlatformId(Player.m_localPlayer.GetPlayerID());
+        string ownerPlatformId = HomesteadPlayerIdentity.ResolveLocalPlatformId(Player.m_localPlayer.GetPlayerID());
         if (string.IsNullOrWhiteSpace(ownerPlatformId))
         {
             return;
@@ -146,7 +146,7 @@ internal static class ZoneBlueprintChestMapPins
     {
         return string.Equals(
             ZoneBlueprintChestLifecycle.GetOwnerPlatformId(zdo),
-            ZonePlayerIdentity.NormalizePlatformId(ownerPlatformId),
+            HomesteadPlayerIdentity.NormalizePlatformId(ownerPlatformId),
             StringComparison.Ordinal);
     }
 

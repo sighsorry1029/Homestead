@@ -9,6 +9,7 @@ internal static class ZoneBuildCameraPlayerSetLocalPlayerPatch
     private static void Postfix()
     {
         ZoneBuildCamera.DisableBuildMode();
+        HomesteadFeatureBootstrap.OnLocalPlayerSet();
     }
 }
 

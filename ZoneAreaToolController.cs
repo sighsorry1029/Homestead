@@ -56,7 +56,7 @@ internal sealed class ZoneAreaToolController
         {
             _width = Mathf.Clamp(_options.DefaultWidth(), _options.MinSide, _options.MaxSide());
             _depth = Mathf.Clamp(_options.DefaultDepth(), _options.MinSide, _options.MaxSide());
-            _yaw = _options.GetSavedYaw() ?? ZoneAreaSelection.NormalizeYaw(player.transform.rotation.eulerAngles.y);
+            _yaw = _options.GetSavedYaw() ?? 0f;
             _heightOffset = 0f;
             _horizontalOffset = Vector3.zero;
         }
@@ -101,7 +101,7 @@ internal sealed class ZoneAreaToolController
         }
 
         Player player = Player.m_localPlayer;
-        if (player == null || !ZoneAreaToolShared.IsHoldingBuildTool(player))
+        if (player == null || !ZonePlacementInput.IsHoldingBuildTool(player))
         {
             return false;
         }
@@ -177,40 +177,37 @@ internal sealed class ZoneAreaToolController
             return;
         }
 
-        if (PlacementControlConfig.IsAreaRotationModifierHeld())
+        float delta = scroll > 0f ? _options.SizeStep : -_options.SizeStep;
+        if (PlacementControlConfig.IsAreaDepthModifierHeld())
         {
-            float deltaYaw = scroll > 0f ? PlacementControlConfig.RotationStep : -PlacementControlConfig.RotationStep;
-            _yaw = ZoneAreaSelection.NormalizeYaw(_yaw + deltaYaw);
-            _options.SetSavedYaw(_yaw);
+            ZoneAreaToolShared.ResizeDepth(ref _depth, delta, _options.MinSide, _options.MaxSide());
             ClearTargetOverlay();
             return;
         }
 
-        float delta = scroll > 0f ? _options.SizeStep : -_options.SizeStep;
-        ZoneAreaToolShared.ResizeUniform(ref _width, ref _depth, delta, _options.MinSide, _options.MaxSide());
+        if (PlacementControlConfig.IsAreaWidthModifierHeld())
+        {
+            ZoneAreaToolShared.ResizeWidth(ref _width, delta, _options.MinSide, _options.MaxSide());
+            ClearTargetOverlay();
+            return;
+        }
+
+        if (PlacementControlConfig.IsAreaUniformScaleModifierHeld())
+        {
+            ZoneAreaToolShared.ResizeUniform(ref _width, ref _depth, delta, _options.MinSide, _options.MaxSide());
+            ClearTargetOverlay();
+            return;
+        }
+
+        float deltaYaw = scroll > 0f ? PlacementControlConfig.RotationStep : -PlacementControlConfig.RotationStep;
+        _yaw = ZoneAreaSelection.NormalizeYaw(_yaw + deltaYaw);
+        _options.SetSavedYaw(_yaw);
         ClearTargetOverlay();
     }
 
     private void HandleOffset()
     {
-        bool offsetChanged = false;
-        if (PlacementControlConfig.IsPlacementAdjustModifierHeld() &&
-            (Input.GetKeyDown(KeyCode.PageUp) || Input.GetKeyDown(KeyCode.PageDown)))
-        {
-            float direction = Input.GetKeyDown(KeyCode.PageUp) ? 1f : -1f;
-            _heightOffset = ZoneAreaToolShared.RoundOffset(_heightOffset + direction * PlacementControlConfig.HeightStep);
-            offsetChanged = true;
-        }
-
-        Vector3 nudge = PlacementControlConfig.IsPlacementAdjustModifierHeld()
-            ? ZonePlacementOffset.GetArrowKeyLocalNudge()
-            : Vector3.zero;
-        if (nudge.sqrMagnitude > 0.0001f)
-        {
-            _horizontalOffset += nudge * PlacementControlConfig.HorizontalStep;
-            offsetChanged = true;
-        }
-
+        bool offsetChanged = ZonePlacementInput.ApplyOffset(ref _horizontalOffset, ref _heightOffset);
         if (!offsetChanged)
         {
             return;
@@ -329,7 +326,7 @@ internal sealed class ZoneAreaToolController
         public string RangeLineName { get; set; } = "";
         public string TargetOverlayName { get; set; } = "";
         public float TargetOverlayRefreshInterval { get; set; } = 0.12f;
-        public float StableTargetOverlayRefreshInterval { get; set; } = 0.5f;
+        public float StableTargetOverlayRefreshInterval { get; set; } = 1f;
         public Func<float?> GetSavedYaw { get; set; } = () => null;
         public Action<float> SetSavedYaw { get; set; } = _ => { };
         public Func<bool> IsLocked { get; set; } = () => false;

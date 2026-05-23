@@ -43,6 +43,21 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         ShowPlacementLine(horizontalOffset, heightOffset, degree);
     }
 
+    public static void ShowDefaultPlacement(Vector3 horizontalOffset, float heightOffset, float yaw, float xAxisRotation, float zAxisRotation, bool keepVisible)
+    {
+        if (Hud.instance == null)
+        {
+            return;
+        }
+
+        EnsureInstance();
+        _instance?.SetAreaLine("", keepVisible: false);
+        _instance?.SetPlacementLine(
+            FormatDefaultPlacementLine(horizontalOffset, heightOffset, yaw, xAxisRotation, zAxisRotation),
+            1f,
+            keepVisible);
+    }
+
     public static void ShowDvergrCirclet(bool lightOn, float intensityMultiplier, float rangeMultiplier)
     {
         if (Hud.instance == null)
@@ -451,12 +466,28 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private static string FormatDegree(float value)
     {
-        return Mathf.RoundToInt(value).ToString(CultureInfo.InvariantCulture);
+        return value.ToString("0.#", CultureInfo.InvariantCulture);
     }
 
     private static string FormatMeters(float value)
     {
         return $"{Mathf.RoundToInt(value)}m";
+    }
+
+    private static string FormatDefaultPlacementLine(Vector3 horizontalOffset, float heightOffset, float yaw, float xAxisRotation, float zAxisRotation)
+    {
+        string line = $"X {Format(horizontalOffset.x)} | Y {Format(heightOffset)} | Z {Format(horizontalOffset.z)} | \u03b8 {FormatDegree(yaw)}";
+        if (Mathf.Abs(xAxisRotation) >= 0.001f)
+        {
+            line += $" | RX {FormatDegree(xAxisRotation)}";
+        }
+
+        if (Mathf.Abs(zAxisRotation) >= 0.001f)
+        {
+            line += $" | RZ {FormatDegree(zAxisRotation)}";
+        }
+
+        return line;
     }
 
     private void PruneExpiredLines()

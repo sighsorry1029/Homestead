@@ -6,14 +6,16 @@ using System.Linq;
 using BepInEx;
 using BepInEx.Logging;
 using UnityEngine;
-using DataEntry = Homestead.ZoneBundleZdoData;
-using DataHelper = Homestead.ZoneBundleZdoHelper;
+using DataEntry = Homestead.SavedZdoData;
+using DataHelper = Homestead.SavedZdoHelper;
 
 namespace Homestead;
 
 internal static class ZoneBlueprintCommands
 {
-    private static readonly int BlueprintPlacedHash = StringExtensionMethods.GetStableHashCode(HomesteadPlugin.ModGUID + ".blueprint_piece");
+    private const int BlueprintPlanBatchSize = 250;
+    private const string BlueprintPieceMarkerKey = "sighsorry.Homestead.blueprint_piece";
+    private static readonly int BlueprintPlacedHash = StringExtensionMethods.GetStableHashCode(BlueprintPieceMarkerKey);
     private static readonly Dictionary<string, string> EmptyParameters = [];
     private static readonly Dictionary<string, bool> BuildRecipeCache = new(StringComparer.Ordinal);
 
@@ -33,55 +35,55 @@ internal static class ZoneBlueprintCommands
         ZoneBlueprintPlanRpc.Initialize(logger);
     }
 
-    internal static ZoneBundleCommandResult SaveSelectedBlueprint(string name, Player player)
+    internal static HomesteadCommandResult SaveSelectedBlueprint(string name, Player player)
     {
         EnsureWorldReady();
         name = (name ?? "").Trim();
         if (string.IsNullOrWhiteSpace(name))
         {
-            return ZoneBundleCommandResult.Fail("Blueprint name is required.");
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_name_required"));
         }
 
         if (!ZoneBlueprintSaveTool.TryGetSelectedBlueprint(name, player, out ZoneBlueprintFile blueprint, out string selectionError))
         {
-            return ZoneBundleCommandResult.Fail(selectionError);
+            return HomesteadCommandResult.Fail(selectionError);
         }
 
         if (blueprint.Entries.Count == 0)
         {
-            return ZoneBundleCommandResult.Fail("No WearNTear objects found in the selected Homestead blueprint preview.");
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_no_selected_wearnttear"));
         }
 
         string path = SaveBlueprint(name, blueprint);
-        return ZoneBundleCommandResult.Ok(
-            $"Saved Homestead blueprint '{name}' ({blueprint.Entries.Count} WearNTear, terrain contacts: {blueprint.TerrainContacts.Count}) to '{path}'.");
+        return HomesteadCommandResult.Ok(
+            HomesteadLocalization.Format("hs_blueprint_saved_to_path", name, blueprint.Entries.Count, blueprint.TerrainContacts.Count, path));
     }
 
-    internal static ZoneBundleCommandResult PlaceBlueprintPlanAt(string name, Player player, Vector3 anchor, Quaternion anchorRotation)
+    internal static HomesteadCommandResult PlaceBlueprintPlanAt(string name, Player player, Vector3 anchor, Quaternion anchorRotation)
     {
         return PlaceBlueprintPlanAt(name, player, anchor, anchorRotation, anchorRotation);
     }
 
-    internal static ZoneBundleCommandResult PlaceBlueprintPlanAt(string name, Player player, Vector3 anchor, Quaternion anchorRotation, Quaternion chestRotation)
+    internal static HomesteadCommandResult PlaceBlueprintPlanAt(string name, Player player, Vector3 anchor, Quaternion anchorRotation, Quaternion chestRotation)
     {
         ZoneBlueprintFile blueprint = LoadBlueprint(name);
+        Vector3 chestPosition = GetPlanChestPosition(blueprint, anchor, anchorRotation, chestRotation);
         if (ZNet.instance != null && !ZNet.instance.IsServer())
         {
-            ZoneBlueprintPlanRpc.RequestPlace(name, blueprint, anchor, anchorRotation, chestRotation);
-            return ZoneBundleCommandResult.Ok($"Sent Homestead blueprint '{name}' placement request to the server.");
+            ZoneBlueprintPlanRpc.RequestPlace(name, blueprint, anchor, anchorRotation, chestPosition, chestRotation);
+            return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_blueprint_plan_request_sent", name));
         }
 
         BlueprintLoadPlan plan = CreateLoadPlan(blueprint, anchor, anchorRotation);
         if (plan.Entries.Count == 0)
         {
-            return ZoneBundleCommandResult.Fail($"Blueprint '{name}' has no valid WearNTear entries.");
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_blueprint_no_valid_entries", name));
         }
 
-        Vector3 chestPosition = GetPlanChestPosition(blueprint, anchor, anchorRotation, chestRotation);
         return ZoneBlueprintPlanChestPrefab.PlacePlanChest(name, player, anchor, anchorRotation, chestPosition, chestRotation);
     }
 
-    internal static ZoneBundleCommandResult FinalizeBlueprintPlan(
+    internal static HomesteadCommandResult FinalizeBlueprintPlan(
         string name,
         Player player,
         Vector3 anchor,
@@ -92,12 +94,12 @@ internal static class ZoneBlueprintCommands
         BlueprintLoadPlan plan = CreateLoadPlan(blueprint, anchor, anchorRotation);
         if (plan.Entries.Count == 0)
         {
-            return ZoneBundleCommandResult.Fail($"Blueprint '{name}' has no valid WearNTear entries.");
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_blueprint_no_valid_entries", name));
         }
 
-        if (!ZonePieceCounter.CanAddWearNTears(plan.Positions, out string limitReason))
+        if (!ZoneLimitCompat.CanAddWearNTears(plan.Positions, out string limitReason))
         {
-            return ZoneBundleCommandResult.Fail(limitReason);
+            return HomesteadCommandResult.Fail(limitReason);
         }
 
         bool noCost = player.NoCostCheat();
@@ -106,7 +108,7 @@ internal static class ZoneBlueprintCommands
             string accessReason = ValidateBuildAccessWithoutInventory(player, plan.Entries);
             if (!string.IsNullOrEmpty(accessReason))
             {
-                return ZoneBundleCommandResult.Fail(accessReason);
+                return HomesteadCommandResult.Fail(accessReason);
             }
 
             foreach (ZoneBlueprintRequirement requirement in CollectRequirements(plan))
@@ -114,7 +116,7 @@ internal static class ZoneBlueprintCommands
                 depositedMaterials.TryGetValue(requirement.ItemName, out int deposited);
                 if (deposited < requirement.Amount)
                 {
-                    return ZoneBundleCommandResult.Fail(HomesteadLocalization.Format(
+                    return HomesteadCommandResult.Fail(HomesteadLocalization.Format(
                         "hs_blueprint_missing_deposited",
                         HomesteadLocalization.MaybeLocalize(requirement.DisplayName),
                         deposited,
@@ -130,7 +132,7 @@ internal static class ZoneBlueprintCommands
         }
 
         int created = SpawnPlan(plan, player);
-        return ZoneBundleCommandResult.Ok(
+        return HomesteadCommandResult.Ok(
             HomesteadLocalization.Format(
                 "hs_blueprint_confirmed",
                 name,
@@ -144,53 +146,71 @@ internal static class ZoneBlueprintCommands
         Vector3 anchor,
         Quaternion anchorRotation,
         Dictionary<string, int> depositedMaterials,
-        Action<ZoneBundleCommandResult> onComplete)
+        Action<HomesteadCommandResult> onComplete)
     {
-        BlueprintLoadPlan plan;
+        ZoneBlueprintFile blueprint;
         try
         {
-            plan = CreateLoadPlan(LoadPlanBlueprint(name), anchor, anchorRotation);
-            if (plan.Entries.Count == 0)
-            {
-                onComplete(ZoneBundleCommandResult.Fail($"Blueprint '{name}' has no valid WearNTear entries."));
-                yield break;
-            }
-
-            if (!ZonePieceCounter.CanAddWearNTears(plan.Positions, out string limitReason))
-            {
-                onComplete(ZoneBundleCommandResult.Fail(limitReason));
-                yield break;
-            }
-
-            bool noCost = player.NoCostCheat();
-            if (!noCost)
-            {
-                string accessReason = ValidateBuildAccessWithoutInventory(player, plan.Entries);
-                if (!string.IsNullOrEmpty(accessReason))
-                {
-                    onComplete(ZoneBundleCommandResult.Fail(accessReason));
-                    yield break;
-                }
-
-                foreach (ZoneBlueprintRequirement requirement in CollectRequirements(plan))
-                {
-                    depositedMaterials.TryGetValue(requirement.ItemName, out int deposited);
-                    if (deposited < requirement.Amount)
-                    {
-                        onComplete(ZoneBundleCommandResult.Fail(HomesteadLocalization.Format(
-                            "hs_blueprint_missing_deposited",
-                            HomesteadLocalization.MaybeLocalize(requirement.DisplayName),
-                            deposited,
-                            requirement.Amount)));
-                        yield break;
-                    }
-                }
-            }
+            blueprint = LoadPlanBlueprint(name);
         }
         catch (Exception ex)
         {
-            onComplete(ZoneBundleCommandResult.Fail(ex.Message));
+            onComplete(HomesteadCommandResult.Fail(ex.Message));
             yield break;
+        }
+
+        BlueprintLoadPlan? plan = null;
+        string planError = "";
+        yield return CreateLoadPlanAsync(blueprint, anchor, anchorRotation, (value, error) =>
+        {
+            plan = value;
+            planError = error;
+        });
+
+        if (plan == null)
+        {
+            onComplete(HomesteadCommandResult.Fail(string.IsNullOrWhiteSpace(planError) ? HomesteadLocalization.Format("hs_blueprint_load_failed_plain", name) : planError));
+            yield break;
+        }
+
+        if (plan.Entries.Count == 0)
+        {
+            onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_blueprint_no_valid_entries", name)));
+            yield break;
+        }
+
+        if (!ZoneLimitCompat.CanAddWearNTears(plan.Positions, out string limitReason))
+        {
+            onComplete(HomesteadCommandResult.Fail(limitReason));
+            yield break;
+        }
+
+        bool noCost = player.NoCostCheat();
+        if (!noCost)
+        {
+            string accessReason = "";
+            yield return ValidateBuildAccessWithoutInventoryAsync(player, plan.Entries, value => accessReason = value);
+            if (!string.IsNullOrEmpty(accessReason))
+            {
+                onComplete(HomesteadCommandResult.Fail(accessReason));
+                yield break;
+            }
+
+            List<ZoneBlueprintRequirement> requirements = [];
+            yield return CollectRequirementsAsync(plan.Entries, value => requirements = value);
+            foreach (ZoneBlueprintRequirement requirement in requirements)
+            {
+                depositedMaterials.TryGetValue(requirement.ItemName, out int deposited);
+                if (deposited < requirement.Amount)
+                {
+                    onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Format(
+                        "hs_blueprint_missing_deposited",
+                        HomesteadLocalization.MaybeLocalize(requirement.DisplayName),
+                        deposited,
+                        requirement.Amount)));
+                    yield break;
+                }
+            }
         }
 
         bool terrainApplied = false;
@@ -199,8 +219,9 @@ internal static class ZoneBlueprintCommands
             yield return BlueprintTerrainApplier.ApplySupportContactsAsync(plan.SupportContacts, result => terrainApplied = result);
         }
 
-        int created = SpawnPlan(plan, player);
-        onComplete(ZoneBundleCommandResult.Ok(
+        int created = 0;
+        yield return SpawnPlanAsync(plan, player, value => created = value);
+        onComplete(HomesteadCommandResult.Ok(
             HomesteadLocalization.Format(
                 "hs_blueprint_confirmed",
                 name,
@@ -216,8 +237,8 @@ internal static class ZoneBlueprintCommands
             return [];
         }
 
-        return Directory.GetFiles(directory, "*.zsbp.yml")
-            .Select(path => Path.GetFileName(path).Replace(".zsbp.yml", ""))
+        return Directory.GetFiles(directory, "*.hsbp.yml")
+            .Select(path => Path.GetFileName(path).Replace(".hsbp.yml", ""))
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -239,7 +260,7 @@ internal static class ZoneBlueprintCommands
     internal static string SerializeBlueprintForStore(string name)
     {
         ZoneBlueprintFile blueprint = LoadBlueprint(name);
-        return ZoneBundleSerialization.Serialize(blueprint);
+        return HomesteadYaml.Serialize(blueprint);
     }
 
     internal static string SaveBlueprintFromStore(string preferredName, ZoneBlueprintFile blueprint)
@@ -397,7 +418,7 @@ internal static class ZoneBlueprintCommands
         return CreateLoadPlan(blueprint, anchor, anchorRotation);
     }
 
-    internal static ZoneBundleCommandResult SaveUploadedBlueprintForPlan(
+    internal static HomesteadCommandResult SaveUploadedBlueprintForPlan(
         string preferredName,
         ZoneBlueprintFile blueprint,
         long playerId,
@@ -407,7 +428,7 @@ internal static class ZoneBlueprintCommands
         string validationError = ValidateBlueprintFile(blueprint);
         if (!string.IsNullOrWhiteSpace(validationError))
         {
-            return ZoneBundleCommandResult.Fail(validationError);
+            return HomesteadCommandResult.Fail(validationError);
         }
 
         string requestedName = SanitizePathSegment(string.IsNullOrWhiteSpace(preferredName) ? blueprint.Name : preferredName);
@@ -419,13 +440,13 @@ internal static class ZoneBlueprintCommands
         {
             try
             {
-                ZoneBlueprintFile existing = ZoneBundleSerialization.Deserialize<ZoneBlueprintFile>(File.ReadAllText(requestedPath));
-                string existingYaml = ZoneBundleSerialization.Serialize(existing);
-                string incomingYaml = ZoneBundleSerialization.Serialize(CloneForName(blueprint, requestedName));
+                ZoneBlueprintFile existing = HomesteadYaml.Deserialize<ZoneBlueprintFile>(File.ReadAllText(requestedPath));
+                string existingYaml = HomesteadYaml.Serialize(existing);
+                string incomingYaml = HomesteadYaml.Serialize(CloneForName(blueprint, requestedName));
                 if (string.Equals(existingYaml, incomingYaml, StringComparison.Ordinal))
                 {
                     savedName = requestedName;
-                    return ZoneBundleCommandResult.Ok($"Server already has Homestead blueprint '{savedName}'.");
+                    return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_blueprint_server_already_has", savedName));
                 }
             }
             catch
@@ -439,9 +460,9 @@ internal static class ZoneBlueprintCommands
         blueprint.Name = requestedName;
         string path = GetPlanGhostBlueprintPath(requestedName);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, ZoneBundleSerialization.Serialize(blueprint));
+        File.WriteAllText(path, HomesteadYaml.Serialize(blueprint));
         savedName = requestedName;
-        return ZoneBundleCommandResult.Ok($"Uploaded Homestead blueprint '{savedName}' to server.");
+        return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_blueprint_uploaded_to_server", savedName));
     }
 
     internal static string SerializePreviewBlueprintForPlan(string name)
@@ -455,21 +476,18 @@ internal static class ZoneBlueprintCommands
         return yaml;
     }
 
-    internal static void EnsureLocalBlueprintCopy(string name, string blueprintYaml)
+    internal static void EnsureLocalPlanBlueprintCopy(string name, string blueprintYaml)
     {
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(blueprintYaml))
         {
             return;
         }
 
-        if (TryLoadBlueprint(name, out _))
-        {
-            return;
-        }
-
-        ZoneBlueprintFile blueprint = ZoneBundleSerialization.Deserialize<ZoneBlueprintFile>(blueprintYaml);
+        ZoneBlueprintFile blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(blueprintYaml);
         blueprint.Name = name;
-        SaveBlueprint(name, blueprint);
+        string path = GetPlanGhostBlueprintPath(name);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, HomesteadYaml.Serialize(blueprint));
     }
 
     internal static List<ZoneBlueprintRequirement> CollectRequirements(BlueprintLoadPlan plan)
@@ -563,6 +581,59 @@ internal static class ZoneBlueprintCommands
         return new BlueprintLoadPlan(entries, positions, supportContacts);
     }
 
+    private static IEnumerator CreateLoadPlanAsync(ZoneBlueprintFile blueprint, Vector3 anchor, Quaternion anchorRotation, Action<BlueprintLoadPlan?, string> onComplete)
+    {
+        List<BlueprintLoadEntry> entries = [];
+        List<Vector3> positions = [];
+        int processedSinceYield = 0;
+
+        foreach (ZoneBlueprintEntry entry in blueprint.Entries)
+        {
+            GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
+            if (!prefab)
+            {
+                onComplete(null, $"Missing prefab '{entry.Prefab}' while loading blueprint '{blueprint.Name}'.");
+                yield break;
+            }
+
+            if (prefab.GetComponent<WearNTear>() != null && HasBuildRecipe(prefab))
+            {
+                if (entry.LocalPos.Length < 3 || entry.LocalRot.Length < 4 || entry.Scale.Length < 3)
+                {
+                    onComplete(null, $"Blueprint '{blueprint.Name}' contains an invalid transform for '{entry.Prefab}'.");
+                    yield break;
+                }
+
+                Vector3 position = anchor + anchorRotation * FromVector(entry.LocalPos);
+                Quaternion rotation = anchorRotation * FromQuaternion(entry.LocalRot);
+                Vector3 scale = FromVector(entry.Scale);
+                entries.Add(new BlueprintLoadEntry(entry, prefab, position, rotation, scale));
+                positions.Add(position);
+            }
+
+            processedSinceYield++;
+            if (processedSinceYield >= BlueprintPlanBatchSize)
+            {
+                processedSinceYield = 0;
+                yield return null;
+            }
+        }
+
+        List<Vector3> supportContacts = new(blueprint.TerrainContacts.Count);
+        foreach (ZoneBlueprintTerrainContact contact in blueprint.TerrainContacts)
+        {
+            supportContacts.Add(anchor + anchorRotation * new Vector3(contact.LocalX, contact.LocalY, contact.LocalZ));
+            processedSinceYield++;
+            if (processedSinceYield >= BlueprintPlanBatchSize)
+            {
+                processedSinceYield = 0;
+                yield return null;
+            }
+        }
+
+        onComplete(new BlueprintLoadPlan(entries, positions, supportContacts), "");
+    }
+
     private static int SpawnPlan(BlueprintLoadPlan plan, Player player)
     {
         long playerId = player.GetPlayerID();
@@ -587,6 +658,38 @@ internal static class ZoneBlueprintCommands
         }
 
         return created;
+    }
+
+    private static IEnumerator SpawnPlanAsync(BlueprintLoadPlan plan, Player player, Action<int> onComplete)
+    {
+        long playerId = player.GetPlayerID();
+        string playerName = player.GetPlayerName();
+        int created = 0;
+        int processedSinceYield = 0;
+
+        foreach (BlueprintLoadEntry item in plan.Entries)
+        {
+            DataEntry data = string.IsNullOrEmpty(item.Entry.Data) ? new DataEntry() : new DataEntry(item.Entry.Data);
+            SanitizeBlueprintData(data);
+            ZDO? zdo = DataHelper.Init(item.Prefab, item.Position, item.Rotation, item.Scale, data, EmptyParameters);
+            if (zdo != null)
+            {
+                zdo.Set(ZDOVars.s_creator, playerId);
+                zdo.Set(ZDOVars.s_creatorName, playerName);
+                zdo.Set(BlueprintPlacedHash, true);
+                ZNetScene.instance.CreateObject(zdo);
+                created++;
+            }
+
+            processedSinceYield++;
+            if (processedSinceYield >= BlueprintPlanBatchSize)
+            {
+                processedSinceYield = 0;
+                yield return null;
+            }
+        }
+
+        onComplete(created);
     }
 
     private static List<ZoneBlueprintRequirement> CollectRequirements(IEnumerable<BlueprintLoadEntry> entries)
@@ -626,6 +729,50 @@ internal static class ZoneBlueprintCommands
         return requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList();
     }
 
+    private static IEnumerator CollectRequirementsAsync(IEnumerable<BlueprintLoadEntry> entries, Action<List<ZoneBlueprintRequirement>> onComplete)
+    {
+        Dictionary<string, ZoneBlueprintRequirement> requirements = [];
+        int processedSinceYield = 0;
+
+        foreach (BlueprintLoadEntry entry in entries)
+        {
+            Piece piece = entry.Prefab.GetComponent<Piece>();
+            if (piece != null)
+            {
+                foreach (Piece.Requirement requirement in piece.m_resources)
+                {
+                    if (!requirement.m_resItem || requirement.m_amount <= 0)
+                    {
+                        continue;
+                    }
+
+                    string itemName = requirement.m_resItem.m_itemData.m_shared.m_name;
+                    if (!requirements.TryGetValue(itemName, out ZoneBlueprintRequirement aggregate))
+                    {
+                        aggregate = new ZoneBlueprintRequirement
+                        {
+                            ItemName = itemName,
+                            PrefabName = Utils.GetPrefabName(requirement.m_resItem.gameObject),
+                            DisplayName = requirement.m_resItem.m_itemData.m_shared.m_name
+                        };
+                        requirements[itemName] = aggregate;
+                    }
+
+                    aggregate.Amount += requirement.GetAmount(0);
+                }
+            }
+
+            processedSinceYield++;
+            if (processedSinceYield >= BlueprintPlanBatchSize)
+            {
+                processedSinceYield = 0;
+                yield return null;
+            }
+        }
+
+        onComplete(requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList());
+    }
+
     private static string ValidateBuildAccessWithoutInventory(Player player, IEnumerable<BlueprintLoadEntry> entries)
     {
         foreach (BlueprintLoadEntry entry in entries)
@@ -650,6 +797,41 @@ internal static class ZoneBlueprintCommands
         }
 
         return "";
+    }
+
+    private static IEnumerator ValidateBuildAccessWithoutInventoryAsync(Player player, IEnumerable<BlueprintLoadEntry> entries, Action<string> onComplete)
+    {
+        int processedSinceYield = 0;
+
+        foreach (BlueprintLoadEntry entry in entries)
+        {
+            Piece piece = entry.Prefab.GetComponent<Piece>();
+            if (piece != null)
+            {
+                if (!player.HaveRequirements(piece, Player.RequirementMode.IsKnown))
+                {
+                    onComplete(HomesteadLocalization.Format("hs_blueprint_missing_known_station_or_materials", entry.Entry.Prefab));
+                    yield break;
+                }
+
+                if (piece.m_craftingStation != null &&
+                    !CraftingStation.HaveBuildStationInRange(piece.m_craftingStation.m_name, player.transform.position) &&
+                    !ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoWorkbench))
+                {
+                    onComplete(HomesteadLocalization.Format("hs_blueprint_missing_crafting_station", entry.Entry.Prefab));
+                    yield break;
+                }
+            }
+
+            processedSinceYield++;
+            if (processedSinceYield >= BlueprintPlanBatchSize)
+            {
+                processedSinceYield = 0;
+                yield return null;
+            }
+        }
+
+        onComplete("");
     }
 
     internal static bool TryReadWearNTear(ZDO zdo, out GameObject prefab)
@@ -774,8 +956,6 @@ internal static class ZoneBlueprintCommands
         data.Strings?.Remove(hash);
         data.Floats?.Remove(hash);
         data.Ints?.Remove(hash);
-        data.Bools?.Remove(hash);
-        data.Hashes?.Remove(hash);
         data.Longs?.Remove(hash);
         data.Vecs?.Remove(hash);
         data.Quats?.Remove(hash);
@@ -790,7 +970,7 @@ internal static class ZoneBlueprintCommands
             throw new FileNotFoundException($"Homestead blueprint not found: {path}");
         }
 
-        return ZoneBundleSerialization.Deserialize<ZoneBlueprintFile>(File.ReadAllText(path));
+        return HomesteadYaml.Deserialize<ZoneBlueprintFile>(File.ReadAllText(path));
     }
 
     private static ZoneBlueprintFile LoadPlanBlueprint(string name)
@@ -798,7 +978,7 @@ internal static class ZoneBlueprintCommands
         string planGhostPath = GetPlanGhostBlueprintPath(name);
         if (File.Exists(planGhostPath))
         {
-            return ZoneBundleSerialization.Deserialize<ZoneBlueprintFile>(File.ReadAllText(planGhostPath));
+            return HomesteadYaml.Deserialize<ZoneBlueprintFile>(File.ReadAllText(planGhostPath));
         }
 
         return LoadBlueprint(name);
@@ -808,7 +988,7 @@ internal static class ZoneBlueprintCommands
     {
         string path = GetBlueprintPath(name);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, ZoneBundleSerialization.Serialize(blueprint));
+        File.WriteAllText(path, HomesteadYaml.Serialize(blueprint));
         bool iconReady = false;
         try
         {
@@ -858,7 +1038,7 @@ internal static class ZoneBlueprintCommands
     {
         if (blueprint.Entries.Count == 0)
         {
-            return "Blueprint has no WearNTear entries.";
+            return HomesteadLocalization.Text("hs_blueprint_no_entries");
         }
 
         if (!ZoneBlueprintNetworkPayload.TryValidateBlueprintEntryCount(blueprint, upload: true, out string entryCountReason))
@@ -868,7 +1048,7 @@ internal static class ZoneBlueprintCommands
 
         if (ZNetScene.instance == null)
         {
-            return "World is not ready.";
+            return HomesteadLocalization.Text("hs_common_world_not_ready");
         }
 
         foreach (ZoneBlueprintEntry entry in blueprint.Entries)
@@ -876,7 +1056,7 @@ internal static class ZoneBlueprintCommands
             GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
             if (!prefab || prefab.GetComponent<WearNTear>() == null || !HasBuildRecipe(prefab))
             {
-                return $"Blueprint contains unsupported prefab '{entry.Prefab}'.";
+                return HomesteadLocalization.Format("hs_blueprint_unsupported_prefab", entry.Prefab);
             }
         }
 
@@ -919,17 +1099,17 @@ internal static class ZoneBlueprintCommands
 
     private static string GetBlueprintPath(string name)
     {
-        return Path.Combine(GetWorldBlueprintDirectory(), SanitizePathSegment(name) + ".zsbp.yml");
+        return Path.Combine(GetWorldBlueprintDirectory(), SanitizePathSegment(name) + ".hsbp.yml");
     }
 
     private static string GetPlanGhostBlueprintPath(string name)
     {
-        return Path.Combine(GetPlanGhostBlueprintDirectory(), SanitizePathSegment(name) + ".zsbp.yml");
+        return Path.Combine(GetPlanGhostBlueprintDirectory(), SanitizePathSegment(name) + ".hsbp.yml");
     }
 
     internal static string GetBlueprintIconPath(string name)
     {
-        return Path.Combine(GetWorldBlueprintDirectory(), SanitizePathSegment(name) + ".zsbp.png");
+        return Path.Combine(GetWorldBlueprintDirectory(), SanitizePathSegment(name) + ".hsbp.png");
     }
 
     private static string GetWorldBlueprintDirectory()

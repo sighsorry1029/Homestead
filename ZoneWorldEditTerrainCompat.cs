@@ -72,7 +72,7 @@ internal static class ZoneWorldEditTerrainCompat
     {
         try
         {
-            ZoneBundleTerrain.ResetSupportFillBaseLayer(__0 as IEnumerable, __1 as IEnumerable, __2, __3);
+            HomesteadTerrainSupport.ResetSupportFillBaseLayer(__0 as IEnumerable, __1 as IEnumerable, __2, __3);
         }
         catch (Exception ex)
         {

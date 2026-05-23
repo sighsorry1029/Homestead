@@ -75,6 +75,7 @@ internal sealed class ZoneBlueprintStoreListing
 internal sealed class ZoneBlueprintStoreBalance
 {
     public long SellerPlayerId { get; set; }
+    public string SellerPlatformId { get; set; } = "";
     public string SellerName { get; set; } = "";
     public int Coins { get; set; }
     public List<ZoneBlueprintStorePriceItem> Materials { get; set; } = [];
@@ -228,6 +229,7 @@ internal sealed class ZoneBlueprintStoreListRequest
     public int Limit { get; set; }
     public bool ShowHidden { get; set; }
     public bool IncludeNotifications { get; set; }
+    public bool IconsOnly { get; set; }
     public List<string> IconListingIds { get; set; } = [];
     public int FirstIconCount { get; set; } = ZoneBlueprintStore.StoreListingIconPageSize;
 }
@@ -242,6 +244,8 @@ internal sealed class ZoneBlueprintStoreListResponse
     public int Limit { get; set; }
     public int HiddenListings { get; set; }
     public bool HasMore { get; set; }
+    public bool HasWithdrawableBalance { get; set; }
+    public bool IconsOnly { get; set; }
     public List<ZoneBlueprintStoreListingSummaryDto> Listings { get; set; } = [];
     public List<ZoneBlueprintStoreListingIconDto> Icons { get; set; } = [];
     public List<ZoneBlueprintStoreNotificationDto> Notifications { get; set; } = [];
@@ -297,6 +301,9 @@ internal sealed class ZoneBlueprintStoreStatusResponse
 {
     public bool Success { get; set; }
     public string Message { get; set; } = "";
+    public string ListingId { get; set; } = "";
+    public bool RemoveListing { get; set; }
+    public ZoneBlueprintStoreListingSummaryDto? Listing { get; set; }
 }
 
 internal sealed class ZoneBlueprintStorePreviewRequest
@@ -453,6 +460,13 @@ internal sealed class ZoneBlueprintStoreWithdrawRequest
     public ZoneBlueprintStoreTransformPayload? Target { get; set; }
 }
 
+internal sealed class ZoneBlueprintStoreWithdrawResponse
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = "";
+    public List<ZoneBlueprintStoreTransformPayload> Chests { get; set; } = [];
+}
+
 internal static class ZoneBlueprintPlanRpcType
 {
     public const string Place = "place";
@@ -481,6 +495,7 @@ internal sealed class ZoneBlueprintPlanPlaceResponse : IZoneBlueprintPayloadCarr
     public string Message { get; set; } = "";
     public string RequestedName { get; set; } = "";
     public string BlueprintName { get; set; } = "";
+    public ZoneBlueprintStoreTransformPayload? Chest { get; set; }
     public string BlueprintEncoding { get; set; } = ZoneBlueprintNetworkPayload.GzipEncoding;
     [YamlIgnore] public byte[] BlueprintPayload { get; set; } = [];
 }

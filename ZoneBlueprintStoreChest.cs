@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -31,10 +31,14 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     private const string EntryCountKey = "hs_store_entry_count";
     private const string PricePayloadKey = "hs_store_price_payload";
     private const string PurchaseDepositPayloadKey = "hs_store_purchase_deposit_payload";
-    private const string OfferIdKey = "hs_store_offer";
+    internal const string OfferIdKey = "hs_store_offer";
     internal const string ConfirmedKey = "hs_store_confirmed";
     internal const string DraftOwnedByChestKey = "hs_store_draft_owned_by_chest";
     private const float CleanupCheckInterval = 30f;
+    private const int PreviewRestoreBlueprintCacheLimit = 32;
+    private static readonly Dictionary<string, ZoneBlueprintFile> PreviewRestoreBlueprintCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Queue<string> PreviewRestoreBlueprintCacheOrder = [];
+    private static readonly HashSet<string> PendingPreviewRestoreFiles = new(StringComparer.OrdinalIgnoreCase);
 
     private ZNetView? _nview;
     private Container? _container;
@@ -46,6 +50,13 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     private readonly ZoneBlueprintGhostOwner _ownedPreview = new();
     private bool _previewRestoreRequested;
     private float _nextCleanupCheck;
+
+    internal static void ResetPreviewRestoreCacheForWorldSession()
+    {
+        PreviewRestoreBlueprintCache.Clear();
+        PreviewRestoreBlueprintCacheOrder.Clear();
+        PendingPreviewRestoreFiles.Clear();
+    }
 
     private void Awake()
     {
@@ -81,7 +92,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         zdo.Set(BuyerPlayerIdKey, buyerPlayerId);
         zdo.Set(BuyerNameKey, buyerName);
         ZoneBlueprintChestLifecycle.SetOwnerPlatformId(zdo, buyerPlatformId);
-        zdo.Set(PricePayloadKey, ZoneBlueprintStore.SerializePriceItems(priceItems));
+        zdo.Set(PricePayloadKey, ZoneBlueprintStorePrices.SerializePriceItems(priceItems));
         zdo.Set(PurchaseDepositPayloadKey, "");
         zdo.Set(OfferIdKey, offerId ?? "");
         zdo.Set(ConfirmedKey, false);
@@ -159,7 +170,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         if (IsPriceMode())
         {
             string name = _nview.GetZDO().GetString(BlueprintNameKey, HomesteadLocalization.Text("hs_store_default_blueprint"));
-            string price = ZoneBlueprintStore.FormatPrice(ReadPriceItems());
+            string price = ZoneBlueprintStorePrices.FormatPrice(ReadPriceItems());
             string text = HomesteadLocalization.Format("hs_store_listing_hover", name, price);
             text += HomesteadLocalization.Format("hs_hover_action", "$KEY_Use", HomesteadLocalization.Text("hs_store_edit_price_action")) + "\n";
             text += HomesteadLocalization.Format("hs_hover_action", FormatShortcut(BlueprintConfig.ChestConfirmHotkey), HomesteadLocalization.Text("hs_store_list_on_store"));
@@ -187,7 +198,10 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return true;
         }
 
-        string listingId = _nview.GetZDO().GetString(ListingIdKey, "");
+        ZDO zdo = _nview.GetZDO();
+        ZoneBlueprintStoreActor actor = ZoneBlueprintStoreIdentity.Actor(player.GetPlayerID(), HomesteadPlayerIdentity.ResolveLocalPlatformId(player.GetPlayerID()));
+        string ownerPlatformId = ZoneBlueprintChestLifecycle.GetOwnerPlatformId(zdo);
+        string listingId = zdo.GetString(ListingIdKey, "");
         if (string.IsNullOrWhiteSpace(listingId))
         {
             return true;
@@ -196,8 +210,8 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         Touch();
         if (IsPriceMode())
         {
-            long seller = _nview.GetZDO().GetLong(SellerPlayerIdKey, 0L);
-            if (seller != 0L && player.GetPlayerID() != seller)
+            long seller = zdo.GetLong(SellerPlayerIdKey, 0L);
+            if (seller != 0L && !actor.MatchesStored(seller, ownerPlatformId, BlueprintConfig.StoreIdentityMode))
             {
                 player.Message(MessageHud.MessageType.Center, HomesteadLocalization.Text("hs_store_other_seller"));
                 return true;
@@ -205,12 +219,12 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
             if (ZNet.instance != null && ZNet.instance.IsServer())
             {
-                ZoneBundleCommandResult result = ZoneBlueprintStore.ConfirmListingLocal(listingId, player.GetPlayerID(), this, ReadPriceItems());
+                HomesteadCommandResult result = ZoneBlueprintStore.ConfirmListingLocal(listingId, player.GetPlayerID(), this, ReadPriceItems());
                 player.Message(result.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center, result.Message);
                 if (result.Success)
                 {
                     ZoneBlueprintStorePreviewTool.RemoveListingPreview(listingId);
-                    ZoneBlueprintStore.PlayCompletionVfx(player.transform.position);
+                    ZoneBlueprintStoreVisuals.PlayCompletionVfx(player.transform.position);
                 }
 
                 return true;
@@ -221,8 +235,8 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return true;
         }
 
-        long buyer = _nview.GetZDO().GetLong(BuyerPlayerIdKey, 0L);
-        if (buyer != 0L && player.GetPlayerID() != buyer)
+        long buyer = zdo.GetLong(BuyerPlayerIdKey, 0L);
+        if (buyer != 0L && !actor.MatchesStored(buyer, ownerPlatformId, BlueprintConfig.StoreIdentityMode))
         {
             player.Message(MessageHud.MessageType.Center, HomesteadLocalization.Text("hs_store_other_buyer"));
             return true;
@@ -235,12 +249,12 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
         if (ZNet.instance != null && ZNet.instance.IsServer())
         {
-            ZoneBundleCommandResult result = ZoneBlueprintStore.ConfirmPurchaseLocal(listingId, player.GetPlayerID(), player.GetPlayerName(), this);
+            HomesteadCommandResult result = ZoneBlueprintStore.ConfirmPurchaseLocal(listingId, player.GetPlayerID(), player.GetPlayerName(), this);
             player.Message(result.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center, result.Message);
             if (result.Success)
             {
                 ZoneBlueprintStorePreviewTool.RemovePurchasePreview(listingId);
-                ZoneBlueprintStore.PlayCompletionVfx(player.transform.position);
+                ZoneBlueprintStoreVisuals.PlayCompletionVfx(player.transform.position);
             }
 
             return true;
@@ -253,18 +267,25 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     public bool TryReadListingDraft(out string name, out string sellerName, out string blueprintFile, out int entryCount, out string reason)
     {
+        ZDO? zdo = _nview != null && _nview.IsValid() ? _nview.GetZDO() : null;
+        return TryReadListingDraft(zdo, out name, out sellerName, out blueprintFile, out entryCount, out reason);
+    }
+
+    internal static bool TryReadListingDraft(ZDO? zdo, out string name, out string sellerName, out string blueprintFile, out int entryCount, out string reason)
+    {
         name = "";
         sellerName = "";
         blueprintFile = "";
         entryCount = 0;
         reason = "";
-        if (_nview == null || !_nview.IsValid() || !IsPriceMode())
+        if (zdo == null ||
+            !zdo.IsValid() ||
+            !string.Equals(zdo.GetString(ModeKey, ""), ModePrice, StringComparison.Ordinal))
         {
             reason = HomesteadLocalization.Text("hs_store_listing_chest_not_ready");
             return false;
         }
 
-        ZDO zdo = _nview.GetZDO();
         name = zdo.GetString(BlueprintNameKey, "");
         sellerName = zdo.GetString(SellerNameKey, HomesteadLocalization.Text("hs_common_unknown"));
         blueprintFile = zdo.GetString(BlueprintFileKey, "");
@@ -299,6 +320,23 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     public bool CanTakePriceItems(IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
     {
         return CreatePurchaseEscrow(ZoneMaterialEscrow.ToRequirements(priceItems)).HasAllRequired(out deposited);
+    }
+
+    internal static bool CanTakePurchasePriceItems(ZDO? zdo, IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
+    {
+        return CreatePurchaseEscrow(zdo, ZoneMaterialEscrow.ToRequirements(priceItems)).HasAllRequired(out deposited);
+    }
+
+    internal static bool TryTakePurchasePriceItems(ZDO? zdo, IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
+    {
+        if (!CanTakePurchasePriceItems(zdo, priceItems, out deposited))
+        {
+            return false;
+        }
+
+        SetDepositedPriceItems(zdo, []);
+        ZoneBlueprintChestZdoRegistry.Refresh(zdo);
+        return true;
     }
 
     public bool TryAcceptPurchaseMaterialFromInventory(Inventory sourceInventory, ItemDrop.ItemData item, int requestedAmount, bool message)
@@ -414,13 +452,18 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         }
 
         ZDO zdo = _nview.GetZDO();
-        zdo.Set(PricePayloadKey, ZoneBlueprintStore.SerializePriceItems(priceItems));
+        zdo.Set(PricePayloadKey, ZoneBlueprintStorePrices.SerializePriceItems(priceItems));
         Touch();
     }
 
     public string GetIconPngBase64()
     {
         return _nview?.GetZDO()?.GetString(IconPngKey, "") ?? "";
+    }
+
+    internal static string GetIconPngBase64(ZDO? zdo)
+    {
+        return zdo?.GetString(IconPngKey, "") ?? "";
     }
 
     public string GetBlueprintNameForUi()
@@ -431,9 +474,14 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     public void MarkConfirmed()
     {
         ZDO? zdo = _nview?.GetZDO();
+        MarkConfirmed(zdo);
+        ZoneBlueprintStoreChestRegistry.Refresh(this);
+    }
+
+    internal static void MarkConfirmed(ZDO? zdo)
+    {
         zdo?.Set(ConfirmedKey, true);
         ZoneBlueprintChestZdoRegistry.Refresh(zdo);
-        ZoneBlueprintStoreChestRegistry.Refresh(this);
     }
 
     public void ReleaseDraftFileOwnership()
@@ -468,7 +516,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     public void PlayCompletionVfx()
     {
-        ZoneBlueprintStore.PlayCompletionVfx(transform.position);
+        ZoneBlueprintStoreVisuals.PlayCompletionVfx(transform.position);
     }
 
     public void DropAllContents()
@@ -494,7 +542,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return false;
         }
 
-            _container.m_name = HomesteadLocalization.Token("hs_store_payout_chest_name");
+        _container.m_name = HomesteadLocalization.Token("hs_store_payout_chest_name");
         _container.m_width = 8;
         _container.m_height = 4;
         _container.m_privacy = Container.PrivacySetting.Private;
@@ -574,6 +622,18 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         return IsPriceMode();
     }
 
+    public bool IsPriceChestPrefab()
+    {
+        ZDO? zdo = _nview != null && _nview.IsValid() ? _nview.GetZDO() : null;
+        if (zdo != null && zdo.GetPrefab() == ZoneBlueprintStoreChestPrefab.PricePrefabHash)
+        {
+            return true;
+        }
+
+        return gameObject != null &&
+               gameObject.name.StartsWith(ZoneBlueprintStoreChestPrefab.PricePrefabName, StringComparison.OrdinalIgnoreCase);
+    }
+
     public bool IsPayoutChest()
     {
         return IsPayoutMode();
@@ -586,7 +646,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return;
         }
 
-        List<ZoneBlueprintRequirement> missing = CreatePurchaseEscrow().GetMissingRequirements();
+        List<ZoneBlueprintRequirement> missing = GetMissingPurchaseRequirementList();
         int index = 0;
         foreach (InventoryGrid.Element element in grid.m_elements)
         {
@@ -617,6 +677,13 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             element.m_tooltip.m_topic = Localization.instance.Localize(requirement.DisplayName);
             element.m_tooltip.m_text = HomesteadLocalization.Format("hs_store_requirement_tooltip", requirement.Amount);
         }
+    }
+
+    public List<ZoneBlueprintRequirement> GetMissingPurchaseRequirementList()
+    {
+        return IsPurchaseMode()
+            ? CreatePurchaseEscrow().GetMissingRequirements()
+            : [];
     }
 
     private void TouchWhenInventoryChanged()
@@ -679,14 +746,39 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return false;
         }
 
+        ZDO? zdo = _nview?.GetZDO();
+        if (zdo != null && zdo.GetBool(ConfirmedKey, false))
+        {
+            return false;
+        }
+
         if ((_container?.m_inventory?.NrOfItems() ?? 0) > 0)
         {
             return false;
         }
 
+        PlayPayoutEmptiedVfx();
         MarkConfirmed();
         DestroyChest();
         return true;
+    }
+
+    private void PlayPayoutEmptiedVfx()
+    {
+        Vector3 position = transform.position;
+        Quaternion rotation = transform.rotation;
+        if (ZNet.instance != null && ZNet.instance.IsServer())
+        {
+            if (Player.m_localPlayer != null)
+            {
+                ZoneBlueprintStoreVisuals.PlayCompletionVfx(position);
+            }
+
+            ZoneBlueprintChestVfx.BroadcastPayoutComplete(position, rotation);
+            return;
+        }
+
+        ZoneBlueprintStoreVisuals.PlayCompletionVfx(position);
     }
 
     private bool HasRetainedMaterials()
@@ -758,11 +850,11 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         ZoneBlueprintStoreChestRegistry.Refresh(this);
     }
 
-    internal bool TryGetStoreLookup(out string mode, out string listingId, out long playerId)
+    internal bool TryGetStoreLookup(out string mode, out string listingId, out ZoneBlueprintStoreActor actor)
     {
         mode = "";
         listingId = "";
-        playerId = 0L;
+        actor = default;
         ZDO? zdo = _nview != null && _nview.IsValid() ? _nview.GetZDO() : null;
         if (zdo == null || zdo.GetBool(ConfirmedKey, false))
         {
@@ -771,21 +863,33 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
         mode = zdo.GetString(ModeKey, "");
         listingId = zdo.GetString(ListingIdKey, "");
-        if (string.IsNullOrWhiteSpace(listingId))
+
+        if (string.Equals(mode, ModePayout, StringComparison.Ordinal))
         {
-            return false;
+            actor = ZoneBlueprintStoreIdentity.Actor(zdo.GetLong(SellerPlayerIdKey, 0L), ZoneBlueprintChestLifecycle.GetOwnerPlatformId(zdo));
+            return actor.IsValid;
         }
 
         if (string.Equals(mode, ModePurchase, StringComparison.Ordinal))
         {
-            playerId = zdo.GetLong(BuyerPlayerIdKey, 0L);
-            return playerId != 0L;
+            if (string.IsNullOrWhiteSpace(listingId))
+            {
+                return false;
+            }
+
+            actor = ZoneBlueprintStoreIdentity.Actor(zdo.GetLong(BuyerPlayerIdKey, 0L), ZoneBlueprintChestLifecycle.GetOwnerPlatformId(zdo));
+            return actor.IsValid;
         }
 
         if (string.Equals(mode, ModePrice, StringComparison.Ordinal))
         {
-            playerId = zdo.GetLong(SellerPlayerIdKey, 0L);
-            return playerId != 0L;
+            if (string.IsNullOrWhiteSpace(listingId))
+            {
+                return false;
+            }
+
+            actor = ZoneBlueprintStoreIdentity.Actor(zdo.GetLong(SellerPlayerIdKey, 0L), ZoneBlueprintChestLifecycle.GetOwnerPlatformId(zdo));
+            return actor.IsValid;
         }
 
         return false;
@@ -877,22 +981,34 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
         if (ZoneBlueprintStoreDraftRepository.TryLoadBlueprintFile(descriptor.BlueprintFile, out ZoneBlueprintFile blueprint, out _))
         {
-            CreateOwnedPreview(ZoneBlueprintStorePreviewPayload.CreatePreviewBlueprint(blueprint), descriptor.Anchor, descriptor.Rotation);
+            ZoneBlueprintFile previewBlueprint = ZoneBlueprintStorePreviewPayload.CreatePreviewBlueprint(blueprint);
+            CachePreviewRestoreBlueprint(descriptor.BlueprintFile, previewBlueprint);
+            CreateOwnedPreview(previewBlueprint, descriptor.Anchor, descriptor.Rotation);
             return;
         }
 
-        if (_previewRestoreRequested)
+        if (TryGetCachedPreviewRestoreBlueprint(descriptor.BlueprintFile, out ZoneBlueprintFile cachedBlueprint))
+        {
+            CreateOwnedPreview(cachedBlueprint, descriptor.Anchor, descriptor.Rotation);
+            return;
+        }
+
+        if (_previewRestoreRequested || IsPreviewRestorePending(descriptor.BlueprintFile))
         {
             return;
         }
 
         _previewRestoreRequested = true;
+        MarkPreviewRestorePending(descriptor.BlueprintFile);
         ZoneBlueprintStore.RequestPreviewRestore(_cachedMode, _cachedListingId, _cachedBlueprintName, descriptor.BlueprintFile);
     }
 
     private void CreateOwnedPreview(ZoneBlueprintFile blueprint, Vector3 anchor, Quaternion rotation)
     {
-        _ownedPreview.CreateBlueprint(blueprint, $"HomesteadStoreChestPreview_{_cachedBlueprintName}", anchor, rotation, transform);
+        // Match plan chest behavior: the ghost is owned by this component, but it
+        // is not a child of the destructible chest object. That keeps chest break
+        // effects from tinting or animating the preview during cleanup.
+        _ownedPreview.CreateBlueprint(blueprint, $"HomesteadStoreChestPreview_{_cachedBlueprintName}", anchor, rotation);
         Color color = string.Equals(_cachedMode, ModePurchase, StringComparison.Ordinal)
             ? BlueprintConfig.StorePurchasePreviewColor
             : BlueprintConfig.StoreListingPreviewColor;
@@ -902,6 +1018,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     internal static void HandlePreviewRestoreResponse(ZoneBlueprintStorePreviewRestoreResponse response)
     {
+        ClearPreviewRestorePending(response.BlueprintFile);
         foreach (ZoneBlueprintStoreChest chest in Object.FindObjectsByType<ZoneBlueprintStoreChest>(FindObjectsSortMode.None))
         {
             chest.TryApplyPreviewRestoreResponse(response);
@@ -910,7 +1027,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     private void TryApplyPreviewRestoreResponse(ZoneBlueprintStorePreviewRestoreResponse response)
     {
-        if (!response.Success || _ownedPreview.HasRoot)
+        if (_ownedPreview.HasRoot)
         {
             return;
         }
@@ -937,10 +1054,17 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return;
         }
 
+        _previewRestoreRequested = false;
+        if (!response.Success)
+        {
+            return;
+        }
+
         try
         {
             if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(response.BlueprintPayload, response.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
             {
+                CachePreviewRestoreBlueprint(response.BlueprintFile, blueprint);
                 CreateOwnedPreview(blueprint, descriptor.Anchor, descriptor.Rotation);
             }
             else
@@ -952,6 +1076,57 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         {
             HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to restore blueprint store chest preview: {ex.Message}");
         }
+    }
+
+    private static bool TryGetCachedPreviewRestoreBlueprint(string blueprintFile, out ZoneBlueprintFile blueprint)
+    {
+        return PreviewRestoreBlueprintCache.TryGetValue(CreatePreviewRestoreCacheKey(blueprintFile), out blueprint!);
+    }
+
+    private static void CachePreviewRestoreBlueprint(string blueprintFile, ZoneBlueprintFile blueprint)
+    {
+        string cacheKey = CreatePreviewRestoreCacheKey(blueprintFile);
+        if (string.IsNullOrWhiteSpace(cacheKey) || PreviewRestoreBlueprintCache.ContainsKey(cacheKey))
+        {
+            return;
+        }
+
+        PreviewRestoreBlueprintCache[cacheKey] = blueprint;
+        PreviewRestoreBlueprintCacheOrder.Enqueue(cacheKey);
+        while (PreviewRestoreBlueprintCache.Count > PreviewRestoreBlueprintCacheLimit &&
+               PreviewRestoreBlueprintCacheOrder.Count > 0)
+        {
+            string oldestKey = PreviewRestoreBlueprintCacheOrder.Dequeue();
+            PreviewRestoreBlueprintCache.Remove(oldestKey);
+        }
+    }
+
+    private static bool IsPreviewRestorePending(string blueprintFile)
+    {
+        return PendingPreviewRestoreFiles.Contains(CreatePreviewRestoreCacheKey(blueprintFile));
+    }
+
+    private static void MarkPreviewRestorePending(string blueprintFile)
+    {
+        string cacheKey = CreatePreviewRestoreCacheKey(blueprintFile);
+        if (!string.IsNullOrWhiteSpace(cacheKey))
+        {
+            PendingPreviewRestoreFiles.Add(cacheKey);
+        }
+    }
+
+    private static void ClearPreviewRestorePending(string blueprintFile)
+    {
+        string cacheKey = CreatePreviewRestoreCacheKey(blueprintFile);
+        if (!string.IsNullOrWhiteSpace(cacheKey))
+        {
+            PendingPreviewRestoreFiles.Remove(cacheKey);
+        }
+    }
+
+    private static string CreatePreviewRestoreCacheKey(string blueprintFile)
+    {
+        return Path.GetFileName(blueprintFile ?? "");
     }
 
     private bool IsPriceMode()
@@ -971,7 +1146,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     private List<ZoneBlueprintStorePriceItem> GetPriceItems()
     {
-        return ZoneBlueprintStore.DeserializePriceItems(_nview?.GetZDO()?.GetString(PricePayloadKey, "") ?? "");
+        return ZoneBlueprintStorePrices.DeserializePriceItems(_nview?.GetZDO()?.GetString(PricePayloadKey, "") ?? "");
     }
 
     private List<ZoneBlueprintRequirement> GetPriceRequirements()
@@ -1021,12 +1196,29 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     private List<ZoneBlueprintStorePriceItem> GetDepositedPriceItems()
     {
-        return ZoneBlueprintStore.DeserializePriceItems(_nview?.GetZDO()?.GetString(PurchaseDepositPayloadKey, "") ?? "");
+        return ZoneBlueprintStorePrices.DeserializePriceItems(_nview?.GetZDO()?.GetString(PurchaseDepositPayloadKey, "") ?? "");
+    }
+
+    private static List<ZoneBlueprintStorePriceItem> GetDepositedPriceItems(ZDO? zdo)
+    {
+        return ZoneBlueprintStorePrices.DeserializePriceItems(zdo?.GetString(PurchaseDepositPayloadKey, "") ?? "");
     }
 
     private void SetDepositedPriceItems(IReadOnlyList<ZoneBlueprintStorePriceItem> priceItems)
     {
-        _nview?.GetZDO()?.Set(PurchaseDepositPayloadKey, ZoneBlueprintStore.SerializePriceItems(priceItems));
+        _nview?.GetZDO()?.Set(PurchaseDepositPayloadKey, ZoneBlueprintStorePrices.SerializePriceItems(priceItems));
+    }
+
+    private static void SetDepositedPriceItems(ZDO? zdo, IReadOnlyList<ZoneBlueprintStorePriceItem> priceItems)
+    {
+        zdo?.Set(PurchaseDepositPayloadKey, ZoneBlueprintStorePrices.SerializePriceItems(priceItems));
+    }
+
+    private static int GetPurchaseDeposited(ZDO? zdo, string itemName)
+    {
+        return GetDepositedPriceItems(zdo)
+            .Where(item => string.Equals(item.ItemName, itemName, StringComparison.Ordinal))
+            .Sum(item => item.Amount);
     }
 
     private void AddPurchaseDeposit(ZoneBlueprintRequirement requirement, int amount)
@@ -1062,7 +1254,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             }
         }
 
-        SetDepositedPriceItems(ZoneBlueprintStore.NormalizePriceItems(deposits));
+        SetDepositedPriceItems(ZoneBlueprintStorePrices.NormalizePriceItems(deposits));
     }
 
     private ZoneBlueprintStorePurchaseEscrow CreatePurchaseEscrow()
@@ -1075,9 +1267,14 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         return new ZoneBlueprintStorePurchaseEscrow(this, () => requirements, GetPurchaseDeposited, AddPurchaseDeposit);
     }
 
+    private static ZoneMaterialEscrow.Session CreatePurchaseEscrow(ZDO? zdo, IEnumerable<ZoneBlueprintRequirement> requirements)
+    {
+        return new ZoneMaterialEscrow.Session(requirements, itemName => GetPurchaseDeposited(zdo, itemName), (_, _) => { });
+    }
+
     private static Sprite? GetRequirementIcon(ZoneBlueprintRequirement requirement)
     {
-        GameObject? prefab = ZoneBlueprintStore.FindItemPrefab(requirement.PrefabName);
+        GameObject? prefab = ZoneBlueprintStoreVisuals.FindItemPrefab(requirement.PrefabName);
         ItemDrop? drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
         return drop != null ? drop.m_itemData.GetIcon() : null;
     }

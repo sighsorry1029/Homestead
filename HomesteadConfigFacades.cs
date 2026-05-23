@@ -10,33 +10,22 @@ namespace Homestead;
 internal static class GeneralConfig
 {
     private static ConfigEntry<HomesteadPlugin.Toggle> _serverConfigLocked = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _zoneWearNTearLimit = null!;
-
-    public static bool ZoneWearNTearLimitEnabled => _zoneWearNTearLimit.Value.IsOn();
 
     public static void Bind(HomesteadPlugin plugin)
     {
         _serverConfigLocked = plugin.config("01 - General", "Lock Configuration", HomesteadPlugin.Toggle.On, "If on, the server controls synced settings.");
         _ = HomesteadPlugin.ConfigSync.AddLockingConfigEntry(_serverConfigLocked);
-        _zoneWearNTearLimit = plugin.config(
-            "01 - General",
-            "Zone WearNTear Limit",
-            HomesteadPlugin.Toggle.Off,
-            "If on, Homestead enforces per-zone WearNTear limits from BepInEx/config/Homestead/zones.yml. If off, zone rules stay loaded but placement and blueprint confirmations are not rejected by zone count.");
-        _zoneWearNTearLimit.SettingChanged += (_, _) => ZonePieceCounter.RebuildCounts();
     }
 }
 
 internal static class ClientConfig
 {
     private static ConfigEntry<float> _counterVisibleSeconds = null!;
-    private static ConfigEntry<KeyboardShortcut> _zoneUiToggleHotkey = null!;
     private static ConfigEntry<float> _statusHudX = null!;
     private static ConfigEntry<float> _statusHudY = null!;
     private static ConfigEntry<int> _statusHudFontSize = null!;
 
     public static float CounterVisibleSeconds => Mathf.Max(0.1f, _counterVisibleSeconds.Value);
-    public static KeyboardShortcut ZoneUiToggleHotkey => _zoneUiToggleHotkey.Value;
     public static Vector2 StatusHudPosition => new(Mathf.Clamp(_statusHudX.Value, 0f, 3000f), -Mathf.Clamp(_statusHudY.Value, 0f, 3000f));
     public static int StatusHudFontSize => Mathf.Clamp(_statusHudFontSize.Value, 10, 64);
 
@@ -47,12 +36,6 @@ internal static class ClientConfig
             "Build Counter Visible Seconds",
             2.5f,
             new ConfigDescription("How long the top build counter stays visible after you place a build piece.", new AcceptableValueRange<float>(0.1f, 10f)),
-            synchronizedSetting: false);
-        _zoneUiToggleHotkey = plugin.config(
-            "02 - Client",
-            "Zone UI Toggle Hotkey",
-            new KeyboardShortcut(KeyCode.F8),
-            "Client-only hotkey that toggles the current zone number HUD and floor boundary line. The Zone UI starts hidden after login.",
             synchronizedSetting: false);
         _statusHudX = plugin.config(
             "02 - Client",
@@ -136,10 +119,8 @@ internal static class BlueprintConfig
     private static ConfigEntry<float> _storeFormPanelScale = null!;
     private static ConfigEntry<float> _storeFormPanelX = null!;
     private static ConfigEntry<float> _storeFormPanelY = null!;
-    private static ConfigEntry<int> _storeNotificationPollSeconds = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _storeNewListingNotifications = null!;
     private static ConfigEntry<HomesteadPlugin.Toggle> _storeAnonymousNotifications = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _storeNotificationButton = null!;
+    private static ConfigEntry<BlueprintStoreNotificationMode> _storeNotificationMode = null!;
     private static ConfigEntry<float> _storeNotificationButtonX = null!;
     private static ConfigEntry<float> _storeNotificationButtonY = null!;
     private static ConfigEntry<KeyboardShortcut> _storeListModifierKey = null!;
@@ -156,7 +137,8 @@ internal static class BlueprintConfig
     private static ConfigEntry<float> _areaDismantleDefaultDepth = null!;
     private static ConfigEntry<Color> _areaDismantleBoundaryColor = null!;
     private static ConfigEntry<string> _areaDismantlePrefabBlacklist = null!;
-    private static ConfigEntry<KeyboardShortcut> _areaToolRotationModifierKey = null!;
+    private static ConfigEntry<KeyboardShortcut> _areaToolDepthModifierKey = null!;
+    private static ConfigEntry<KeyboardShortcut> _areaToolWidthModifierKey = null!;
     private static ConfigEntry<Color> _previewGhostColor = null!;
     private static ConfigEntry<float> _previewGhostBrightness = null!;
     private static readonly HashSet<string> BuiltInAreaDismantleProtectedPrefabs = new(StringComparer.OrdinalIgnoreCase)
@@ -205,10 +187,12 @@ internal static class BlueprintConfig
         _storeFormPanelX.Value = Mathf.Clamp(offset.x, -2000f, 2000f);
         _storeFormPanelY.Value = Mathf.Clamp(offset.y, -2000f, 2000f);
     }
-    public static int StoreNotificationPollSeconds => Mathf.Clamp(_storeNotificationPollSeconds.Value, 0, 3600);
-    public static bool StoreNewListingNotifications => _storeNewListingNotifications.Value.IsOn();
+    public static int StoreNotificationPollSeconds => StoreNotificationsEnabled ? 900 : 0;
+    public static BlueprintStoreNotificationMode StoreNotificationMode => _storeNotificationMode.Value;
+    public static bool StoreNotificationsEnabled => StoreNotificationMode != BlueprintStoreNotificationMode.Off;
+    public static bool StoreNotificationAutoOpen => StoreNotificationMode == BlueprintStoreNotificationMode.AutoOpenPanel;
     public static bool StoreAnonymousNotifications => _storeAnonymousNotifications.Value.IsOn();
-    public static bool StoreNotificationButtonEnabled => _storeNotificationButton.Value.IsOn();
+    public static bool StoreNotificationButtonEnabled => StoreNotificationsEnabled;
     public static Vector2 StoreNotificationButtonOffset => new(Mathf.Clamp(_storeNotificationButtonX.Value, -3000f, 3000f), Mathf.Clamp(_storeNotificationButtonY.Value, -3000f, 3000f));
     public static void SetStoreNotificationButtonOffset(Vector2 offset)
     {
@@ -255,9 +239,12 @@ internal static class BlueprintConfig
     public static float AreaDismantleDefaultDepth => Mathf.Clamp(_areaDismantleDefaultDepth.Value, 1f, AreaDismantleMaxSide);
     public static Color AreaDismantleBoundaryColor => _areaDismantleBoundaryColor.Value;
     public static HashSet<string> AreaDismantlePrefabBlacklist => ConfigValueHelpers.SplitPrefabList(_areaDismantlePrefabBlacklist.Value);
-    public static KeyboardShortcut AreaToolRotationModifierKey => _areaToolRotationModifierKey.Value;
-    public static string AreaToolRotationModifierLabel => ConfigValueHelpers.FormatShortcut(AreaToolRotationModifierKey);
-    public static string AreaToolRotationInputLabel => AreaToolRotationModifierKey.MainKey == KeyCode.None ? "" : $"{AreaToolRotationModifierLabel}+Wheel";
+    public static KeyboardShortcut AreaToolDepthModifierKey => _areaToolDepthModifierKey.Value;
+    public static string AreaToolDepthModifierLabel => ConfigValueHelpers.FormatShortcut(AreaToolDepthModifierKey);
+    public static string AreaToolDepthInputLabel => AreaToolDepthModifierKey.MainKey == KeyCode.None ? "" : $"{AreaToolDepthModifierLabel}+Wheel";
+    public static KeyboardShortcut AreaToolWidthModifierKey => _areaToolWidthModifierKey.Value;
+    public static string AreaToolWidthModifierLabel => ConfigValueHelpers.FormatShortcut(AreaToolWidthModifierKey);
+    public static string AreaToolWidthInputLabel => AreaToolWidthModifierKey.MainKey == KeyCode.None ? "" : $"{AreaToolWidthModifierLabel}+Wheel";
 
     public static bool ShouldApplyTerrainSupport(Player player)
     {
@@ -420,29 +407,17 @@ internal static class BlueprintConfig
                 new AcceptableValueRange<float>(-2000f, 2000f),
                 new ConfigurationManagerAttributes { Browsable = false }),
             synchronizedSetting: false);
-        _storeNotificationPollSeconds = plugin.config(
+        _storeNotificationMode = plugin.config(
             "04 - Blueprint Store",
-            "Blueprint Store Notification Poll Seconds",
-            900,
-            new ConfigDescription("Client-only fallback interval for checking missed unread Blueprint Store notifications. Realtime server push is still used first. Set to 0 to disable fallback polling.", new AcceptableValueRange<int>(0, 3600)),
-            synchronizedSetting: false);
-        _storeNewListingNotifications = plugin.config(
-            "04 - Blueprint Store",
-            "Blueprint Store New Listing Notifications",
-            HomesteadPlugin.Toggle.On,
-            "Client-only toggle for showing Blueprint Store notifications when any player lists a new blueprint.",
+            "Blueprint Store Notification Mode",
+            BlueprintStoreNotificationMode.BadgeOnly,
+            "Client-only display mode for Blueprint Store notifications. Off hides the notification button and disables fallback polling. BadgeOnly keeps the button and unread count visible without opening the panel automatically. AutoOpenPanel opens the notification panel when a new unread notification arrives.",
             synchronizedSetting: false);
         _storeAnonymousNotifications = plugin.config(
             "04 - Blueprint Store",
             "Blueprint Store Anonymous Notifications",
             HomesteadPlugin.Toggle.Off,
             "Server-synced toggle for hiding player names in Blueprint Store notification messages. When on, notifications say Anonymous instead of the buyer, seller, or offer creator name.");
-        _storeNotificationButton = plugin.config(
-            "04 - Blueprint Store",
-            "Blueprint Store Notification Button",
-            HomesteadPlugin.Toggle.On,
-            "Client-only toggle for the persistent Blueprint Store notification button. When on, the button stays visible and toggles the notification panel.",
-            synchronizedSetting: false);
         _storeNotificationButtonX = plugin.config(
             "04 - Blueprint Store",
             "Blueprint Store Notification Button X Offset",
@@ -542,11 +517,17 @@ internal static class BlueprintConfig
             "piece_stuward",
             "Comma-separated additional prefab names that Area Dismantle will never dismantle. Homestead blueprint/store chests are always protected internally.");
         PruneBuiltInAreaDismantleBlacklistEntries();
-        _areaToolRotationModifierKey = plugin.config(
+        _areaToolDepthModifierKey = plugin.config(
             "03 - Blueprint",
-            "Area Tool Rotation Modifier Key",
+            "Area Tool Depth Modifier Key",
+            new KeyboardShortcut(KeyCode.Mouse3),
+            "Client-only modifier key held while using the mouse wheel to resize only the depth of Area Save and Area Dismantle rectangles. Set to None to disable depth-only wheel resizing.",
+            synchronizedSetting: false);
+        _areaToolWidthModifierKey = plugin.config(
+            "03 - Blueprint",
+            "Area Tool Width Modifier Key",
             new KeyboardShortcut(KeyCode.Mouse4),
-            "Client-only modifier key held while using the mouse wheel to rotate Area Save and Area Dismantle rectangles. Set to None to disable wheel rotation and keep mouse wheel for size only.",
+            "Client-only modifier key held while using the mouse wheel to resize only the width of Area Save and Area Dismantle rectangles. Set to None to disable width-only wheel resizing.",
             synchronizedSetting: false);
         _previewGhostColor = plugin.config(
             "03 - Blueprint",
@@ -778,13 +759,16 @@ internal static class PlacementControlConfig
     public static bool PlacementAdjustEnabled => _placementAdjustEnabled.Value.IsOn();
     public static float HeightStep => Mathf.Clamp(_placementAdjustHeightStep.Value, 0.01f, 10f);
     public static float HorizontalStep => Mathf.Clamp(_placementAdjustHorizontalStep.Value, 0.01f, 10f);
-    public static float RotationStep => Mathf.Clamp(_placementRotationStep.Value, 1f, 90f);
-    public static float XAxisRotation => Mathf.Clamp(_placementXAxisRotation.Value, -180f, 180f);
-    public static float ZAxisRotation => Mathf.Clamp(_placementZAxisRotation.Value, -180f, 180f);
+    public static float RotationStep => RoundHalfDegree(Mathf.Clamp(_placementRotationStep.Value, 0.5f, 90f));
+    public static float XAxisRotation => RoundHalfDegree(Mathf.Clamp(_placementXAxisRotation.Value, -180f, 180f));
+    public static float ZAxisRotation => RoundHalfDegree(Mathf.Clamp(_placementZAxisRotation.Value, -180f, 180f));
     public static bool HasPlacementAxisRotation => Mathf.Abs(XAxisRotation) > 0.001f || Mathf.Abs(ZAxisRotation) > 0.001f;
     public static KeyboardShortcut PlacementAdjustModifierKey => _placementAdjustModifierKey.Value;
     public static string PlacementAdjustModifierLabel => ConfigValueHelpers.FormatShortcut(PlacementAdjustModifierKey);
-    public static bool IsAreaRotationModifierHeld() => ConfigValueHelpers.IsShortcutHeld(BlueprintConfig.AreaToolRotationModifierKey, allowUnbound: false);
+    public static bool IsAreaDepthModifierHeld() => ConfigValueHelpers.IsShortcutHeld(BlueprintConfig.AreaToolDepthModifierKey, allowUnbound: false);
+    public static bool IsAreaWidthModifierHeld() => ConfigValueHelpers.IsShortcutHeld(BlueprintConfig.AreaToolWidthModifierKey, allowUnbound: false);
+    public static bool IsAreaUniformScaleModifierHeld() => PlacementAdjustModifierKey.MainKey != KeyCode.None && ConfigValueHelpers.IsShortcutHeld(PlacementAdjustModifierKey, allowUnbound: false);
+    public static string AreaUniformScaleInputLabel => PlacementAdjustModifierKey.MainKey == KeyCode.None ? "" : $"{PlacementAdjustModifierLabel}+Wheel";
     public static bool IsPlacementAdjustModifierHeld() => ConfigValueHelpers.IsShortcutHeld(PlacementAdjustModifierKey, allowUnbound: true);
 
     public static void Bind(HomesteadPlugin plugin)
@@ -821,20 +805,20 @@ internal static class PlacementControlConfig
         _placementRotationStep = plugin.config(
             "06 - Placement Controls",
             "Rotation Step",
-            15f,
-            new ConfigDescription("Client-only rotation step in degrees shared by Area Save, Area Dismantle, blueprint yaw rotation, and placement rotation controls.", new AcceptableValueRange<float>(1f, 90f)),
+            22.5f,
+            new ConfigDescription("Client-only rotation step in degrees shared by Area Save, Area Dismantle, blueprint yaw rotation, and placement rotation controls. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(0.5f, 90f)),
             synchronizedSetting: false);
         _placementXAxisRotation = plugin.config(
             "06 - Placement Controls",
             "X Axis Rotation",
             0f,
-            new ConfigDescription("Client-only default X-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Terrain tools and Homestead area tools are ignored.", new AcceptableValueRange<float>(-180f, 180f)),
+            new ConfigDescription("Client-only default X-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
             synchronizedSetting: false);
         _placementZAxisRotation = plugin.config(
             "06 - Placement Controls",
             "Z Axis Rotation",
             0f,
-            new ConfigDescription("Client-only default Z-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Terrain tools and Homestead area tools are ignored.", new AcceptableValueRange<float>(-180f, 180f)),
+            new ConfigDescription("Client-only default Z-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
             synchronizedSetting: false);
         _placementAdjustModifierKey = plugin.config(
             "06 - Placement Controls",
@@ -842,6 +826,11 @@ internal static class PlacementControlConfig
             new KeyboardShortcut(KeyCode.LeftAlt),
             "Client-only modifier key held while using PgUp/PgDn and arrow keys for placement offsets. Set to None to allow the old unmodified keys.",
             synchronizedSetting: false);
+    }
+
+    private static float RoundHalfDegree(float value)
+    {
+        return Mathf.Round(value * 2f) / 2f;
     }
 }
 
@@ -858,6 +847,9 @@ internal static class DvergrCircletConfig
     private static ConfigEntry<float> _perItemAdjustmentStep = null!;
     private static ConfigEntry<KeyboardShortcut> _toggleLightHotkey = null!;
     private static ConfigEntry<KeyboardShortcut> _adjustmentModifierKey = null!;
+    private static ConfigEntry<HomesteadPlugin.Toggle> _remoteVisualSync = null!;
+    private static ConfigEntry<float> _remoteLightMaxDistance = null!;
+    private static ConfigEntry<HomesteadPlugin.Toggle> _debugLogging = null!;
 
     public static bool ExtensionEnabled => _extensionEnabled.Value.IsOn();
     public static float FuelSeconds => Mathf.Max(1f, _fuelMinutes.Value) * 60f;
@@ -868,6 +860,9 @@ internal static class DvergrCircletConfig
     public static KeyboardShortcut ToggleLightHotkey => _toggleLightHotkey.Value;
     public static KeyboardShortcut AdjustmentModifierKey => _adjustmentModifierKey.Value;
     public static string AdjustmentModifierLabel => ConfigValueHelpers.FormatShortcut(AdjustmentModifierKey);
+    public static bool RemoteVisualSync => _remoteVisualSync.Value.IsOn();
+    public static float RemoteLightMaxDistance => Mathf.Clamp(_remoteLightMaxDistance.Value, 0f, 200f);
+    public static bool DebugLogging => _debugLogging.Value.IsOn();
 
     public static void Bind(HomesteadPlugin plugin)
     {
@@ -916,119 +911,24 @@ internal static class DvergrCircletConfig
             new KeyboardShortcut(KeyCode.LeftShift),
             "Client-only modifier held while using fixed arrow keys to adjust the equipped Dvergr circlet. Up/Down changes brightness, Right/Left changes range. Set to None to use arrow keys without a modifier.",
             synchronizedSetting: false);
+        _remoteVisualSync = plugin.config(
+            "08 - Dvergr Circlet",
+            "Remote Visual Sync",
+            HomesteadPlugin.Toggle.On,
+            "If on, Homestead publishes Dvergr circlet custom-slot visual state through the player ZDO so other clients can see the circlet visual and light. Disable only if another mod owns circlet visuals.");
+        _remoteLightMaxDistance = plugin.config(
+            "08 - Dvergr Circlet",
+            "Remote Light Max Distance",
+            60f,
+            new ConfigDescription("Client-only maximum distance in meters for rendering Homestead-synced remote Dvergr circlet lights. Set to 0 for no distance culling.", new AcceptableValueRange<float>(0f, 200f)),
+            synchronizedSetting: false);
+        _debugLogging = plugin.config(
+            "08 - Dvergr Circlet",
+            "Debug Logging",
+            HomesteadPlugin.Toggle.Off,
+            "Client-only diagnostic logging for Dvergr circlet equip detection, AzuExtended custom slot detection, visual roots, remote sync, and fallback light state.",
+            synchronizedSetting: false);
     }
-}
-
-internal static class ZoneBundleConfig
-{
-    private static ConfigEntry<ZoneBundleWearNTearSaveMode> _wearNTearSaveMode = null!;
-    private static ConfigEntry<float> _supportFillFeatherWidth = null!;
-    private static ConfigEntry<float> _supportFillContactTolerance = null!;
-
-    public static ZoneBundleWearNTearSaveMode WearNTearSaveMode => _wearNTearSaveMode.Value;
-    public static float SupportFillFeatherWidth => Mathf.Clamp(_supportFillFeatherWidth.Value, 0f, 64f);
-    public static float SupportFillContactTolerance => Mathf.Clamp(_supportFillContactTolerance.Value, 0.01f, 2f);
-
-    public static void Bind(HomesteadPlugin plugin)
-    {
-        _wearNTearSaveMode = plugin.config(
-            "09 - Admin Zone Bundle",
-            "Support Fill WearNTear Save Mode",
-            ZoneBundleWearNTearSaveMode.CreatorOnly,
-            "Controls which WearNTear objects SupportFill saves. CreatorOnly saves only player-created WearNTear. IncludeCreatorless also saves WearNTear with no creator id.");
-        _supportFillFeatherWidth = plugin.config(
-            "09 - Admin Zone Bundle",
-            "Zone Bundle Support Fill Feather Width",
-            6f,
-            new ConfigDescription("Meters around SupportFill footprints that blend back to native terrain. Set to 0 to only change exact footprint cells.", new AcceptableValueRange<float>(0f, 64f)));
-        _supportFillContactTolerance = plugin.config(
-            "09 - Admin Zone Bundle",
-            "Support Fill Contact Tolerance",
-            0.5f,
-            new ConfigDescription("How close terrain must be to the lowest WearNTear bottom at a 1m x/z cell to be restored as a support contact.", new AcceptableValueRange<float>(0.01f, 2f)));
-    }
-}
-
-internal static class AutoArchiveConfig
-{
-    private static ConfigEntry<HomesteadPlugin.Toggle> _enabled = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _dryRun = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _resetAfterSave = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _requireLoadedTerrainForReset = null!;
-    private static ConfigEntry<int> _inactiveDays = null!;
-    private static ConfigEntry<int> _minimumPiecesPerCluster = null!;
-    private static ConfigEntry<AutoArchiveSmallClusterAction> _smallClusterAction = null!;
-    private static ConfigEntry<int> _maxZonesPerRun = null!;
-    private static ConfigEntry<int> _scanIntervalMinutes = null!;
-    private static ConfigEntry<int> _unknownOwnerGraceDays = null!;
-    private static ConfigEntry<int> _scannerBatchSize = null!;
-
-    public static bool Enabled => _enabled.Value.IsOn();
-    public static bool DryRun => _dryRun.Value.IsOn();
-    public static bool ResetAfterSave => _resetAfterSave.Value.IsOn();
-    public static bool RequireLoadedTerrainForReset => _requireLoadedTerrainForReset.Value.IsOn();
-    public static int InactiveDays => Mathf.Max(0, _inactiveDays.Value);
-    public static int MinimumPiecesPerCluster => Mathf.Max(1, _minimumPiecesPerCluster.Value);
-    public static AutoArchiveSmallClusterAction SmallClusterAction => _smallClusterAction.Value;
-    public static int MaxZonesPerRun => Mathf.Max(1, _maxZonesPerRun.Value);
-    public static int ScanIntervalMinutes => Mathf.Max(1, _scanIntervalMinutes.Value);
-    public static int UnknownOwnerGraceDays => Mathf.Max(0, _unknownOwnerGraceDays.Value);
-    public static int ScannerBatchSize => Mathf.Clamp(_scannerBatchSize.Value, 100, 10000);
-
-    public static void Bind(HomesteadPlugin plugin)
-    {
-        _enabled = plugin.config("10 - Admin Auto Archive", "Enabled", HomesteadPlugin.Toggle.Off, "If on, the server checks inactive player structures once per day.");
-        _dryRun = plugin.config("10 - Admin Auto Archive", "Dry Run", HomesteadPlugin.Toggle.On, "If on, auto archive only reports candidate zones and never saves or resets them.");
-        _resetAfterSave = plugin.config("10 - Admin Auto Archive", "Reset After Save", HomesteadPlugin.Toggle.Off, "If on, saved candidate zones are reset after their bundle is written.");
-        _requireLoadedTerrainForReset = plugin.config("10 - Admin Auto Archive", "Require Loaded Terrain For Reset", HomesteadPlugin.Toggle.Off, "If on, reset is skipped unless every zone saved usable terrain contacts. A loaded zone with no contacts is not enough.");
-        _inactiveDays = plugin.config(
-            "10 - Admin Auto Archive",
-            "Inactive Days",
-            60,
-            new ConfigDescription("A known owner must be unseen for this many days before their structures can be archived. Set to 0 only for tests because even online owners can become eligible.", new AcceptableValueRange<int>(0, 3650)));
-        _minimumPiecesPerCluster = plugin.config(
-            "10 - Admin Auto Archive",
-            "Minimum Pieces Per Cluster",
-            5,
-            new ConfigDescription("Candidate clusters with fewer player structures are skipped.", new AcceptableValueRange<int>(1, 10000)));
-        _smallClusterAction = plugin.config(
-            "10 - Admin Auto Archive",
-            "Small Cluster Action",
-            AutoArchiveSmallClusterAction.ResetWithoutSave,
-            "What to do when an inactive WearNTear cluster has fewer structures than Minimum Pieces Per Cluster. ResetWithoutSave only resets during reset runs, not dry/save runs.");
-        _maxZonesPerRun = plugin.config(
-            "10 - Admin Auto Archive",
-            "Max Zones Per Run",
-            50,
-            new ConfigDescription("Maximum number of zones to save or reset in one automatic run.", new AcceptableValueRange<int>(1, 10000)));
-        _scanIntervalMinutes = plugin.config(
-            "10 - Admin Auto Archive",
-            "Scan Interval Minutes",
-            1440,
-            new ConfigDescription("How often the server runs automatic inactive-structure archive scans. Set to 1 for rapid testing.", new AcceptableValueRange<int>(1, 525600)));
-        _unknownOwnerGraceDays = plugin.config(
-            "10 - Admin Auto Archive",
-            "Unknown Owner Grace Days",
-            90,
-            new ConfigDescription("Owners first discovered by the scanner but never seen online are protected for this many days. Set to 0 to archive imported-world owners immediately.", new AcceptableValueRange<int>(0, 3650)));
-        _scannerBatchSize = plugin.config(
-            "10 - Admin Auto Archive",
-            "Scanner Batch Size",
-            1000,
-            new ConfigDescription("How many ZDOs the auto archive scanner inspects before yielding a frame.", new AcceptableValueRange<int>(100, 10000)));
-    }
-}
-
-internal static class AreaToolConfig
-{
-    public static float BlueprintSaveMaxSide => BlueprintConfig.AreaSaveMaxSide;
-    public static float BlueprintSaveDefaultWidth => BlueprintConfig.AreaSaveDefaultWidth;
-    public static float BlueprintSaveDefaultDepth => BlueprintConfig.AreaSaveDefaultDepth;
-    public static Color BlueprintSaveColor => BlueprintConfig.AreaSaveBoundaryColor;
-    public static float DismantleMaxSide => BlueprintConfig.AreaDismantleMaxSide;
-    public static float DismantleDefaultWidth => BlueprintConfig.AreaDismantleDefaultWidth;
-    public static float DismantleDefaultDepth => BlueprintConfig.AreaDismantleDefaultDepth;
-    public static Color DismantleColor => BlueprintConfig.AreaDismantleBoundaryColor;
 }
 
 internal static class ConfigValueHelpers
@@ -1100,6 +1000,13 @@ internal static class ConfigValueHelpers
             KeyCode.LeftControl or KeyCode.RightControl => Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl),
             KeyCode.LeftShift or KeyCode.RightShift => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift),
             KeyCode.LeftAlt or KeyCode.RightAlt => Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt),
+            KeyCode.Mouse0 => Input.GetMouseButton(0),
+            KeyCode.Mouse1 => Input.GetMouseButton(1),
+            KeyCode.Mouse2 => Input.GetMouseButton(2),
+            KeyCode.Mouse3 => Input.GetMouseButton(3),
+            KeyCode.Mouse4 => Input.GetMouseButton(4),
+            KeyCode.Mouse5 => Input.GetMouseButton(5),
+            KeyCode.Mouse6 => Input.GetMouseButton(6),
             _ => Input.GetKey(key)
         };
     }

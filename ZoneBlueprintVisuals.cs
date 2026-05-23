@@ -12,6 +12,7 @@ namespace Homestead;
 internal static class ZoneBlueprintVisuals
 {
     private const int FullIconEntryLimit = 120;
+    private const int MaxIconProjectionSourceEntries = 2500;
     private const int MaxOptimizedIconEntries = 180;
     private const int IconProjectionGrid = 18;
     private static readonly Vector3 IconViewToCamera = new Vector3(0.75f, 0.55f, -0.75f).normalized;
@@ -379,14 +380,20 @@ internal static class ZoneBlueprintVisuals
         }
 
         Vector3 screenUp = Vector3.Cross(viewToCamera, screenRight).normalized;
-        List<ProjectedEntry> projected = new(blueprint.Entries.Count);
+        List<ZoneBlueprintEntry> entries = blueprint.Entries;
+        int stride = entries.Count > MaxIconProjectionSourceEntries
+            ? Mathf.CeilToInt(entries.Count / (float)MaxIconProjectionSourceEntries)
+            : 1;
+        int projectedCapacity = Mathf.CeilToInt(entries.Count / (float)stride);
+        List<ProjectedEntry> projected = new(projectedCapacity);
         float minU = float.PositiveInfinity;
         float maxU = float.NegativeInfinity;
         float minV = float.PositiveInfinity;
         float maxV = float.NegativeInfinity;
 
-        foreach (ZoneBlueprintEntry entry in blueprint.Entries)
+        for (int i = 0; i < entries.Count; i += stride)
         {
+            ZoneBlueprintEntry entry = entries[i];
             Vector3 position = FromVector(entry.LocalPos);
             float u = Vector3.Dot(position, screenRight);
             float v = Vector3.Dot(position, screenUp);

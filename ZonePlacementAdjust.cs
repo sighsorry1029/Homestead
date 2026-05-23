@@ -6,10 +6,13 @@ namespace Homestead;
 
 internal static class ZonePlacementAdjust
 {
+    private const float VanillaPlacementRotationStep = 22.5f;
+
     private static ManualLogSource Log = null!;
     private static string _lastGhostName = "";
     private static float _heightOffset;
     private static Vector3 _horizontalOffset;
+    private static float _lastHudYaw = float.NaN;
 
     internal static void Initialize(ManualLogSource logger)
     {
@@ -19,6 +22,12 @@ internal static class ZonePlacementAdjust
     [HarmonyPatch(typeof(Player), nameof(Player.UpdatePlacementGhost))]
     private static class PlayerUpdatePlacementGhostPatch
     {
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(Player __instance)
+        {
+            ApplyNativeRotationStep(__instance);
+        }
+
         [HarmonyPriority(Priority.Low)]
         private static void Postfix(Player __instance)
         {
@@ -40,12 +49,6 @@ internal static class ZonePlacementAdjust
 
             bool hasOffset = Mathf.Abs(_heightOffset) >= 0.0001f || _horizontalOffset.sqrMagnitude >= 0.0001f;
             bool hasAxisRotation = PlacementControlConfig.HasPlacementAxisRotation;
-            if (!hasOffset && !hasAxisRotation)
-            {
-                ZoneAreaToolStatusHud.HideDefaultPlacement();
-                return;
-            }
-
             if (hasOffset)
             {
                 ApplyOffset(__instance, ghost);
@@ -57,12 +60,57 @@ internal static class ZonePlacementAdjust
             }
 
             RevalidateFinalPlacement(__instance, ghost);
-            ZoneAreaToolStatusHud.ShowOffset(
-                "Default Placement",
+            float currentYaw = NormalizeAngle(ghost.transform.rotation.eulerAngles.y);
+            bool yawChanged = HasHudYawChanged(currentYaw);
+            bool keepVisible = hasOffset ||
+                               hasAxisRotation ||
+                               HasNonZeroYaw(currentYaw) ||
+                               UsesNonVanillaRotationStep();
+            if (!keepVisible && !yawChanged)
+            {
+                ZoneAreaToolStatusHud.HideDefaultPlacement();
+                return;
+            }
+
+            ZoneAreaToolStatusHud.ShowDefaultPlacement(
                 _horizontalOffset,
                 _heightOffset,
+                currentYaw,
                 PlacementControlConfig.XAxisRotation,
-                PlacementControlConfig.ZAxisRotation);
+                PlacementControlConfig.ZAxisRotation,
+                keepVisible);
+        }
+    }
+
+    [HarmonyPatch(typeof(Player), nameof(Player.SetupPlacementGhost))]
+    private static class PlayerSetupPlacementGhostRotationPatch
+    {
+        [HarmonyPriority(Priority.Last)]
+        private static void Postfix(Player __instance)
+        {
+            ApplyNativeRotationStep(__instance);
+            RandomizeFullCircleRotationForGhost(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
+    private static class PlayerPlacePieceRotationPatch
+    {
+        [HarmonyPriority(Priority.Last)]
+        private static void Postfix(Player __instance, Piece piece)
+        {
+            ApplyNativeRotationStep(__instance);
+            RandomizeFullCircleRotationForPiece(__instance, piece);
+        }
+    }
+
+    [HarmonyPatch(typeof(Player), nameof(Player.CopyPiece))]
+    private static class PlayerCopyPieceRotationPatch
+    {
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(Player __instance)
+        {
+            ApplyNativeRotationStep(__instance);
         }
     }
 
@@ -93,6 +141,64 @@ internal static class ZonePlacementAdjust
                player.m_placementGhost;
     }
 
+    private static bool IsLocalPlayer(Player? player)
+    {
+        return Player.m_localPlayer &&
+               player != null &&
+               player == Player.m_localPlayer &&
+               !player.IsDead();
+    }
+
+    private static void ApplyNativeRotationStep(Player player)
+    {
+        if (!IsLocalPlayer(player))
+        {
+            return;
+        }
+
+        float step = GetRotationStep();
+        float oldStep = player.m_placeRotationDegrees;
+        if (Mathf.Abs(oldStep - step) <= 0.001f)
+        {
+            return;
+        }
+
+        if (oldStep > 0.001f)
+        {
+            float yaw = oldStep * player.m_placeRotation;
+            player.m_placeRotation = Mathf.RoundToInt(yaw / step);
+        }
+
+        player.m_placeRotationDegrees = step;
+    }
+
+    private static void RandomizeFullCircleRotationForGhost(Player player)
+    {
+        GameObject? ghost = player != null ? player.m_placementGhost : null;
+        Piece? piece = ghost != null ? ghost.GetComponent<Piece>() : null;
+        RandomizeFullCircleRotationForPiece(player, piece);
+    }
+
+    private static void RandomizeFullCircleRotationForPiece(Player? player, Piece? piece)
+    {
+        if (player == null || !IsLocalPlayer(player) || piece == null || !piece.m_randomInitBuildRotation)
+        {
+            return;
+        }
+
+        player.m_placeRotation = Random.Range(0, GetRotationSlotCount());
+    }
+
+    private static int GetRotationSlotCount()
+    {
+        return Mathf.Max(1, Mathf.CeilToInt(360f / GetRotationStep()));
+    }
+
+    private static float GetRotationStep()
+    {
+        return Mathf.Clamp(PlacementControlConfig.RotationStep, 0.5f, 90f);
+    }
+
     private static void ResetOffsetsForGhost(string ghostName)
     {
         if (string.Equals(_lastGhostName, ghostName, System.StringComparison.Ordinal))
@@ -103,6 +209,7 @@ internal static class ZonePlacementAdjust
         _lastGhostName = ghostName;
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
+        _lastHudYaw = float.NaN;
         ZoneAreaToolStatusHud.HideDefaultPlacement();
     }
 
@@ -111,10 +218,44 @@ internal static class ZonePlacementAdjust
         _lastGhostName = "";
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
+        _lastHudYaw = float.NaN;
         if (hideHud)
         {
             ZoneAreaToolStatusHud.HideDefaultPlacement();
         }
+    }
+
+    private static bool HasHudYawChanged(float yaw)
+    {
+        if (float.IsNaN(_lastHudYaw))
+        {
+            _lastHudYaw = yaw;
+            return false;
+        }
+
+        if (Mathf.Abs(Mathf.DeltaAngle(_lastHudYaw, yaw)) <= 0.1f)
+        {
+            return false;
+        }
+
+        _lastHudYaw = yaw;
+        return true;
+    }
+
+    private static float NormalizeAngle(float angle)
+    {
+        angle = Mathf.Repeat(angle, 360f);
+        return Mathf.Abs(angle - 360f) <= 0.001f ? 0f : angle;
+    }
+
+    private static bool HasNonZeroYaw(float yaw)
+    {
+        return Mathf.Abs(Mathf.DeltaAngle(0f, yaw)) > 0.1f;
+    }
+
+    private static bool UsesNonVanillaRotationStep()
+    {
+        return Mathf.Abs(GetRotationStep() - VanillaPlacementRotationStep) > 0.001f;
     }
 
     private static void HandleInput(Player player)
@@ -124,26 +265,7 @@ internal static class ZonePlacementAdjust
             return;
         }
 
-        bool changed = false;
-        if (!PlacementControlConfig.IsPlacementAdjustModifierHeld())
-        {
-            return;
-        }
-
-        if (Input.GetKeyDown(KeyCode.PageUp) || Input.GetKeyDown(KeyCode.PageDown))
-        {
-            float direction = Input.GetKeyDown(KeyCode.PageUp) ? 1f : -1f;
-            _heightOffset = RoundOffset(_heightOffset + direction * PlacementControlConfig.HeightStep);
-            changed = true;
-        }
-
-        Vector3 nudge = ZonePlacementOffset.GetArrowKeyLocalNudge();
-        if (nudge.sqrMagnitude > 0.0001f)
-        {
-            _horizontalOffset += nudge * PlacementControlConfig.HorizontalStep;
-            changed = true;
-        }
-
+        bool changed = ZonePlacementInput.ApplyOffset(ref _horizontalOffset, ref _heightOffset);
         if (changed)
         {
             Log.LogDebug(FormatPlacementOffset("Default", _horizontalOffset, _heightOffset));
@@ -247,17 +369,7 @@ internal static class ZonePlacementAdjust
 
     private static bool ShouldBlockInput()
     {
-        return Hud.IsPieceSelectionVisible() ||
-               global::Console.IsVisible() ||
-               TextInput.IsVisible() ||
-               Menu.IsVisible() ||
-               InventoryGui.IsVisible() ||
-               Minimap.IsOpen();
-    }
-
-    private static float RoundOffset(float value)
-    {
-        return Mathf.Round(value * 1000f) / 1000f;
+        return ZoneAreaToolShared.ShouldBlockInput();
     }
 
     private static string FormatOffset(float value)

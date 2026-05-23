@@ -62,7 +62,7 @@ internal static class ZoneBlueprintChestLifecycle
     {
         reason = "";
         int max = BlueprintConfig.MaxActiveChestsPerPlayer;
-        ownerPlatformId = ZonePlayerIdentity.NormalizePlatformId(ownerPlatformId);
+        ownerPlatformId = HomesteadPlayerIdentity.NormalizePlatformId(ownerPlatformId);
         if (max <= 0 || string.IsNullOrWhiteSpace(ownerPlatformId) || requestedCount <= 0)
         {
             return true;
@@ -90,12 +90,12 @@ internal static class ZoneBlueprintChestLifecycle
             return;
         }
 
-        zdo.Set(OwnerPlatformIdKey, ZonePlayerIdentity.NormalizePlatformId(ownerPlatformId));
+            zdo.Set(OwnerPlatformIdKey, HomesteadPlayerIdentity.NormalizePlatformId(ownerPlatformId));
         ZoneBlueprintChestZdoRegistry.Refresh(zdo);
     }
 
     public static string GetOwnerPlatformId(ZDO? zdo)
     {
-        return ZonePlayerIdentity.NormalizePlatformId(zdo?.GetString(OwnerPlatformIdKey, "") ?? "");
+        return HomesteadPlayerIdentity.NormalizePlatformId(zdo?.GetString(OwnerPlatformIdKey, "") ?? "");
     }
 }

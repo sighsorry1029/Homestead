@@ -54,52 +54,54 @@ internal static class ZoneBlueprintStoreDraftRepository
     {
         Directory.CreateDirectory(StoreDirectory);
         string listingId = CreateListingId(name);
-        string blueprintFile = listingId + ".zsbp.yml";
+        string blueprintFile = listingId + ".hsbp.yml";
         blueprint.Name = name;
         blueprint.SavedAt = HomesteadTimestamp.Now();
-        File.WriteAllText(Path.Combine(StoreDirectory, blueprintFile), ZoneBundleSerialization.Serialize(blueprint));
+        File.WriteAllText(Path.Combine(StoreDirectory, blueprintFile), HomesteadYaml.Serialize(blueprint));
         return new ZoneBlueprintStoreDraftLease(listingId, blueprintFile);
     }
 
-    public static ZoneBlueprintStoreCatalog LoadCatalog()
+    public static ZoneBlueprintStoreCatalog LoadCatalogForEdit()
     {
-        return LoadCatalog(clone: true);
+        return LoadCatalogSnapshot();
     }
 
-    public static ZoneBlueprintStoreCatalog LoadCatalogReadOnly()
+    public static ZoneBlueprintStoreCatalog LoadActiveCatalog()
     {
-        return LoadCatalog(clone: false);
+        ZoneBlueprintStoreCatalog catalog = LoadCatalogSnapshot();
+        DeactivateExpiredListings(catalog);
+        return catalog;
     }
 
-    private static ZoneBlueprintStoreCatalog LoadCatalog(bool clone)
+    public static ZoneBlueprintStoreCatalog LoadCatalogSnapshot()
     {
         Directory.CreateDirectory(StoreDirectory);
         if (_catalogDirty && _cachedCatalog != null)
         {
-            return clone ? CloneCatalog(_cachedCatalog) : _cachedCatalog;
+            return CloneCatalog(_cachedCatalog);
         }
 
         if (!File.Exists(CatalogPath))
         {
             ZoneBlueprintStoreCatalog empty = new();
             SaveCatalog(empty, immediate: true);
-            return clone ? CloneCatalog(empty) : _cachedCatalog ?? empty;
+            return CloneCatalog(empty);
         }
 
         DateTime writeUtc = File.GetLastWriteTimeUtc(CatalogPath);
         if (_catalogCacheLoaded && _cachedCatalog != null && writeUtc == _cachedCatalogWriteUtc)
         {
-            return clone ? CloneCatalog(_cachedCatalog) : _cachedCatalog;
+            return CloneCatalog(_cachedCatalog);
         }
 
         try
         {
-            ZoneBlueprintStoreCatalog catalog = ZoneBundleSerialization.Deserialize<ZoneBlueprintStoreCatalog>(File.ReadAllText(CatalogPath));
+            ZoneBlueprintStoreCatalog catalog = HomesteadYaml.Deserialize<ZoneBlueprintStoreCatalog>(File.ReadAllText(CatalogPath));
             NormalizeCatalog(catalog);
             _cachedCatalog = CloneCatalog(catalog);
             _cachedCatalogWriteUtc = writeUtc;
             _catalogCacheLoaded = true;
-            return clone ? CloneCatalog(catalog) : _cachedCatalog;
+            return CloneCatalog(catalog);
         }
         catch (Exception ex)
         {
@@ -120,6 +122,19 @@ internal static class ZoneBlueprintStoreDraftRepository
         {
             Flush(force: true);
         }
+    }
+
+    public static bool TrySaveCatalogImmediate(ZoneBlueprintStoreCatalog catalog, out string reason)
+    {
+        SaveCatalog(catalog, immediate: true);
+        if (_catalogDirty)
+        {
+            reason = "Blueprint store catalog could not be saved. Try again shortly.";
+            return false;
+        }
+
+        reason = "";
+        return true;
     }
 
     public static void Flush(bool force)
@@ -151,7 +166,7 @@ internal static class ZoneBlueprintStoreDraftRepository
     private static void WriteCatalogAtomic(ZoneBlueprintStoreCatalog catalog)
     {
         string tempPath = CatalogPath + ".tmp";
-        File.WriteAllText(tempPath, ZoneBundleSerialization.Serialize(catalog));
+        File.WriteAllText(tempPath, HomesteadYaml.Serialize(catalog));
         if (!File.Exists(CatalogPath))
         {
             File.Move(tempPath, CatalogPath);
@@ -252,6 +267,7 @@ internal static class ZoneBlueprintStoreDraftRepository
         return new ZoneBlueprintStoreBalance
         {
             SellerPlayerId = source.SellerPlayerId,
+            SellerPlatformId = source.SellerPlatformId,
             SellerName = source.SellerName,
             Coins = source.Coins,
             Materials = ClonePriceItems(source.Materials)
@@ -316,7 +332,7 @@ internal static class ZoneBlueprintStoreDraftRepository
 
         try
         {
-            blueprint = ZoneBundleSerialization.Deserialize<ZoneBlueprintFile>(File.ReadAllText(path));
+            blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(File.ReadAllText(path));
             return true;
         }
         catch (Exception ex)
@@ -324,6 +340,25 @@ internal static class ZoneBlueprintStoreDraftRepository
             reason = $"Failed to load blueprint store file: {ex.Message}";
             return false;
         }
+    }
+
+    public static bool TryGetBlueprintFileWriteUtc(string blueprintFile, out DateTime writeUtc)
+    {
+        writeUtc = default;
+        string fileName = Path.GetFileName(blueprintFile ?? "");
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        string path = Path.Combine(StoreDirectory, fileName);
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        writeUtc = File.GetLastWriteTimeUtc(path);
+        return true;
     }
 
     public static void DeleteFile(string blueprintFile)
@@ -357,14 +392,14 @@ internal static class ZoneBlueprintStoreDraftRepository
                 return false;
             }
 
-            ZoneBlueprintStoreCatalog catalog = LoadCatalog();
+            ZoneBlueprintStoreCatalog catalog = LoadCatalogSnapshot();
             HashSet<string> catalogFiles = catalog.Listings
                 .Select(listing => Path.GetFileName(listing.BlueprintFile ?? ""))
                 .Where(file => !string.IsNullOrWhiteSpace(file))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             DateTime cutoff = DateTime.UtcNow - grace;
 
-            foreach (string path in Directory.GetFiles(StoreDirectory, "*.zsbp.yml", SearchOption.TopDirectoryOnly))
+            foreach (string path in Directory.GetFiles(StoreDirectory, "*.hsbp.yml", SearchOption.TopDirectoryOnly))
             {
                 string fileName = Path.GetFileName(path);
                 if (!catalogFiles.Contains(fileName) && File.GetLastWriteTimeUtc(path) <= cutoff)
@@ -390,7 +425,7 @@ internal static class ZoneBlueprintStoreDraftRepository
                 return;
             }
 
-            ZoneBlueprintStoreCatalog catalog = LoadCatalog();
+            ZoneBlueprintStoreCatalog catalog = LoadCatalogSnapshot();
             HashSet<string> catalogFiles = catalog.Listings
                 .Select(listing => Path.GetFileName(listing.BlueprintFile ?? ""))
                 .Where(file => !string.IsNullOrWhiteSpace(file))
@@ -398,7 +433,7 @@ internal static class ZoneBlueprintStoreDraftRepository
             DateTime cutoff = DateTime.UtcNow - grace;
             int deleted = 0;
 
-            foreach (string path in Directory.GetFiles(StoreDirectory, "*.zsbp.yml", SearchOption.TopDirectoryOnly))
+            foreach (string path in Directory.GetFiles(StoreDirectory, "*.hsbp.yml", SearchOption.TopDirectoryOnly))
             {
                 string fileName = Path.GetFileName(path);
                 if (catalogFiles.Contains(fileName) || liveDraftFiles.Contains(fileName))
