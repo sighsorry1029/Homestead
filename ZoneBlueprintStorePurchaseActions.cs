@@ -155,17 +155,24 @@ internal static class ZoneBlueprintStorePurchaseAction
             return HomesteadCommandResult.Fail(payloadReason);
         }
 
+        ZoneBlueprintStoreCatalog rollbackCatalog = ZoneBlueprintStoreDraftRepository.CloneCatalog(catalog);
+        ZoneBlueprintStoreEconomy.CreditSeller(catalog, listing, priceItems, incrementPurchaseCount: true);
+        ZoneBlueprintStoreNotifications.AddPurchaseNotification(catalog, listing, buyerName, priceItems, offerId);
+        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
+        {
+            ZoneBlueprintStoreDraftRepository.SaveCatalog(rollbackCatalog);
+            return HomesteadCommandResult.Fail(saveReason);
+        }
+
         bool tookPrice = chest != null
             ? chest.TryTakePriceItems(priceItems, out deposited)
             : ZoneBlueprintStoreChest.TryTakePurchasePriceItems(fallbackChestZdo, priceItems, out deposited);
         if (!tookPrice)
         {
+            ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(rollbackCatalog, out _);
             return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_store_deposit_price_first", deposited));
         }
 
-        ZoneBlueprintStoreEconomy.CreditSeller(catalog, listing, priceItems, incrementPurchaseCount: true);
-        ZoneBlueprintStoreNotifications.AddPurchaseNotification(catalog, listing, buyerName, priceItems, offerId);
-        ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog, immediate: true);
         ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
         if (chest != null)
         {

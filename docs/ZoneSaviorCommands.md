@@ -1,5 +1,7 @@
 # ZoneSavior Commands
 
+This is historical companion documentation. The current checkout builds Homestead only; `ZoneSavior.csproj` and ZoneSavior runtime code are not part of this workspace.
+
 ZoneSavior owns zone bundle, inactive-player auto archive, zone restore, and zone-limit administration.
 
 Commands can be run from a dedicated server console, RCON, or an admin client with ZoneSavior installed. Supported admin-client commands are routed to the server by ZoneSavior RPC.

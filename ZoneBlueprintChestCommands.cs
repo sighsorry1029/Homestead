@@ -120,13 +120,9 @@ internal static class ZoneBlueprintChestCommands
             return BlueprintChestCommandResult.Fail("World is not ready.");
         }
 
-        List<ZDO> targets = ZoneBlueprintChestZdoRegistry.EnumerateChestZdos().ToList();
-        if (targets.Count == 0)
-        {
-            targets = ZDOMan.instance.m_objectsByID.Values
-                .Where(zdo => zdo != null && zdo.IsValid() && TryGetChestKind(zdo, out _))
-                .ToList();
-        }
+        List<ZDO> targets = ZDOMan.instance.m_objectsByID.Values
+            .Where(zdo => zdo != null && zdo.IsValid() && TryGetChestKind(zdo, out _))
+            .ToList();
 
         BlueprintChestCommandResult result = new()
         {

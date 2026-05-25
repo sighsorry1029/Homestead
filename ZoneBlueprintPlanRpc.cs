@@ -139,94 +139,24 @@ internal static class ZoneBlueprintPlanRpc
         }
 
         ZoneBlueprintPlanRpcEnvelope envelope = CreateEnvelope(type, payload);
-        ZPackage package = new();
-        ZoneBlueprintNetworkPayload.WriteEnvelope(package, HomesteadYaml.Serialize(envelope), envelope.BlueprintPayload);
-        ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(), RequestRpcName, package);
+        ZoneBlueprintRpcTransport.SendToServer(RequestRpcName, envelope);
     }
 
     private static void RPC_HandleRequest(long sender, ZPackage package)
     {
-        if (ZNet.instance == null || !ZNet.instance.IsServer())
-        {
-            return;
-        }
-
-        if (!ZoneBlueprintNetworkPayload.TryReserveIngress(sender, out string ingressReason))
-        {
-            SendResponse(sender, CreateEnvelope(ZoneBlueprintPlanRpcType.Place, new ZoneBlueprintPlanPlaceResponse
-            {
-                Success = false,
-                Message = ingressReason
-            }));
-            return;
-        }
-
-        ZoneBlueprintNetworkPayload.RawEnvelopePayload rawPayload;
-        try
-        {
-            rawPayload = ZoneBlueprintNetworkPayload.ReadRawEnvelope(package, ZoneBlueprintNetworkPayload.MaxUploadEnvelopeBytes);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError($"Blueprint plan RPC failed: {ex}");
-            SendResponse(sender, CreateEnvelope(ZoneBlueprintPlanRpcType.Place, new ZoneBlueprintPlanPlaceResponse
-            {
-                Success = false,
-                Message = ex.Message
-            }));
-            return;
-        }
-
-        int estimatedBytes = ZoneBlueprintNetworkPayload.EstimateQueuedBytes(rawPayload);
-        if (!ZoneBlueprintNetworkPayload.TryEnqueue("Blueprint plan RPC", _logger, sender, estimatedBytes, () =>
-        {
-            ZoneBlueprintPlanRpcEnvelope response;
-            try
-            {
-                string requestYaml = ZoneBlueprintNetworkPayload.ReadEnvelope(rawPayload, out byte[] blueprintPayload);
-                ZoneBlueprintPlanRpcEnvelope request = HomesteadYaml.Deserialize<ZoneBlueprintPlanRpcEnvelope>(requestYaml);
-                request.BlueprintPayload = blueprintPayload;
-                response = ExecuteRequest(request, sender);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Blueprint plan RPC failed: {ex}");
-                response = CreateEnvelope(ZoneBlueprintPlanRpcType.Place, new ZoneBlueprintPlanPlaceResponse
-                {
-                    Success = false,
-                    Message = ex.Message
-                });
-            }
-
-            SendResponse(sender, response);
-        }, out string queueReason))
-        {
-            SendResponse(sender, CreateEnvelope(ZoneBlueprintPlanRpcType.Place, new ZoneBlueprintPlanPlaceResponse
-            {
-                Success = false,
-                Message = queueReason
-            }));
-        }
+        ZoneBlueprintRpcTransport.HandleServerRequest(
+            sender,
+            package,
+            _logger,
+            "Blueprint plan RPC",
+            CreateError,
+            ExecuteRequest,
+            SendResponse);
     }
 
     private static void RPC_HandleResponse(long sender, ZPackage package)
     {
-        if (ZNet.instance != null && ZNet.instance.IsServer())
-        {
-            return;
-        }
-
-        try
-        {
-            string responseYaml = ZoneBlueprintNetworkPayload.ReadEnvelope(package, out byte[] blueprintPayload);
-            ZoneBlueprintPlanRpcEnvelope response = HomesteadYaml.Deserialize<ZoneBlueprintPlanRpcEnvelope>(responseYaml);
-            response.BlueprintPayload = blueprintPayload;
-            HandleResponse(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning($"Failed to read blueprint plan response: {ex.Message}");
-        }
+        ZoneBlueprintRpcTransport.HandleClientResponse<ZoneBlueprintPlanRpcEnvelope>(package, _logger, "blueprint plan", HandleResponse);
     }
 
     private static ZoneBlueprintPlanRpcEnvelope ExecuteRequest(ZoneBlueprintPlanRpcEnvelope request, long sender)
@@ -349,9 +279,7 @@ internal static class ZoneBlueprintPlanRpc
 
     private static void SendResponse(long target, ZoneBlueprintPlanRpcEnvelope response)
     {
-        ZPackage package = new();
-        ZoneBlueprintNetworkPayload.WriteEnvelope(package, HomesteadYaml.Serialize(response), response.BlueprintPayload);
-        ZRoutedRpc.instance.InvokeRoutedRPC(target, ResponseRpcName, package);
+        ZoneBlueprintRpcTransport.SendResponse(target, ResponseRpcName, response);
     }
 
     private static void HandleResponse(ZoneBlueprintPlanRpcEnvelope response)
@@ -476,12 +404,21 @@ internal static class ZoneBlueprintPlanRpc
 
     private static ZoneBlueprintPlanRpcEnvelope CreateEnvelope<TPayload>(string type, TPayload payload)
     {
-        return ZoneBlueprintNetworkPayload.CreateEnvelope<ZoneBlueprintPlanRpcEnvelope, TPayload>(type, payload);
+        return ZoneBlueprintRpcTransport.CreateEnvelope<ZoneBlueprintPlanRpcEnvelope, TPayload>(type, payload);
     }
 
     private static TPayload ReadPayload<TPayload>(ZoneBlueprintPlanRpcEnvelope envelope)
     {
-        return ZoneBlueprintNetworkPayload.ReadPayload<TPayload, ZoneBlueprintPlanRpcEnvelope>(envelope);
+        return ZoneBlueprintRpcTransport.ReadPayload<TPayload, ZoneBlueprintPlanRpcEnvelope>(envelope);
+    }
+
+    private static ZoneBlueprintPlanRpcEnvelope CreateError(string message)
+    {
+        return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, new ZoneBlueprintPlanPlaceResponse
+        {
+            Success = false,
+            Message = message
+        });
     }
 
     private static Vector3 ResolvePlanChestPosition(

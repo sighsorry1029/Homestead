@@ -317,10 +317,6 @@ internal static class ZoneBlueprintChestZdoRegistry
         }
 
         string ownerPlatformId = ZoneBlueprintChestLifecycle.GetOwnerPlatformId(zdo);
-        if (string.IsNullOrWhiteSpace(ownerPlatformId))
-        {
-            return false;
-        }
         entry = new Entry(zdo.m_uid, prefab, ownerPlatformId);
         return true;
     }
@@ -333,6 +329,11 @@ internal static class ZoneBlueprintChestZdoRegistry
 
     private static void AddCounts(Entry entry)
     {
+        if (string.IsNullOrWhiteSpace(entry.OwnerPlatformId))
+        {
+            return;
+        }
+
         CountByOwnerPlatformId[entry.OwnerPlatformId] = CountByOwnerPlatformId.TryGetValue(entry.OwnerPlatformId, out int count)
             ? count + 1
             : 1;
@@ -340,6 +341,11 @@ internal static class ZoneBlueprintChestZdoRegistry
 
     private static void RemoveCounts(Entry entry)
     {
+        if (string.IsNullOrWhiteSpace(entry.OwnerPlatformId))
+        {
+            return;
+        }
+
         if (!CountByOwnerPlatformId.TryGetValue(entry.OwnerPlatformId, out int count))
         {
             return;

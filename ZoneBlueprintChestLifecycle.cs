@@ -90,7 +90,7 @@ internal static class ZoneBlueprintChestLifecycle
             return;
         }
 
-            zdo.Set(OwnerPlatformIdKey, HomesteadPlayerIdentity.NormalizePlatformId(ownerPlatformId));
+        zdo.Set(OwnerPlatformIdKey, HomesteadPlayerIdentity.NormalizePlatformId(ownerPlatformId));
         ZoneBlueprintChestZdoRegistry.Refresh(zdo);
     }
 

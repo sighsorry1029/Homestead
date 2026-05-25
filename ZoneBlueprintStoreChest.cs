@@ -250,11 +250,9 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         if (ZNet.instance != null && ZNet.instance.IsServer())
         {
             HomesteadCommandResult result = ZoneBlueprintStore.ConfirmPurchaseLocal(listingId, player.GetPlayerID(), player.GetPlayerName(), this);
-            player.Message(result.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center, result.Message);
-            if (result.Success)
+            if (!result.Success)
             {
-                ZoneBlueprintStorePreviewTool.RemovePurchasePreview(listingId);
-                ZoneBlueprintStoreVisuals.PlayCompletionVfx(player.transform.position);
+                player.Message(MessageHud.MessageType.Center, result.Message);
             }
 
             return true;

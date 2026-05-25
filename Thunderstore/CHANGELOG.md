@@ -1,3 +1,12 @@
 | `Version` | `Update Notes`    |
 |-----------|-------------------|
+| 1.0.9     | - Improved Blueprint Store save safety, chest cleanup, RPC handling, and purchase completion VFX behavior. |
+| 1.0.8     | - Added compat for VeildRecipes so that blueprint icon is not veiled. <br> - Minor config cleanup. |
+| 1.0.7     | - Added compat to InventorySlots mod <br> - Reduced minimum dgree of rotation to 0.5 from 1 <br> - Fixed initial rotation offset |
+| 1.0.6     | - Readme Fix |
+| 1.0.5     | - Removed ZoneSavior part <br> - Added exclamation mark for the withdrawls <br> - Added depth/width control with area save/dismantle |
+| 1.0.4     | - changed default rotation step to 22.5% <br> - Fixed blueprint store flickering for some clients <br> - HUD now shows piece rotation too |
+| 1.0.3     | - Various optimizations and fix for dedi <br> - Added localization file |
+| 1.0.2     | - Fixed VFX not showing up on dedi |
+| 1.0.1     | - Improved dedicated server compatibility for blueprint store, purchase, payout, and blueprint plan chest placement, including safer chest metadata setup and client-side placement VFX playback. <br> - Fixed blueprint store chest lookup edge cases, including purchase offer matching and registry fallback behavior, to avoid incorrect matches and large synchronous ZDO scans. <br> - Added PlayerId/SteamId-aware store identity handling for ownership, hidden listings, and debug diagnostics. <br> - Reduced server hitch risk in blueprint/store RPC paths by tightening payload handling, cooldowns, queue limits, and removing expensive fallback scans. <br> - Improved Homestead build-tool UX with throttled hammer/menu refreshes, better key hints, and reduced forced HUD rebuilds. <br> - Strengthened auto archive and zone bundle restore behavior, including safer eligibility diagnostics, creator handling, and terrain restore planning.|
 | 1.0.0     | - Initial Release |

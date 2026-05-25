@@ -1,13 +1,11 @@
 # Command Index
 
-The repository now builds two separate mods. Commands are documented by owning mod:
+This checkout builds Homestead. The active command surface is documented here:
 
 - [Homestead Commands](HomesteadCommands.md)
-- [ZoneSavior Commands](ZoneSaviorCommands.md)
 
-## Quick Split
+## Quick Reference
 
-| Mod | Commands |
+| Owner | Commands |
 | --- | --- |
 | Homestead | `hs_clearchests` |
-| ZoneSavior | `zs_savezone`, `zs_loadzone`, `zs_loadarchive`, `zs_archive_*` |

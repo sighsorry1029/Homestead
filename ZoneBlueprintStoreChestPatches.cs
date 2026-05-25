@@ -1,14 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using BepInEx;
-using BepInEx.Logging;
 using HarmonyLib;
-using Jotunn.Managers;
 using UnityEngine;
-using UnityEngine.UI;
-using Object = UnityEngine.Object;
 
 namespace Homestead;
 
@@ -18,6 +9,13 @@ internal static class ZoneBlueprintStoreWearNTearDestroyPatch
 {
     private static void Prefix(WearNTear __instance)
     {
+        ZoneBlueprintPlanAnchor anchor = __instance.GetComponent<ZoneBlueprintPlanAnchor>();
+        if (anchor != null)
+        {
+            anchor.HandleDestroyPrefix("PlanChest.WearNTear.Destroy prefix");
+            return;
+        }
+
         ZoneBlueprintStoreChest chest = __instance.GetComponent<ZoneBlueprintStoreChest>();
         if (chest == null)
         {
@@ -36,6 +34,13 @@ internal static class ZoneBlueprintStoreZNetSceneDestroyPatch
     {
         if (!go)
         {
+            return;
+        }
+
+        ZoneBlueprintPlanAnchor anchor = go.GetComponent<ZoneBlueprintPlanAnchor>();
+        if (anchor != null)
+        {
+            anchor.HandleDestroyPrefix("PlanChest.ZNetScene.Destroy prefix");
             return;
         }
 
@@ -87,18 +92,80 @@ internal static class ZoneBlueprintStorePayoutInventorySelectedPatch
 {
     private static bool Prefix(InventoryGui __instance, InventoryGrid grid, ItemDrop.ItemData item, Vector2i pos, InventoryGrid.Modifier mod)
     {
-        if (__instance == null ||
-            grid == null ||
-            !ZoneBlueprintStoreChestPatchHelper.TryGetPayoutChest(__instance.m_currentContainer, out _))
+        if (__instance == null || grid == null)
         {
             return true;
         }
 
-        Inventory containerInventory = __instance.m_currentContainer.GetInventory();
-        bool targetIsPayoutChest = grid.GetInventory() == containerInventory;
-        if (__instance.m_dragGo)
+        if (ZoneBlueprintPlanAnchor.TryGetAnchor(__instance.m_currentContainer, out ZoneBlueprintPlanAnchor anchor))
         {
-            if (targetIsPayoutChest && __instance.m_dragInventory != containerInventory)
+            return HandlePlanChest(__instance, grid, item, mod, anchor);
+        }
+
+        if (!ZoneBlueprintStoreChestPatchHelper.TryGetStoreChest(__instance.m_currentContainer, out ZoneBlueprintStoreChest chest))
+        {
+            return true;
+        }
+
+        if (chest.IsPayoutChest())
+        {
+            return HandlePayoutChest(__instance, grid, item, mod);
+        }
+
+        return chest.IsPurchaseChest()
+            ? HandlePurchaseChest(__instance, grid, item, mod, chest)
+            : true;
+    }
+
+    private static bool HandlePlanChest(InventoryGui gui, InventoryGrid grid, ItemDrop.ItemData item, InventoryGrid.Modifier mod, ZoneBlueprintPlanAnchor anchor)
+    {
+        Player player = Player.m_localPlayer;
+        if (player == null || player.IsTeleporting())
+        {
+            return true;
+        }
+
+        Inventory containerInventory = gui.m_currentContainer.GetInventory();
+        bool targetIsPlanChest = grid.GetInventory() == containerInventory;
+        if (gui.m_dragGo)
+        {
+            if (!targetIsPlanChest || gui.m_dragInventory == containerInventory)
+            {
+                return true;
+            }
+
+            if (gui.m_dragItem != null && !gui.m_dragItem.m_shared.m_questItem)
+            {
+                anchor.TryAcceptMaterialFromInventory(gui.m_dragInventory, gui.m_dragItem, gui.m_dragAmount, message: true);
+            }
+
+            gui.SetupDragItem(null, null, 1);
+            gui.UpdateCraftingPanel();
+            return false;
+        }
+
+        if (item == null)
+        {
+            return !targetIsPlanChest;
+        }
+
+        if (mod == InventoryGrid.Modifier.Move && !targetIsPlanChest && !item.m_shared.m_questItem)
+        {
+            anchor.TryAcceptMaterialFromInventory(grid.GetInventory(), item, item.m_stack, message: true);
+            gui.UpdateCraftingPanel();
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool HandlePayoutChest(InventoryGui gui, InventoryGrid grid, ItemDrop.ItemData item, InventoryGrid.Modifier mod)
+    {
+        Inventory containerInventory = gui.m_currentContainer.GetInventory();
+        bool targetIsPayoutChest = grid.GetInventory() == containerInventory;
+        if (gui.m_dragGo)
+        {
+            if (targetIsPayoutChest && gui.m_dragInventory != containerInventory)
             {
                 ZoneBlueprintStoreChestPatchHelper.MessagePayoutDepositBlocked();
                 return false;
@@ -120,6 +187,48 @@ internal static class ZoneBlueprintStorePayoutInventorySelectedPatch
 
         return true;
     }
+
+    private static bool HandlePurchaseChest(InventoryGui gui, InventoryGrid grid, ItemDrop.ItemData item, InventoryGrid.Modifier mod, ZoneBlueprintStoreChest chest)
+    {
+        Player player = Player.m_localPlayer;
+        if (player == null || player.IsTeleporting())
+        {
+            return true;
+        }
+
+        Inventory containerInventory = gui.m_currentContainer.GetInventory();
+        bool targetIsPurchaseChest = grid.GetInventory() == containerInventory;
+        if (gui.m_dragGo)
+        {
+            if (!targetIsPurchaseChest || gui.m_dragInventory == containerInventory)
+            {
+                return true;
+            }
+
+            if (gui.m_dragItem != null && !gui.m_dragItem.m_shared.m_questItem)
+            {
+                chest.TryAcceptPurchaseMaterialFromInventory(gui.m_dragInventory, gui.m_dragItem, gui.m_dragAmount, message: true);
+            }
+
+            gui.SetupDragItem(null, null, 1);
+            gui.UpdateCraftingPanel();
+            return false;
+        }
+
+        if (item == null)
+        {
+            return !targetIsPurchaseChest;
+        }
+
+        if (mod == InventoryGrid.Modifier.Move && !targetIsPurchaseChest && !item.m_shared.m_questItem)
+        {
+            chest.TryAcceptPurchaseMaterialFromInventory(grid.GetInventory(), item, item.m_stack, message: true);
+            gui.UpdateCraftingPanel();
+            return false;
+        }
+
+        return true;
+    }
 }
 
 [HarmonyPatch(typeof(Container), nameof(Container.Interact))]
@@ -127,8 +236,31 @@ internal static class ZoneBlueprintStoreChestContainerPatch
 {
     private static bool Prefix(Container __instance, Humanoid character, bool hold, ref bool __result)
     {
+        if (hold || character is not Player player)
+        {
+            return true;
+        }
+
+        if (ZoneBlueprintPlanAnchor.TryGetAnchor(__instance, out ZoneBlueprintPlanAnchor anchor))
+        {
+            if (BlueprintConfig.ChestConfirmHotkey.IsDown())
+            {
+                ZoneBlueprintPlanAnchor.NoteConfirmInputFrame();
+                __result = anchor.TryConfirm(player);
+                return false;
+            }
+
+            if (BlueprintConfig.AzuCraftyBoxesPullOnOpen)
+            {
+                anchor.TryPullAvailableMaterials(player, "open", message: true);
+            }
+
+            anchor.Touch();
+            return true;
+        }
+
         ZoneBlueprintStoreChest chest = __instance.GetComponent<ZoneBlueprintStoreChest>();
-        if (chest == null || hold || character is not Player player)
+        if (chest == null)
         {
             return true;
         }
@@ -162,6 +294,12 @@ internal static class ZoneBlueprintStoreChestHoverPatch
 {
     private static bool Prefix(Container __instance, ref string __result)
     {
+        if (ZoneBlueprintPlanAnchor.TryGetAnchor(__instance, out ZoneBlueprintPlanAnchor anchor))
+        {
+            __result = anchor.GetPlanHoverText();
+            return false;
+        }
+
         ZoneBlueprintStoreChest chest = __instance.GetComponent<ZoneBlueprintStoreChest>();
         if (chest == null)
         {
@@ -180,67 +318,22 @@ internal static class ZoneBlueprintStoreInventoryGridUpdateGuiPatch
     {
         ZoneBlueprintChestInventoryScroll.TryKeepContainerGridAtTop(__instance);
         InventoryGui gui = InventoryGui.instance;
-        if (gui == null ||
-            gui.m_containerGrid != __instance ||
-            !ZoneBlueprintStoreChestPatchHelper.TryGetPurchaseChest(gui.m_currentContainer, out ZoneBlueprintStoreChest chest))
+        if (gui == null || gui.m_containerGrid != __instance)
         {
             return;
         }
 
-        chest.DrawRequirementOverlay(__instance);
+        if (ZoneBlueprintPlanAnchor.TryGetAnchor(gui.m_currentContainer, out ZoneBlueprintPlanAnchor anchor))
+        {
+            anchor.DrawRequirementOverlay(__instance);
+            return;
+        }
+
+        if (ZoneBlueprintStoreChestPatchHelper.TryGetPurchaseChest(gui.m_currentContainer, out ZoneBlueprintStoreChest chest))
+        {
+            chest.DrawRequirementOverlay(__instance);
+        }
     }
-}
-
-[HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.OnSelectedItem))]
-internal static class ZoneBlueprintStoreInventorySelectedPatch
-{
-    private static bool Prefix(InventoryGui __instance, InventoryGrid grid, ItemDrop.ItemData item, Vector2i pos, InventoryGrid.Modifier mod)
-    {
-        if (__instance == null || grid == null || !ZoneBlueprintStoreChestPatchHelper.TryGetPurchaseChest(__instance.m_currentContainer, out ZoneBlueprintStoreChest chest))
-        {
-            return true;
-        }
-
-        Player player = Player.m_localPlayer;
-        if (player == null || player.IsTeleporting())
-        {
-            return true;
-        }
-
-        Inventory containerInventory = __instance.m_currentContainer.GetInventory();
-        bool targetIsPurchaseChest = grid.GetInventory() == containerInventory;
-        if (__instance.m_dragGo)
-        {
-            if (!targetIsPurchaseChest || __instance.m_dragInventory == containerInventory)
-            {
-                return true;
-            }
-
-            if (__instance.m_dragItem != null && !__instance.m_dragItem.m_shared.m_questItem)
-            {
-                chest.TryAcceptPurchaseMaterialFromInventory(__instance.m_dragInventory, __instance.m_dragItem, __instance.m_dragAmount, message: true);
-            }
-
-            __instance.SetupDragItem(null, null, 1);
-            __instance.UpdateCraftingPanel();
-            return false;
-        }
-
-        if (item == null)
-        {
-            return !targetIsPurchaseChest;
-        }
-
-        if (mod == InventoryGrid.Modifier.Move && !targetIsPurchaseChest && !item.m_shared.m_questItem)
-        {
-            chest.TryAcceptPurchaseMaterialFromInventory(grid.GetInventory(), item, item.m_stack, message: true);
-            __instance.UpdateCraftingPanel();
-            return false;
-        }
-
-        return true;
-    }
-
 }
 
 [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.OnStackAll))]
@@ -248,31 +341,44 @@ internal static class ZoneBlueprintStorePayoutInventoryStackAllPatch
 {
     private static bool Prefix(InventoryGui __instance)
     {
-        if (__instance == null || !ZoneBlueprintStoreChestPatchHelper.TryGetPayoutChest(__instance.m_currentContainer, out _))
+        if (__instance == null)
         {
             return true;
         }
 
-        ZoneBlueprintStoreChestPatchHelper.MessagePayoutDepositBlocked();
-        return false;
-    }
-}
-
-[HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.OnStackAll))]
-internal static class ZoneBlueprintStoreInventoryStackAllPatch
-{
-    private static bool Prefix(InventoryGui __instance)
-    {
-        if (__instance == null || !ZoneBlueprintStoreChestPatchHelper.TryGetPurchaseChest(__instance.m_currentContainer, out ZoneBlueprintStoreChest chest) || Player.m_localPlayer == null)
+        Player player = Player.m_localPlayer;
+        if (player == null)
         {
             return true;
         }
 
-        __instance.SetupDragItem(null, null, 1);
-        chest.TryAcceptAllPurchaseMaterialsFromPlayer(Player.m_localPlayer);
-        return false;
-    }
+        if (ZoneBlueprintPlanAnchor.TryGetAnchor(__instance.m_currentContainer, out ZoneBlueprintPlanAnchor anchor))
+        {
+            __instance.SetupDragItem(null, null, 1);
+            anchor.TryAcceptAllFromPlayer(player);
+            return false;
+        }
 
+        if (!ZoneBlueprintStoreChestPatchHelper.TryGetStoreChest(__instance.m_currentContainer, out ZoneBlueprintStoreChest chest))
+        {
+            return true;
+        }
+
+        if (chest.IsPayoutChest())
+        {
+            ZoneBlueprintStoreChestPatchHelper.MessagePayoutDepositBlocked();
+            return false;
+        }
+
+        if (chest.IsPurchaseChest())
+        {
+            __instance.SetupDragItem(null, null, 1);
+            chest.TryAcceptAllPurchaseMaterialsFromPlayer(player);
+            return false;
+        }
+
+        return true;
+    }
 }
 
 [HarmonyPatch(typeof(Container), nameof(Container.StackAll))]
@@ -280,28 +386,35 @@ internal static class ZoneBlueprintStorePayoutContainerStackAllPatch
 {
     private static bool Prefix(Container __instance)
     {
-        if (!ZoneBlueprintStoreChestPatchHelper.TryGetPayoutChest(__instance, out _))
+        Player player = Player.m_localPlayer;
+        if (player == null)
         {
             return true;
         }
 
-        ZoneBlueprintStoreChestPatchHelper.MessagePayoutDepositBlocked();
-        return false;
-    }
-}
+        if (ZoneBlueprintPlanAnchor.TryGetAnchor(__instance, out ZoneBlueprintPlanAnchor anchor))
+        {
+            anchor.TryAcceptAllFromPlayer(player);
+            return false;
+        }
 
-[HarmonyPatch(typeof(Container), nameof(Container.StackAll))]
-internal static class ZoneBlueprintStoreContainerStackAllPatch
-{
-    private static bool Prefix(Container __instance)
-    {
-        ZoneBlueprintStoreChest chest = __instance.GetComponent<ZoneBlueprintStoreChest>();
-        if (chest == null || !chest.IsPurchaseChest() || Player.m_localPlayer == null)
+        if (!ZoneBlueprintStoreChestPatchHelper.TryGetStoreChest(__instance, out ZoneBlueprintStoreChest chest))
         {
             return true;
         }
 
-        chest.TryAcceptAllPurchaseMaterialsFromPlayer(Player.m_localPlayer);
-        return false;
+        if (chest.IsPayoutChest())
+        {
+            ZoneBlueprintStoreChestPatchHelper.MessagePayoutDepositBlocked();
+            return false;
+        }
+
+        if (chest.IsPurchaseChest())
+        {
+            chest.TryAcceptAllPurchaseMaterialsFromPlayer(player);
+            return false;
+        }
+
+        return true;
     }
 }

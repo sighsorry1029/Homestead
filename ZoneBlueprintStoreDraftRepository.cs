@@ -192,7 +192,7 @@ internal static class ZoneBlueprintStoreDraftRepository
         catalog.Balances ??= [];
     }
 
-    private static ZoneBlueprintStoreCatalog CloneCatalog(ZoneBlueprintStoreCatalog source)
+    public static ZoneBlueprintStoreCatalog CloneCatalog(ZoneBlueprintStoreCatalog source)
     {
         NormalizeCatalog(source);
         return new ZoneBlueprintStoreCatalog

@@ -183,6 +183,7 @@
         <Compile Include="ZoneBlueprintModels.cs"/>
         <Compile Include="ZoneBlueprintGhostOwner.cs"/>
         <Compile Include="ZoneBlueprintNetworkPayload.cs"/>
+        <Compile Include="ZoneBlueprintRpcTransport.cs"/>
         <Compile Include="ZoneBlueprintPlanRpc.cs"/>
         <Compile Include="ZoneBlueprintPlacementTool.cs"/>
         <Compile Include="ZoneBlueprintChestCommands.cs"/>
@@ -252,10 +253,9 @@
         </Content>
         <Content Include="LICENSE.txt"/>
         <Content Include="README.md"/>
-        <Content Include="Thunderstore\Homestead\CHANGELOG.md"/>
-        <Content Include="Thunderstore\Homestead\icon.png"/>
-        <Content Include="Thunderstore\Homestead\manifest.json"/>
-        <Content Include="Thunderstore\Homestead\README.md"/>
+        <Content Include="Thunderstore\CHANGELOG.md"/>
+        <Content Include="Thunderstore\icon.png"/>
+        <Content Include="Thunderstore\manifest.json"/>
         <EmbeddedResource Include="translations\English.yml"/>
         <EmbeddedResource Include="translations\Korean.yml"/>
         <Content Include="UpdateManifest.ps1"/>
@@ -298,7 +298,7 @@
             <PackageName>$(AssemblyName)_v$(Major).$(Minor).$(Patch)</PackageName>
             <PackageVersion>$(Major).$(Minor).$(Patch)</PackageVersion>
             <VersionString>$(Major).$(Minor).$(Patch)</VersionString>
-            <ThunderstorePackageRoot>$(ProjectDir)\Thunderstore\Homestead</ThunderstorePackageRoot>
+            <ThunderstorePackageRoot>$(ProjectDir)\Thunderstore</ThunderstorePackageRoot>
             <PackageDir>$(ThunderstorePackageRoot)\$(PackageName)</PackageDir>
         </PropertyGroup>
     </Target>
@@ -309,22 +309,21 @@
         <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath3)" OverwriteReadOnlyFiles="true" Condition="Exists('$(CopyOutputDLLPath3)')"/>
     </Target>
     <Target Name="CopyReadMeToTSFolder" AfterTargets="CopyOutputDLL" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') ">
-        <Warning Text="Thunderstore\Homestead\README.md not found." Condition="!Exists('$(ThunderstorePackageRoot)\README.md')"/>
-        <WriteLinesToFile File="$(ThunderstorePackageRoot)\README.md" Lines="Homestead adds player-facing Valheim construction tools, native blueprints, blueprint trading, build camera controls, placement helpers, and Dvergr circlet QoL." Overwrite="false" Condition="!Exists('$(ThunderstorePackageRoot)\README.md')"/>
-        <Copy SourceFiles="$(ThunderstorePackageRoot)\README.md" DestinationFolder="$(PackageDir)" OverwriteReadOnlyFiles="true"/>
+        <Error Text="README.md not found in project root." Condition="!Exists('$(ProjectDir)README.md')"/>
+        <Copy SourceFiles="$(ProjectDir)README.md" DestinationFolder="$(PackageDir)" OverwriteReadOnlyFiles="true"/>
     </Target>
     <Target Name="UpdateManifestVersion" AfterTargets="CopyReadMeToTSFolder" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') ">
-        <Error Text="manifest.json not found in Thunderstore\Homestead directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
+        <Error Text="manifest.json not found in Thunderstore directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
         <ItemGroup>
             <ManifestFile Include="$(ThunderstorePackageRoot)\manifest.json"/>
         </ItemGroup>
         <Message Text="ManifestFile is @(ManifestFile)"/>
-        <Message Text="Updating version number in Thunderstore\Homestead\manifest.json" Condition="Exists(@(ManifestFile))"/>
+        <Message Text="Updating version number in Thunderstore\manifest.json" Condition="Exists(@(ManifestFile))"/>
         <Exec Command="powershell.exe -ExecutionPolicy Bypass -Command &quot;&amp; { &amp; '$(ProjectDir)UpdateManifest.ps1' -manifestFile '@(ManifestFile)' -versionString '$(PackageVersion)' }&quot;"/>
     </Target>
     <Target Name="MakeThunderstorePackage" AfterTargets="UpdateManifestVersion" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-        <Error Text="manifest.json not found in Thunderstore\Homestead directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
-        <Error Text="icon.png not found in Thunderstore\Homestead directory. Please note that Thunderstore requires this image to be 256x256 in dimension" Condition="!Exists('$(ThunderstorePackageRoot)\icon.png')"/>
+        <Error Text="manifest.json not found in Thunderstore directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
+        <Error Text="icon.png not found in Thunderstore directory. Please note that Thunderstore requires this image to be 256x256 in dimension" Condition="!Exists('$(ThunderstorePackageRoot)\icon.png')"/>
         <ItemGroup>
             <PackageFiles Include="$(TargetDir)$(AssemblyName).dll" Condition="Exists('$(TargetDir)$(AssemblyName).dll')"/>
             <PackageFiles Include="$(ThunderstorePackageRoot)\CHANGELOG.md" Condition="Exists('$(ThunderstorePackageRoot)\CHANGELOG.md')"/>

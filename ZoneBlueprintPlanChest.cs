@@ -55,6 +55,11 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private float _nextFailedPlanReloadAt;
     private float _nextFailedPlanWarningAt;
 
+    internal static void NoteConfirmInputFrame()
+    {
+        _lastConfirmInputFrame = Time.frameCount;
+    }
+
     private void Awake()
     {
         _nview = GetComponent<ZNetView>();
@@ -1093,6 +1098,12 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         TryRefundDepositedMaterials("WearNTear.m_onDestroyed");
     }
 
+    internal void HandleDestroyPrefix(string source)
+    {
+        ReleaseAzuCraftyBoxesContainer(source);
+        TryRefundDepositedMaterials(source);
+    }
+
     private void ReleaseAzuCraftyBoxesContainer(string source)
     {
         AzuCraftyBoxesCompat.RemoveContainer(_container != null && _container ? _container : GetComponent<Container>(), source);
@@ -1266,50 +1277,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         player.Message(type, message);
     }
 
-    [HarmonyPatch(typeof(Container), nameof(Container.GetHoverText))]
-    private static class ContainerGetHoverTextPatch
-    {
-        private static bool Prefix(Container __instance, ref string __result)
-        {
-            ZoneBlueprintPlanAnchor anchor = __instance.GetComponent<ZoneBlueprintPlanAnchor>();
-            if (anchor == null)
-            {
-                return true;
-            }
-
-            __result = anchor.GetPlanHoverText();
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(Container), nameof(Container.Interact))]
-    private static class ContainerInteractPatch
-    {
-        private static bool Prefix(Container __instance, Humanoid character, bool hold, ref bool __result)
-        {
-            ZoneBlueprintPlanAnchor anchor = __instance.GetComponent<ZoneBlueprintPlanAnchor>();
-            if (anchor == null || hold || character is not Player player)
-            {
-                return true;
-            }
-
-            if (BlueprintConfig.ChestConfirmHotkey.IsDown())
-            {
-                _lastConfirmInputFrame = Time.frameCount;
-                __result = anchor.TryConfirm(player);
-                return false;
-            }
-
-            if (BlueprintConfig.AzuCraftyBoxesPullOnOpen)
-            {
-                anchor.TryPullAvailableMaterials(player, "open", message: true);
-            }
-
-            anchor.Touch();
-            return true;
-        }
-    }
-
     [HarmonyPatch(typeof(Player), nameof(Player.Update))]
     private static class PlayerUpdatePatch
     {
@@ -1339,141 +1306,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
             _lastConfirmInputFrame = Time.frameCount;
             anchor.TryConfirm(__instance);
-        }
-    }
-
-    [HarmonyPatch(typeof(InventoryGrid), nameof(InventoryGrid.UpdateGui))]
-    private static class InventoryGridUpdateGuiPatch
-    {
-        private static void Postfix(InventoryGrid __instance)
-        {
-            ZoneBlueprintChestInventoryScroll.TryKeepContainerGridAtTop(__instance);
-            InventoryGui gui = InventoryGui.instance;
-            if (gui == null || gui.m_containerGrid != __instance || !TryGetAnchor(gui.m_currentContainer, out ZoneBlueprintPlanAnchor anchor))
-            {
-                return;
-            }
-
-            anchor.DrawRequirementOverlay(__instance);
-        }
-    }
-
-    [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.OnSelectedItem))]
-    private static class InventoryGuiOnSelectedItemPatch
-    {
-        private static bool Prefix(InventoryGui __instance, InventoryGrid grid, ItemDrop.ItemData item, Vector2i pos, InventoryGrid.Modifier mod)
-        {
-            if (__instance == null || grid == null || !TryGetAnchor(__instance.m_currentContainer, out ZoneBlueprintPlanAnchor anchor))
-            {
-                return true;
-            }
-
-            Player player = Player.m_localPlayer;
-            if (player == null || player.IsTeleporting())
-            {
-                return true;
-            }
-
-            Inventory containerInventory = __instance.m_currentContainer.GetInventory();
-            bool targetIsPlanChest = grid.GetInventory() == containerInventory;
-            if (__instance.m_dragGo)
-            {
-                if (!targetIsPlanChest || __instance.m_dragInventory == containerInventory)
-                {
-                    return true;
-                }
-
-                if (__instance.m_dragItem != null && !__instance.m_dragItem.m_shared.m_questItem)
-                {
-                    anchor.TryAcceptMaterialFromInventory(__instance.m_dragInventory, __instance.m_dragItem, __instance.m_dragAmount, message: true);
-                }
-
-                __instance.SetupDragItem(null, null, 1);
-                __instance.UpdateCraftingPanel();
-                return false;
-            }
-
-            if (item == null)
-            {
-                return !targetIsPlanChest;
-            }
-
-            if (mod == InventoryGrid.Modifier.Move && !targetIsPlanChest && !item.m_shared.m_questItem)
-            {
-                anchor.TryAcceptMaterialFromInventory(grid.GetInventory(), item, item.m_stack, message: true);
-                __instance.UpdateCraftingPanel();
-                return false;
-            }
-
-            return true;
-        }
-    }
-
-    [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.OnStackAll))]
-    private static class InventoryGuiOnStackAllPatch
-    {
-        private static bool Prefix(InventoryGui __instance)
-        {
-            if (__instance == null || !TryGetAnchor(__instance.m_currentContainer, out ZoneBlueprintPlanAnchor anchor) || Player.m_localPlayer == null)
-            {
-                return true;
-            }
-
-            __instance.SetupDragItem(null, null, 1);
-            anchor.TryAcceptAllFromPlayer(Player.m_localPlayer);
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(Container), nameof(Container.StackAll))]
-    private static class ContainerStackAllPatch
-    {
-        private static bool Prefix(Container __instance)
-        {
-            if (!TryGetAnchor(__instance, out ZoneBlueprintPlanAnchor anchor) || Player.m_localPlayer == null)
-            {
-                return true;
-            }
-
-            anchor.TryAcceptAllFromPlayer(Player.m_localPlayer);
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(WearNTear), nameof(WearNTear.Destroy))]
-    private static class WearNTearDestroyPatch
-    {
-        private static void Prefix(WearNTear __instance)
-        {
-            ZoneBlueprintPlanAnchor anchor = __instance.GetComponent<ZoneBlueprintPlanAnchor>();
-            if (anchor == null)
-            {
-                return;
-            }
-
-            anchor.ReleaseAzuCraftyBoxesContainer("PlanChest.WearNTear.Destroy prefix");
-            anchor.TryRefundDepositedMaterials("WearNTear.Destroy prefix");
-        }
-    }
-
-    [HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Destroy))]
-    private static class ZNetSceneDestroyPatch
-    {
-        private static void Prefix(GameObject go)
-        {
-            if (!go)
-            {
-                return;
-            }
-
-            ZoneBlueprintPlanAnchor anchor = go.GetComponent<ZoneBlueprintPlanAnchor>();
-            if (anchor == null)
-            {
-                return;
-            }
-
-            anchor.ReleaseAzuCraftyBoxesContainer("PlanChest.ZNetScene.Destroy prefix");
-            anchor.TryRefundDepositedMaterials("ZNetScene.Destroy prefix");
         }
     }
 

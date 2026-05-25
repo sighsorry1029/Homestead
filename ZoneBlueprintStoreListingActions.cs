@@ -192,8 +192,16 @@ internal static class ZoneBlueprintStoreListingAction
             Active = true
         };
         catalog.Listings.Add(listing);
-        ZoneBlueprintStoreNotifications.AddPublicNewListingNotification(catalog, sellerName, listing);
-        ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog, immediate: true);
+        ZoneBlueprintStoreNotification notification = ZoneBlueprintStoreNotifications.AddPublicNewListingNotification(catalog, sellerName, listing);
+        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
+        {
+            catalog.Listings.Remove(listing);
+            catalog.Notifications.Remove(notification);
+            ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
+            ZoneBlueprintStoreDraftRepository.DeleteFile(blueprintFile);
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, saveReason);
+        }
+
         ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
 
         return ZoneBlueprintStoreDtos.Status(ZoneBlueprintStoreRpcType.Publish, true, HomesteadLocalization.Format("hs_store_listed", name, ZoneBlueprintStorePrices.FormatPrice(priceItems)));
@@ -284,8 +292,15 @@ internal static class ZoneBlueprintStoreListingAction
             Active = true
         };
         catalog.Listings.Add(listing);
-        ZoneBlueprintStoreNotifications.AddPublicNewListingNotification(catalog, sellerName, listing);
-        ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog, immediate: true);
+        ZoneBlueprintStoreNotification notification = ZoneBlueprintStoreNotifications.AddPublicNewListingNotification(catalog, sellerName, listing);
+        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
+        {
+            catalog.Listings.Remove(listing);
+            catalog.Notifications.Remove(notification);
+            ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
+            return HomesteadCommandResult.Fail(saveReason);
+        }
+
         ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
 
         if (chest != null)

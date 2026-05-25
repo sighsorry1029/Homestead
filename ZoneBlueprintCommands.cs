@@ -556,26 +556,22 @@ internal static class ZoneBlueprintCommands
 
         foreach (ZoneBlueprintEntry entry in blueprint.Entries)
         {
-            GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
-            if (!prefab)
+            if (!TryCreateLoadEntry(blueprint, entry, anchor, anchorRotation, out BlueprintLoadEntry? loadEntry, out string error))
             {
-                throw new InvalidOperationException($"Missing prefab '{entry.Prefab}' while loading blueprint '{blueprint.Name}'.");
+                throw new InvalidOperationException(error);
             }
 
-            if (prefab.GetComponent<WearNTear>() == null || !HasBuildRecipe(prefab))
+            if (loadEntry == null)
             {
                 continue;
             }
 
-            Vector3 position = anchor + anchorRotation * FromVector(entry.LocalPos);
-            Quaternion rotation = anchorRotation * FromQuaternion(entry.LocalRot);
-            Vector3 scale = FromVector(entry.Scale);
-            entries.Add(new BlueprintLoadEntry(entry, prefab, position, rotation, scale));
-            positions.Add(position);
+            entries.Add(loadEntry);
+            positions.Add(loadEntry.Position);
         }
 
         List<Vector3> supportContacts = blueprint.TerrainContacts
-            .Select(contact => anchor + anchorRotation * new Vector3(contact.LocalX, contact.LocalY, contact.LocalZ))
+            .Select(contact => ToWorldTerrainContact(contact, anchor, anchorRotation))
             .ToList();
 
         return new BlueprintLoadPlan(entries, positions, supportContacts);
@@ -589,26 +585,16 @@ internal static class ZoneBlueprintCommands
 
         foreach (ZoneBlueprintEntry entry in blueprint.Entries)
         {
-            GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
-            if (!prefab)
+            if (!TryCreateLoadEntry(blueprint, entry, anchor, anchorRotation, out BlueprintLoadEntry? loadEntry, out string error))
             {
-                onComplete(null, $"Missing prefab '{entry.Prefab}' while loading blueprint '{blueprint.Name}'.");
+                onComplete(null, error);
                 yield break;
             }
 
-            if (prefab.GetComponent<WearNTear>() != null && HasBuildRecipe(prefab))
+            if (loadEntry != null)
             {
-                if (entry.LocalPos.Length < 3 || entry.LocalRot.Length < 4 || entry.Scale.Length < 3)
-                {
-                    onComplete(null, $"Blueprint '{blueprint.Name}' contains an invalid transform for '{entry.Prefab}'.");
-                    yield break;
-                }
-
-                Vector3 position = anchor + anchorRotation * FromVector(entry.LocalPos);
-                Quaternion rotation = anchorRotation * FromQuaternion(entry.LocalRot);
-                Vector3 scale = FromVector(entry.Scale);
-                entries.Add(new BlueprintLoadEntry(entry, prefab, position, rotation, scale));
-                positions.Add(position);
+                entries.Add(loadEntry);
+                positions.Add(loadEntry.Position);
             }
 
             processedSinceYield++;
@@ -622,7 +608,7 @@ internal static class ZoneBlueprintCommands
         List<Vector3> supportContacts = new(blueprint.TerrainContacts.Count);
         foreach (ZoneBlueprintTerrainContact contact in blueprint.TerrainContacts)
         {
-            supportContacts.Add(anchor + anchorRotation * new Vector3(contact.LocalX, contact.LocalY, contact.LocalZ));
+            supportContacts.Add(ToWorldTerrainContact(contact, anchor, anchorRotation));
             processedSinceYield++;
             if (processedSinceYield >= BlueprintPlanBatchSize)
             {
@@ -634,6 +620,46 @@ internal static class ZoneBlueprintCommands
         onComplete(new BlueprintLoadPlan(entries, positions, supportContacts), "");
     }
 
+    private static bool TryCreateLoadEntry(
+        ZoneBlueprintFile blueprint,
+        ZoneBlueprintEntry entry,
+        Vector3 anchor,
+        Quaternion anchorRotation,
+        out BlueprintLoadEntry? loadEntry,
+        out string error)
+    {
+        loadEntry = null;
+        error = "";
+        GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
+        if (!prefab)
+        {
+            error = $"Missing prefab '{entry.Prefab}' while loading blueprint '{blueprint.Name}'.";
+            return false;
+        }
+
+        if (prefab.GetComponent<WearNTear>() == null || !HasBuildRecipe(prefab))
+        {
+            return true;
+        }
+
+        if (entry.LocalPos.Length < 3 || entry.LocalRot.Length < 4 || entry.Scale.Length < 3)
+        {
+            error = $"Blueprint '{blueprint.Name}' contains an invalid transform for '{entry.Prefab}'.";
+            return false;
+        }
+
+        Vector3 position = anchor + anchorRotation * FromVector(entry.LocalPos);
+        Quaternion rotation = anchorRotation * FromQuaternion(entry.LocalRot);
+        Vector3 scale = FromVector(entry.Scale);
+        loadEntry = new BlueprintLoadEntry(entry, prefab, position, rotation, scale);
+        return true;
+    }
+
+    private static Vector3 ToWorldTerrainContact(ZoneBlueprintTerrainContact contact, Vector3 anchor, Quaternion anchorRotation)
+    {
+        return anchor + anchorRotation * new Vector3(contact.LocalX, contact.LocalY, contact.LocalZ);
+    }
+
     private static int SpawnPlan(BlueprintLoadPlan plan, Player player)
     {
         long playerId = player.GetPlayerID();
@@ -642,19 +668,7 @@ internal static class ZoneBlueprintCommands
 
         foreach (BlueprintLoadEntry item in plan.Entries)
         {
-            DataEntry data = string.IsNullOrEmpty(item.Entry.Data) ? new DataEntry() : new DataEntry(item.Entry.Data);
-            SanitizeBlueprintData(data);
-            ZDO? zdo = DataHelper.Init(item.Prefab, item.Position, item.Rotation, item.Scale, data, EmptyParameters);
-            if (zdo == null)
-            {
-                continue;
-            }
-
-            zdo.Set(ZDOVars.s_creator, playerId);
-            zdo.Set(ZDOVars.s_creatorName, playerName);
-            zdo.Set(BlueprintPlacedHash, true);
-            ZNetScene.instance.CreateObject(zdo);
-            created++;
+            created += TrySpawnPlanEntry(item, playerId, playerName) ? 1 : 0;
         }
 
         return created;
@@ -669,17 +683,7 @@ internal static class ZoneBlueprintCommands
 
         foreach (BlueprintLoadEntry item in plan.Entries)
         {
-            DataEntry data = string.IsNullOrEmpty(item.Entry.Data) ? new DataEntry() : new DataEntry(item.Entry.Data);
-            SanitizeBlueprintData(data);
-            ZDO? zdo = DataHelper.Init(item.Prefab, item.Position, item.Rotation, item.Scale, data, EmptyParameters);
-            if (zdo != null)
-            {
-                zdo.Set(ZDOVars.s_creator, playerId);
-                zdo.Set(ZDOVars.s_creatorName, playerName);
-                zdo.Set(BlueprintPlacedHash, true);
-                ZNetScene.instance.CreateObject(zdo);
-                created++;
-            }
+            created += TrySpawnPlanEntry(item, playerId, playerName) ? 1 : 0;
 
             processedSinceYield++;
             if (processedSinceYield >= BlueprintPlanBatchSize)
@@ -692,38 +696,29 @@ internal static class ZoneBlueprintCommands
         onComplete(created);
     }
 
+    private static bool TrySpawnPlanEntry(BlueprintLoadEntry item, long playerId, string playerName)
+    {
+        DataEntry data = string.IsNullOrEmpty(item.Entry.Data) ? new DataEntry() : new DataEntry(item.Entry.Data);
+        SanitizeBlueprintData(data);
+        ZDO? zdo = DataHelper.Init(item.Prefab, item.Position, item.Rotation, item.Scale, data, EmptyParameters);
+        if (zdo == null)
+        {
+            return false;
+        }
+
+        zdo.Set(ZDOVars.s_creator, playerId);
+        zdo.Set(ZDOVars.s_creatorName, playerName);
+        zdo.Set(BlueprintPlacedHash, true);
+        ZNetScene.instance.CreateObject(zdo);
+        return true;
+    }
+
     private static List<ZoneBlueprintRequirement> CollectRequirements(IEnumerable<BlueprintLoadEntry> entries)
     {
         Dictionary<string, ZoneBlueprintRequirement> requirements = [];
         foreach (BlueprintLoadEntry entry in entries)
         {
-            Piece piece = entry.Prefab.GetComponent<Piece>();
-            if (piece == null)
-            {
-                continue;
-            }
-
-            foreach (Piece.Requirement requirement in piece.m_resources)
-            {
-                if (!requirement.m_resItem || requirement.m_amount <= 0)
-                {
-                    continue;
-                }
-
-                string itemName = requirement.m_resItem.m_itemData.m_shared.m_name;
-                if (!requirements.TryGetValue(itemName, out ZoneBlueprintRequirement aggregate))
-                {
-                    aggregate = new ZoneBlueprintRequirement
-                    {
-                        ItemName = itemName,
-                        PrefabName = Utils.GetPrefabName(requirement.m_resItem.gameObject),
-                        DisplayName = requirement.m_resItem.m_itemData.m_shared.m_name
-                    };
-                    requirements[itemName] = aggregate;
-                }
-
-                aggregate.Amount += requirement.GetAmount(0);
-            }
+            AccumulateRequirements(requirements, entry);
         }
 
         return requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList();
@@ -736,31 +731,7 @@ internal static class ZoneBlueprintCommands
 
         foreach (BlueprintLoadEntry entry in entries)
         {
-            Piece piece = entry.Prefab.GetComponent<Piece>();
-            if (piece != null)
-            {
-                foreach (Piece.Requirement requirement in piece.m_resources)
-                {
-                    if (!requirement.m_resItem || requirement.m_amount <= 0)
-                    {
-                        continue;
-                    }
-
-                    string itemName = requirement.m_resItem.m_itemData.m_shared.m_name;
-                    if (!requirements.TryGetValue(itemName, out ZoneBlueprintRequirement aggregate))
-                    {
-                        aggregate = new ZoneBlueprintRequirement
-                        {
-                            ItemName = itemName,
-                            PrefabName = Utils.GetPrefabName(requirement.m_resItem.gameObject),
-                            DisplayName = requirement.m_resItem.m_itemData.m_shared.m_name
-                        };
-                        requirements[itemName] = aggregate;
-                    }
-
-                    aggregate.Amount += requirement.GetAmount(0);
-                }
-            }
+            AccumulateRequirements(requirements, entry);
 
             processedSinceYield++;
             if (processedSinceYield >= BlueprintPlanBatchSize)
@@ -771,6 +742,37 @@ internal static class ZoneBlueprintCommands
         }
 
         onComplete(requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList());
+    }
+
+    private static void AccumulateRequirements(Dictionary<string, ZoneBlueprintRequirement> requirements, BlueprintLoadEntry entry)
+    {
+        Piece piece = entry.Prefab.GetComponent<Piece>();
+        if (piece == null)
+        {
+            return;
+        }
+
+        foreach (Piece.Requirement requirement in piece.m_resources)
+        {
+            if (!requirement.m_resItem || requirement.m_amount <= 0)
+            {
+                continue;
+            }
+
+            string itemName = requirement.m_resItem.m_itemData.m_shared.m_name;
+            if (!requirements.TryGetValue(itemName, out ZoneBlueprintRequirement aggregate))
+            {
+                aggregate = new ZoneBlueprintRequirement
+                {
+                    ItemName = itemName,
+                    PrefabName = Utils.GetPrefabName(requirement.m_resItem.gameObject),
+                    DisplayName = requirement.m_resItem.m_itemData.m_shared.m_name
+                };
+                requirements[itemName] = aggregate;
+            }
+
+            aggregate.Amount += requirement.GetAmount(0);
+        }
     }
 
     private static string ValidateBuildAccessWithoutInventory(Player player, IEnumerable<BlueprintLoadEntry> entries)
