@@ -248,6 +248,8 @@
         <Content Include=".gitignore"/>
         <Content Include="environment.props"/>
         <Content Include="ILRepack.targets"/>
+        <Content Include="img.png" />
+        <Content Include="img_1.png" />
         <Content Include="Libs\ServerSync.dll">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </Content>
@@ -262,7 +264,6 @@
     </ItemGroup>
     <ItemGroup>
         <None Include="App.config"/>
-        <None Include="Images\**\*.*"/>
     </ItemGroup>
     <ItemGroup>
         <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.44.1">
