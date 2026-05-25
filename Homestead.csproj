@@ -248,8 +248,6 @@
         <Content Include=".gitignore"/>
         <Content Include="environment.props"/>
         <Content Include="ILRepack.targets"/>
-        <Content Include="img.png" />
-        <Content Include="img_1.png" />
         <Content Include="Libs\ServerSync.dll">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </Content>
@@ -326,6 +324,7 @@
     <Target Name="MakeThunderstorePackage" AfterTargets="UpdateManifestVersion" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
         <Error Text="manifest.json not found in Thunderstore directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
         <Error Text="icon.png not found in Thunderstore directory. Please note that Thunderstore requires this image to be 256x256 in dimension" Condition="!Exists('$(ThunderstorePackageRoot)\icon.png')"/>
+        <Error Text="translations\English.yml not found in project directory." Condition="!Exists('$(ProjectDir)translations\English.yml')"/>
         <ItemGroup>
             <PackageFiles Include="$(TargetDir)$(AssemblyName).dll" Condition="Exists('$(TargetDir)$(AssemblyName).dll')"/>
             <PackageFiles Include="$(ThunderstorePackageRoot)\CHANGELOG.md" Condition="Exists('$(ThunderstorePackageRoot)\CHANGELOG.md')"/>
@@ -334,6 +333,7 @@
         </ItemGroup>
         <MakeDir Directories="$(PackageDir)"/>
         <Copy SourceFiles="@(PackageFiles)" DestinationFolder="$(PackageDir)"/>
+        <Copy SourceFiles="$(ProjectDir)translations\English.yml" DestinationFiles="$(PackageDir)\$(AssemblyName).English.yml"/>
         <ZipDirectory SourceDirectory="$(PackageDir)" DestinationFile="$(ThunderstorePackageRoot)\$(PackageName).zip" Overwrite="true"/>
         <RemoveDir Directories="$(PackageDir)"/>
     </Target>
