@@ -145,3 +145,7 @@ Homestead can extend the Dvergr circlet with per-item light controls:
 - adjust range
 - drain durability while lit
 - sync custom-slot visuals and light state for nearby players
+
+## Github
+Build camera code from https://github.com/AzumattDev/BuildCameraCustomHammersEdition <br>
+https://github.com/sighsorry1029/Homestead <br>
