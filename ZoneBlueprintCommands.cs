@@ -6,22 +6,23 @@ using System.Linq;
 using BepInEx;
 using BepInEx.Logging;
 using UnityEngine;
-using DataEntry = Homestead.SavedZdoData;
-using DataHelper = Homestead.SavedZdoHelper;
 
 namespace Homestead;
 
 internal static class ZoneBlueprintCommands
 {
     private const int BlueprintPlanBatchSize = 250;
+    private const float PlanGhostCleanupStartupDelaySeconds = 600f;
+    private const float PlanGhostCleanupRegistryRetrySeconds = 60f;
+    private const float PlanGhostCleanupIntervalSeconds = 6f * 60f * 60f;
     private const string BlueprintPieceMarkerKey = "sighsorry.Homestead.blueprint_piece";
     private static readonly int BlueprintPlacedHash = StringExtensionMethods.GetStableHashCode(BlueprintPieceMarkerKey);
-    private static readonly Dictionary<string, string> EmptyParameters = [];
     private static readonly Dictionary<string, bool> BuildRecipeCache = new(StringComparer.Ordinal);
 
     private static ManualLogSource _logger = null!;
     private static bool _initialized;
     private static int _buildRecipeCacheObjectDbCount = -1;
+    private static float _nextPlanGhostCleanupAt;
 
     public static void Initialize(ManualLogSource logger)
     {
@@ -32,7 +33,18 @@ internal static class ZoneBlueprintCommands
 
         _initialized = true;
         _logger = logger;
+        ResetForWorldSession();
         ZoneBlueprintPlanRpc.Initialize(logger);
+    }
+
+    public static void Update()
+    {
+        CleanupPlanGhostFilesIfDue();
+    }
+
+    public static void ResetForWorldSession()
+    {
+        _nextPlanGhostCleanupAt = Time.realtimeSinceStartup + PlanGhostCleanupStartupDelaySeconds;
     }
 
     internal static HomesteadCommandResult SaveSelectedBlueprint(string name, Player player)
@@ -237,8 +249,10 @@ internal static class ZoneBlueprintCommands
             return [];
         }
 
-        return Directory.GetFiles(directory, "*.hsbp.yml")
-            .Select(path => Path.GetFileName(path).Replace(".hsbp.yml", ""))
+        return Directory.GetFiles(directory, "*" + ZoneBlueprintFileFormat.BlueprintExtension)
+            .Select(Path.GetFileNameWithoutExtension)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!)
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -260,7 +274,7 @@ internal static class ZoneBlueprintCommands
     internal static string SerializeBlueprintForStore(string name)
     {
         ZoneBlueprintFile blueprint = LoadBlueprint(name);
-        return HomesteadYaml.Serialize(blueprint);
+        return ZoneBlueprintFileFormat.Serialize(blueprint);
     }
 
     internal static string SaveBlueprintFromStore(string preferredName, ZoneBlueprintFile blueprint)
@@ -357,7 +371,6 @@ internal static class ZoneBlueprintCommands
         Quaternion inverseAnchorRotation = Quaternion.Inverse(anchorRotation);
         List<ZoneBlueprintEntry> entries = [];
         List<TerrainContactSource> terrainContactSources = [];
-        int index = 0;
 
         foreach (ZDO zdo in sourceZdos.ToList())
         {
@@ -369,19 +382,16 @@ internal static class ZoneBlueprintCommands
             Vector3 position = zdo.GetPosition();
             Quaternion rotation = zdo.GetRotation();
             Vector3 scale = ReadScale(zdo, prefab);
-            DataEntry data = new(zdo);
-            SanitizeBlueprintData(data);
 
             Vector3 localPosition = inverseAnchorRotation * (position - anchor);
             Quaternion localRotation = inverseAnchorRotation * rotation;
             entries.Add(new ZoneBlueprintEntry
             {
-                SaveId = $"w{++index:D4}",
                 Prefab = Utils.GetPrefabName(prefab),
                 LocalPos = ToArray(localPosition),
                 LocalRot = ToArray(localRotation),
                 Scale = ToArray(scale),
-                Data = data.GetBase64(EmptyParameters)
+                Text = ReadBlueprintText(zdo, prefab)
             });
 
             terrainContactSources.Add(new TerrainContactSource(prefab, position, rotation, scale));
@@ -390,6 +400,7 @@ internal static class ZoneBlueprintCommands
         return new ZoneBlueprintFile
         {
             Name = name,
+            Creator = player.GetPlayerName(),
             World = GetWorldName(),
             SavedAt = HomesteadTimestamp.Now(),
             Radius = radius,
@@ -440,10 +451,10 @@ internal static class ZoneBlueprintCommands
         {
             try
             {
-                ZoneBlueprintFile existing = HomesteadYaml.Deserialize<ZoneBlueprintFile>(File.ReadAllText(requestedPath));
-                string existingYaml = HomesteadYaml.Serialize(existing);
-                string incomingYaml = HomesteadYaml.Serialize(CloneForName(blueprint, requestedName));
-                if (string.Equals(existingYaml, incomingYaml, StringComparison.Ordinal))
+                ZoneBlueprintFile existing = ZoneBlueprintFileFormat.ReadFile(requestedPath);
+                string existingText = ZoneBlueprintFileFormat.Serialize(existing);
+                string incomingText = ZoneBlueprintFileFormat.Serialize(CloneForName(blueprint, requestedName));
+                if (string.Equals(existingText, incomingText, StringComparison.Ordinal))
                 {
                     savedName = requestedName;
                     return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_blueprint_server_already_has", savedName));
@@ -460,7 +471,7 @@ internal static class ZoneBlueprintCommands
         blueprint.Name = requestedName;
         string path = GetPlanGhostBlueprintPath(requestedName);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, HomesteadYaml.Serialize(blueprint));
+        ZoneBlueprintFileFormat.WriteFile(path, blueprint);
         savedName = requestedName;
         return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_blueprint_uploaded_to_server", savedName));
     }
@@ -468,26 +479,26 @@ internal static class ZoneBlueprintCommands
     internal static string SerializePreviewBlueprintForPlan(string name)
     {
         ZoneBlueprintFile blueprint = LoadPlanBlueprint(name);
-        if (!ZoneBlueprintNetworkPayload.TryCreatePreviewYaml(blueprint, out string yaml, out string reason))
+        if (!ZoneBlueprintNetworkPayload.TryCreatePreviewText(blueprint, out string blueprintText, out string reason))
         {
             throw new InvalidOperationException(reason);
         }
 
-        return yaml;
+        return blueprintText;
     }
 
-    internal static void EnsureLocalPlanBlueprintCopy(string name, string blueprintYaml)
+    internal static void EnsureLocalPlanBlueprintCopy(string name, string blueprintText)
     {
-        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(blueprintYaml))
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(blueprintText))
         {
             return;
         }
 
-        ZoneBlueprintFile blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(blueprintYaml);
+        ZoneBlueprintFile blueprint = ZoneBlueprintFileFormat.Deserialize(blueprintText, name);
         blueprint.Name = name;
         string path = GetPlanGhostBlueprintPath(name);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, HomesteadYaml.Serialize(blueprint));
+        ZoneBlueprintFileFormat.WriteFile(path, blueprint);
     }
 
     internal static List<ZoneBlueprintRequirement> CollectRequirements(BlueprintLoadPlan plan)
@@ -698,19 +709,52 @@ internal static class ZoneBlueprintCommands
 
     private static bool TrySpawnPlanEntry(BlueprintLoadEntry item, long playerId, string playerName)
     {
-        DataEntry data = string.IsNullOrEmpty(item.Entry.Data) ? new DataEntry() : new DataEntry(item.Entry.Data);
-        SanitizeBlueprintData(data);
-        ZDO? zdo = DataHelper.Init(item.Prefab, item.Position, item.Rotation, item.Scale, data, EmptyParameters);
+        ZDO? zdo = InitBlueprintZdo(item.Prefab, item.Position, item.Rotation, item.Scale);
         if (zdo == null)
         {
             return false;
         }
 
+        ApplyBlueprintText(item, zdo);
         zdo.Set(ZDOVars.s_creator, playerId);
         zdo.Set(ZDOVars.s_creatorName, playerName);
         zdo.Set(BlueprintPlacedHash, true);
         ZNetScene.instance.CreateObject(zdo);
         return true;
+    }
+
+    private static ZDO? InitBlueprintZdo(GameObject prefab, Vector3 position, Quaternion rotation, Vector3 scale)
+    {
+        if (ZDOMan.instance == null || !prefab)
+        {
+            return null;
+        }
+
+        int prefabHash = StringExtensionMethods.GetStableHashCode(prefab.name);
+        ZDO zdo = ZDOMan.instance.CreateNewZDO(position, prefabHash);
+        zdo.SetPrefab(prefabHash);
+        zdo.SetRotation(rotation);
+
+        ZNetView prefabView = prefab.GetComponent<ZNetView>();
+        if (prefabView != null)
+        {
+            zdo.Persistent = prefabView.m_persistent;
+            zdo.Distant = prefabView.m_distant;
+            zdo.Type = prefabView.m_type;
+        }
+
+        zdo.Set(ZDOVars.s_scaleHash, scale);
+        return zdo;
+    }
+
+    private static void ApplyBlueprintText(BlueprintLoadEntry item, ZDO zdo)
+    {
+        if (string.IsNullOrEmpty(item.Entry.Text) || item.Prefab.GetComponent<TextReceiver>() == null)
+        {
+            return;
+        }
+
+        zdo.Set(ZDOVars.s_text, item.Entry.Text);
     }
 
     private static List<ZoneBlueprintRequirement> CollectRequirements(IEnumerable<BlueprintLoadEntry> entries)
@@ -921,49 +965,6 @@ internal static class ZoneBlueprintCommands
         return false;
     }
 
-    private static void SanitizeBlueprintData(DataEntry data)
-    {
-        data.OriginalId = ZDOID.None;
-        data.TargetConnectionId = ZDOID.None;
-        data.ConnectionHash = 0;
-        data.ConnectionType = ZDOExtraData.ConnectionType.None;
-
-        RemoveKey(data, ZDOVars.s_creator);
-        RemoveKey(data, ZDOVars.s_creatorName);
-        RemoveKey(data, ZDOVars.s_health);
-        RemoveKey(data, ZDOVars.s_support);
-        RemoveKey(data, ZDOVars.s_inUse);
-        RemoveKey(data, ZDOVars.s_user);
-        RemoveKey(data, ZDOVars.s_zdoidUser.Key);
-        RemoveKey(data, ZDOVars.s_zdoidUser.Value);
-        RemoveKey(data, ZDOVars.s_bodyAVelHash);
-        RemoveKey(data, ZDOVars.s_bodyVelHash);
-        RemoveKey(data, ZDOVars.s_bodyVelocity);
-        RemoveKey(data, ZDOVars.s_velHash);
-        RemoveKey(data, ZDOVars.s_initVel);
-        RemoveKey(data, ZDOVars.s_forward);
-        RemoveKey(data, ZDOVars.s_landed);
-        RemoveKey(data, ZDOVars.s_inWater);
-        RemoveKey(data, ZDOVars.s_hitDir);
-        RemoveKey(data, ZDOVars.s_hitPoint);
-        RemoveKey(data, ZDOVars.s_startTime);
-        RemoveKey(data, ZDOVars.s_lastTime);
-        RemoveKey(data, ZDOVars.s_aliveTime);
-        RemoveKey(data, ZDOVars.s_accTime);
-        RemoveKey(data, ZDOVars.s_worldTimeHash);
-    }
-
-    private static void RemoveKey(DataEntry data, int hash)
-    {
-        data.Strings?.Remove(hash);
-        data.Floats?.Remove(hash);
-        data.Ints?.Remove(hash);
-        data.Longs?.Remove(hash);
-        data.Vecs?.Remove(hash);
-        data.Quats?.Remove(hash);
-        data.ByteArrays?.Remove(hash);
-    }
-
     private static ZoneBlueprintFile LoadBlueprint(string name)
     {
         string path = GetBlueprintPath(name);
@@ -972,7 +973,7 @@ internal static class ZoneBlueprintCommands
             throw new FileNotFoundException($"Homestead blueprint not found: {path}");
         }
 
-        return HomesteadYaml.Deserialize<ZoneBlueprintFile>(File.ReadAllText(path));
+        return ZoneBlueprintFileFormat.ReadFile(path);
     }
 
     private static ZoneBlueprintFile LoadPlanBlueprint(string name)
@@ -980,7 +981,7 @@ internal static class ZoneBlueprintCommands
         string planGhostPath = GetPlanGhostBlueprintPath(name);
         if (File.Exists(planGhostPath))
         {
-            return HomesteadYaml.Deserialize<ZoneBlueprintFile>(File.ReadAllText(planGhostPath));
+            return ZoneBlueprintFileFormat.ReadFile(planGhostPath);
         }
 
         return LoadBlueprint(name);
@@ -990,7 +991,7 @@ internal static class ZoneBlueprintCommands
     {
         string path = GetBlueprintPath(name);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, HomesteadYaml.Serialize(blueprint));
+        ZoneBlueprintFileFormat.WriteFile(path, blueprint);
         bool iconReady = false;
         try
         {
@@ -1011,18 +1012,18 @@ internal static class ZoneBlueprintCommands
         {
             Version = blueprint.Version,
             Name = name,
+            Creator = blueprint.Creator,
             World = blueprint.World,
             SavedAt = blueprint.SavedAt,
             Radius = blueprint.Radius,
             Entries = blueprint.Entries
                 .Select(entry => new ZoneBlueprintEntry
                 {
-                    SaveId = entry.SaveId,
                     Prefab = entry.Prefab,
                     LocalPos = entry.LocalPos.ToArray(),
                     LocalRot = entry.LocalRot.ToArray(),
                     Scale = entry.Scale.ToArray(),
-                    Data = entry.Data
+                    Text = entry.Text
                 })
                 .ToList(),
             TerrainContacts = blueprint.TerrainContacts
@@ -1041,11 +1042,6 @@ internal static class ZoneBlueprintCommands
         if (blueprint.Entries.Count == 0)
         {
             return HomesteadLocalization.Text("hs_blueprint_no_entries");
-        }
-
-        if (!ZoneBlueprintNetworkPayload.TryValidateBlueprintEntryCount(blueprint, upload: true, out string entryCountReason))
-        {
-            return entryCountReason;
         }
 
         if (ZNetScene.instance == null)
@@ -1101,17 +1097,17 @@ internal static class ZoneBlueprintCommands
 
     private static string GetBlueprintPath(string name)
     {
-        return Path.Combine(GetWorldBlueprintDirectory(), SanitizePathSegment(name) + ".hsbp.yml");
+        return Path.Combine(GetWorldBlueprintDirectory(), SanitizePathSegment(name) + ZoneBlueprintFileFormat.BlueprintExtension);
     }
 
     private static string GetPlanGhostBlueprintPath(string name)
     {
-        return Path.Combine(GetPlanGhostBlueprintDirectory(), SanitizePathSegment(name) + ".hsbp.yml");
+        return Path.Combine(GetPlanGhostBlueprintDirectory(), SanitizePathSegment(name) + ZoneBlueprintFileFormat.BlueprintExtension);
     }
 
     internal static string GetBlueprintIconPath(string name)
     {
-        return Path.Combine(GetWorldBlueprintDirectory(), SanitizePathSegment(name) + ".hsbp.png");
+        return Path.Combine(GetWorldBlueprintDirectory(), SanitizePathSegment(name) + ZoneBlueprintFileFormat.IconExtension);
     }
 
     private static string GetWorldBlueprintDirectory()
@@ -1122,6 +1118,92 @@ internal static class ZoneBlueprintCommands
     private static string GetPlanGhostBlueprintDirectory()
     {
         return HomesteadPlugin.PlanGhostStorageFullPath;
+    }
+
+    private static void CleanupPlanGhostFilesIfDue()
+    {
+        if (ZNet.instance == null || !ZNet.instance.IsServer() || ZDOMan.instance == null)
+        {
+            return;
+        }
+
+        float now = Time.realtimeSinceStartup;
+        if (_nextPlanGhostCleanupAt <= 0f)
+        {
+            _nextPlanGhostCleanupAt = now + PlanGhostCleanupStartupDelaySeconds;
+            return;
+        }
+
+        if (now < _nextPlanGhostCleanupAt)
+        {
+            return;
+        }
+
+        _nextPlanGhostCleanupAt = now + PlanGhostCleanupIntervalSeconds;
+        try
+        {
+            CleanupPlanGhostFiles();
+        }
+        catch (Exception ex)
+        {
+            _nextPlanGhostCleanupAt = Time.realtimeSinceStartup + PlanGhostCleanupRegistryRetrySeconds;
+            _logger.LogWarning($"Homestead plan ghost cleanup failed: {ex.Message}");
+        }
+    }
+
+    private static void CleanupPlanGhostFiles()
+    {
+        if (!ZoneBlueprintChestZdoRegistry.IsReady)
+        {
+            _nextPlanGhostCleanupAt = Time.realtimeSinceStartup + PlanGhostCleanupRegistryRetrySeconds;
+            return;
+        }
+
+        string directory = GetPlanGhostBlueprintDirectory();
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+
+        HashSet<string> liveNames = new(StringComparer.OrdinalIgnoreCase);
+        foreach (ZDO zdo in ZoneBlueprintChestZdoRegistry.EnumerateChestZdos())
+        {
+            if (zdo.GetPrefab() != ZoneBlueprintPlanChestPrefab.PrefabHash)
+            {
+                continue;
+            }
+
+            string name = zdo.GetString(ZoneBlueprintPlanAnchor.BlueprintNameKey, "");
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                liveNames.Add(SanitizePathSegment(name));
+            }
+        }
+
+        int deleted = 0;
+        foreach (string path in Directory.GetFiles(directory, "*" + ZoneBlueprintFileFormat.BlueprintExtension, SearchOption.TopDirectoryOnly))
+        {
+            string name = Path.GetFileNameWithoutExtension(path);
+            if (string.IsNullOrWhiteSpace(name) || liveNames.Contains(name))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(path);
+                deleted++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Failed to delete orphan Homestead plan ghost blueprint '{path}': {ex.Message}");
+            }
+        }
+
+        if (deleted > 0)
+        {
+            _logger.LogInfo($"Homestead plan ghost cleanup deleted {deleted} orphan blueprint file(s).");
+        }
     }
 
     private static string GetWorldName()
@@ -1144,6 +1226,19 @@ internal static class ZoneBlueprintCommands
     private static Vector3 ReadScale(ZDO zdo, GameObject prefab)
     {
         return zdo.GetVec3(ZDOVars.s_scaleHash, prefab.transform.localScale);
+    }
+
+    private static string ReadBlueprintText(ZDO zdo, GameObject prefab)
+    {
+        if (prefab.GetComponent<TextReceiver>() == null)
+        {
+            return "";
+        }
+
+        ZNetView? instance = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(zdo) : null;
+        TextReceiver? receiver = instance != null ? instance.GetComponent<TextReceiver>() : null;
+        string text = receiver != null ? receiver.GetText() : zdo.GetString(ZDOVars.s_text, "");
+        return (text ?? "").Replace(";", "").Replace("\0", "");
     }
 
     private static float[] ToArray(Vector3 value)

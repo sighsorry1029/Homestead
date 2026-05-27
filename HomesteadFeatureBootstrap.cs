@@ -36,6 +36,7 @@ internal static class HomesteadFeatureBootstrap
     private static void RegisterSessionResetters()
     {
         ZoneSessionResetRegistry.Register("Blueprint RPC queue", ZoneBlueprintNetworkPayload.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Blueprint plan ghost cleanup", ZoneBlueprintCommands.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint menu", ZoneBlueprintSaveToolMenu.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint plan RPC", ZoneBlueprintPlanRpc.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint store", ZoneBlueprintStore.ResetForWorldSession);
@@ -47,6 +48,7 @@ internal static class HomesteadFeatureBootstrap
     {
         ZoneBlueprintNetworkPayload.Update();
         ZoneBlueprintChestZdoRegistry.Update();
+        ZoneBlueprintCommands.Update();
         ZoneBlueprintChestCommands.RegisterRpcs();
         ZoneBlueprintChestVfx.Update();
         ZoneAreaDismantleTool.RegisterRpcs();

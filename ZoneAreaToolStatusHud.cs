@@ -86,7 +86,14 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         _instance?.SetPickupLine(message, 0.35f);
     }
 
-    public static void ShowBuildCameraDistance(float currentDistance, float maxDistance, string detail)
+    public static void ShowBuildCameraDistance(
+        float currentDistance,
+        float maxDistance,
+        string detail,
+        float maxPlaceDistance,
+        string placeDetail,
+        float resourcePickupRange,
+        string pickupDetail)
     {
         if (Hud.instance == null)
         {
@@ -95,7 +102,12 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
         EnsureInstance();
         string suffix = string.IsNullOrWhiteSpace(detail) ? "" : $" = {detail}";
-        _instance?.SetBuildCameraLine(HomesteadLocalization.Format("hs_build_camera_distance_hud", FormatMeters(currentDistance), FormatMeters(maxDistance), suffix));
+        string placeSuffix = string.IsNullOrWhiteSpace(placeDetail) ? "" : $" = {placeDetail}";
+        string pickupSuffix = string.IsNullOrWhiteSpace(pickupDetail) ? "" : $" = {pickupDetail}";
+        string cameraLine = HomesteadLocalization.Format("hs_build_camera_distance_hud", FormatMeters(currentDistance), FormatMeters(maxDistance), suffix);
+        string placeLine = HomesteadLocalization.Format("hs_build_camera_place_distance_hud", FormatMeters(maxPlaceDistance), placeSuffix);
+        string pickupLine = HomesteadLocalization.Format("hs_build_camera_pickup_range_hud", FormatMeters(resourcePickupRange), pickupSuffix);
+        _instance?.SetBuildCameraLine(cameraLine + "\n" + placeLine + "\n" + pickupLine);
     }
 
     public static void HideBuildCameraDistance()
@@ -453,7 +465,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private static Vector2 CalculateHudSize(float fontSize)
     {
-        float height = fontSize * 5f * 1.45f + 12f;
+        float height = fontSize * 7f * 1.45f + 12f;
         return new Vector2(
             Mathf.Clamp(fontSize * 34f, 220f, 1800f),
             Mathf.Clamp(height, 40f, 420f));

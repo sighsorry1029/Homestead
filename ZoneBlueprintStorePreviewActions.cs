@@ -129,8 +129,7 @@ internal static class ZoneBlueprintStorePreviewAction
         long writeTicks = ZoneBlueprintStoreDraftRepository.TryGetBlueprintFileWriteUtc(fileName, out DateTime writeUtc)
             ? writeUtc.Ticks
             : 0L;
-        BlueprintNetworkSettings settings = BlueprintConfig.NetworkSettings;
-        return $"{fileName}|{writeTicks}|{settings.MaxPreviewEntries}|{settings.MaxUploadBytes}";
+        return $"{fileName}|{writeTicks}|{BlueprintConfig.NetworkSettings.MaxUploadBytes}";
     }
 
     private static ZoneBlueprintStoreRpcEnvelope FailPreviewRestore(string mode, string listingId, string name, string blueprintFile, string message)

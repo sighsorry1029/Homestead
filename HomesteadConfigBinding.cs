@@ -16,10 +16,10 @@ public partial class HomesteadPlugin
 
     private void BindConstructionConfiguration()
     {
-        BlueprintConfig.Bind(this);
-        BuildCameraConfig.Bind(this);
-        PlacementControlConfig.Bind(this);
         DvergrCircletConfig.Bind(this);
+        PlacementControlConfig.Bind(this);
+        BuildCameraConfig.Bind(this);
+        BlueprintConfig.Bind(this);
     }
 
 }

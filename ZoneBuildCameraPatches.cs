@@ -98,6 +98,7 @@ internal static class ZoneBuildCameraPlayerUpdatePatch
         }
 
         __runOriginal = false;
+        ZoneBuildCamera.ApplyMaxPlaceDistanceOverride(__instance);
 
         if (ZoneBuildCamera.IsInputBlocked(blockPieceSelection: false) || !__instance.TakeInput())
         {

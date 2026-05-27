@@ -298,7 +298,7 @@ internal sealed class ZoneAreaToolController
         }
 
         EnsureMaterial();
-        _rangeLine = ZoneAreaToolShared.CreateLineRenderer(_owner.transform, _options.RangeLineName, 0.12f, _options.Color(), _material);
+        _rangeLine = ZoneAreaToolShared.CreateLineRenderer(_owner.transform, _options.RangeLineName, 0.05f, _options.Color(), _material);
         _rangeLine.enabled = false;
     }
 

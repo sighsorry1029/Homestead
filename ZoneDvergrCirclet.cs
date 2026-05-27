@@ -30,7 +30,6 @@ internal static partial class ZoneDvergrCirclet
     private static ItemDrop.ItemData? _fallbackLightItem;
     private static GameObject? _fallbackVisualRoot;
     private static ItemDrop.ItemData? _fallbackVisualItem;
-    private static float _nextDebugLogTime;
     private static readonly Dictionary<string, string> RepairStationDisplayNameCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal static void Initialize(ManualLogSource logger)
@@ -51,7 +50,6 @@ internal static partial class ZoneDvergrCirclet
         TempLights.Clear();
         TempVisualRoots.Clear();
         RepairStationDisplayNameCache.Clear();
-        _nextDebugLogTime = 0f;
         _loggedCircletExtendedSkip = false;
         _circletExtendedLoaded = null;
         AzuExtendedPlayerInventoryCompat.ResetForWorldSession();
@@ -100,7 +98,6 @@ internal static partial class ZoneDvergrCirclet
         CircletState state = LoadState(dvergrItem);
         EnsureLocalCircletVisual(player, dvergrItem, state);
         PublishLocalCircletState(player, dvergrItem, state);
-        LogDebugStatus(player, dvergrItem, state);
         if (inputBlocked)
         {
             return;

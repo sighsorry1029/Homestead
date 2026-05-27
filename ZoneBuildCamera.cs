@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using BepInEx.Bootstrap;
 using BepInEx.Logging;
 using UnityEngine;
@@ -30,16 +31,12 @@ internal static class ZoneBuildCamera
 
     private const string ExternalBuildCameraGuid = "Azumatt.BuildCameraCHE";
     private static readonly Dictionary<Player, bool> InBuildModeByPlayer = new();
+    private static readonly Dictionary<Player, float> OriginalMaxPlaceDistanceByPlayer = new();
     private static readonly Collider[] PickupOverlapBuffer = new Collider[128];
-    private static readonly Collider[] PickupHudOverlapBuffer = new Collider[128];
 
     private static ManualLogSource Log = null!;
     private static BuildCameraView _viewDirection;
     private static bool _externalBuildCameraWarningLogged;
-    private static bool _showPickupBlockedHud;
-    private static float _nextPickupHudRefreshTime;
-    private static float _nextPickupCandidateScanTime;
-    private static bool _cachedPickupCandidate;
     private static float _nextMessageTime;
     private static Transform? _lookAtTarget;
     private static Vector3 _lookAtTargetOffset = Vector3.zero;
@@ -52,26 +49,14 @@ internal static class ZoneBuildCamera
     internal static void Shutdown()
     {
         DisableBuildMode();
+        RestoreAllMaxPlaceDistances();
         InBuildModeByPlayer.Clear();
-        _showPickupBlockedHud = false;
         ZoneBuildCameraDvergerLight.CleanupAll();
     }
 
     internal static void Update()
     {
-        if (Time.time < _nextPickupHudRefreshTime)
-        {
-            return;
-        }
-
-        _nextPickupHudRefreshTime = Time.time + 0.2f;
-        _showPickupBlockedHud = ShouldShowPickupBlockedHud();
-        if (_showPickupBlockedHud)
-        {
-            ZoneAreaToolStatusHud.ShowCameraPickupBlocked(FormatWithMinimumComfort(LocalizeText(
-                "hs_build_camera_pickup_blocked_hud",
-                "Pickup blocked: Be cozy to use build camera item pickup (Comfort {0})")));
-        }
+        UpdateMaxPlaceDistanceOverride();
     }
 
     internal static bool IsEnabled()
@@ -125,6 +110,7 @@ internal static class ZoneBuildCamera
         Quaternion rotation = player.m_eye.transform.rotation;
         SetViewDirectionFromRotation(rotation);
         ResetCameraSessionState();
+        ApplyMaxPlaceDistanceOverride(player);
 
         player.Message(MessageHud.MessageType.TopLeft, HomesteadLocalization.Text("hs_build_camera_enter"));
         return true;
@@ -138,7 +124,7 @@ internal static class ZoneBuildCamera
             InBuildModeByPlayer[player] = false;
         }
 
-        _showPickupBlockedHud = false;
+        RestoreAllMaxPlaceDistances();
         ResetCameraSessionState();
         ZoneAreaToolStatusHud.HideBuildCameraDistance();
     }
@@ -152,6 +138,21 @@ internal static class ZoneBuildCamera
     internal static bool ShouldDeactivateBuildMode(Player player)
     {
         return !ToolIsEquipped(player) || (ShouldRestrictCameraEntry() && !MeetsComfortGate());
+    }
+
+    internal static void ApplyMaxPlaceDistanceOverride(Player player)
+    {
+        if (!player || !InBuildModeByPlayer.TryGetValue(player, out bool inBuildMode) || !inBuildMode)
+        {
+            return;
+        }
+
+        if (!OriginalMaxPlaceDistanceByPlayer.ContainsKey(player))
+        {
+            OriginalMaxPlaceDistanceByPlayer[player] = player.m_maxPlaceDistance;
+        }
+
+        player.m_maxPlaceDistance = GetMaxPlaceDistance(player);
     }
 
     internal static bool BuildStationInRange(Player player)
@@ -226,15 +227,15 @@ internal static class ZoneBuildCamera
             return HomesteadLocalization.Text("hs_build_camera_need_station");
         }
 
-        string comfort = FormatComfortProgress();
-        return BuildCameraConfig.RestrictionMode switch
+        if (ShouldRestrictCameraEntry())
         {
-            BuildCameraRestrictionMode.CameraNeedsCoziness => MeetsComfortGate()
+            string comfort = FormatComfortProgress();
+            return MeetsComfortGate()
                 ? HomesteadLocalization.Format("hs_build_camera_station_cozy", comfort)
-                : HomesteadLocalization.Format("hs_build_camera_need_cozy", comfort),
-            BuildCameraRestrictionMode.CameraPickUpNeedsCoziness => HomesteadLocalization.Format("hs_build_camera_station_pickup_cozy", comfort),
-            _ => HomesteadLocalization.Text("hs_build_camera_station_ready")
-        };
+                : HomesteadLocalization.Format("hs_build_camera_need_cozy", comfort);
+        }
+
+        return HomesteadLocalization.Text("hs_build_camera_station_ready");
     }
 
     internal static void UpdateBuildCamera(float dt, GameCamera camera)
@@ -298,6 +299,52 @@ internal static class ZoneBuildCamera
         ClearLookAtLock();
     }
 
+    private static void UpdateMaxPlaceDistanceOverride()
+    {
+        Player player = Player.m_localPlayer;
+        if (!player)
+        {
+            return;
+        }
+
+        if (InBuildMode())
+        {
+            ApplyMaxPlaceDistanceOverride(player);
+            return;
+        }
+
+        RestoreMaxPlaceDistance(player);
+    }
+
+    private static void RestoreMaxPlaceDistance(Player player)
+    {
+        if (!player)
+        {
+            return;
+        }
+
+        if (!OriginalMaxPlaceDistanceByPlayer.TryGetValue(player, out float originalDistance))
+        {
+            return;
+        }
+
+        player.m_maxPlaceDistance = originalDistance;
+        OriginalMaxPlaceDistanceByPlayer.Remove(player);
+    }
+
+    private static void RestoreAllMaxPlaceDistances()
+    {
+        foreach (KeyValuePair<Player, float> entry in OriginalMaxPlaceDistanceByPlayer.ToArray())
+        {
+            if (entry.Key)
+            {
+                entry.Key.m_maxPlaceDistance = entry.Value;
+            }
+        }
+
+        OriginalMaxPlaceDistanceByPlayer.Clear();
+    }
+
     private static void UpdateLookAtLock(GameCamera camera)
     {
         if (!ConfigValueHelpers.IsShortcutDown(BuildCameraConfig.LookAtLockHotkey))
@@ -355,17 +402,18 @@ internal static class ZoneBuildCamera
             return;
         }
 
-        if (ShouldRestrictCameraPickup() && !MeetsComfortGate())
+        if (ShouldRestrictCameraEntry() && !MeetsComfortGate())
         {
             return;
         }
 
         Vector3 center = camera.transform.position + Vector3.up;
-        int hitCount = Physics.OverlapSphereNonAlloc(center, BuildCameraConfig.ResourcePickupRange, PickupOverlapBuffer, player.m_autoPickupMask);
+        float pickupRange = GetResourcePickupRange(player);
+        int hitCount = Physics.OverlapSphereNonAlloc(center, pickupRange, PickupOverlapBuffer, player.m_autoPickupMask);
         Collider[] colliders = PickupOverlapBuffer;
         if (hitCount >= PickupOverlapBuffer.Length)
         {
-            colliders = Physics.OverlapSphere(center, BuildCameraConfig.ResourcePickupRange, player.m_autoPickupMask);
+            colliders = Physics.OverlapSphere(center, pickupRange, player.m_autoPickupMask);
             hitCount = colliders.Length;
         }
 
@@ -401,12 +449,12 @@ internal static class ZoneBuildCamera
 
             itemDrop.Load();
             float distance = Vector3.Distance(itemDrop.transform.position, center);
-            if (distance > BuildCameraConfig.ResourcePickupRange)
+            if (distance > pickupRange)
             {
                 continue;
             }
 
-            if (distance < BuildCameraConfig.ResourcePickupRange)
+            if (distance < pickupRange)
             {
                 player.Pickup(itemDrop.gameObject);
                 continue;
@@ -466,16 +514,20 @@ internal static class ZoneBuildCamera
     {
         float currentDistance = Vector3.Distance(camera.transform.position, player.transform.position);
         float maxDistance = GetMaxDistanceFromAvatar(player);
-        ZoneAreaToolStatusHud.ShowBuildCameraDistance(currentDistance, maxDistance, GetDistanceDetail(player));
+        float maxPlaceDistance = GetMaxPlaceDistance(player);
+        float resourcePickupRange = GetResourcePickupRange(player);
+        ZoneAreaToolStatusHud.ShowBuildCameraDistance(
+            currentDistance,
+            maxDistance,
+            GetDistanceDetail(player),
+            maxPlaceDistance,
+            GetMaxPlaceDistanceDetail(player),
+            resourcePickupRange,
+            GetResourcePickupRangeDetail(player));
     }
 
     private static float GetMaxDistanceFromAvatar(Player player)
     {
-        if (BuildCameraConfig.DistanceMode == BuildCameraDistanceMode.Fixed)
-        {
-            return BuildCameraConfig.MaxDistanceFromAvatar;
-        }
-
         int comfort = GetDistanceComfortLevel(player);
         return BuildCameraConfig.BaseDistanceFromAvatar +
                comfort * BuildCameraConfig.DistancePerComfortLevel;
@@ -483,14 +535,37 @@ internal static class ZoneBuildCamera
 
     private static string GetDistanceDetail(Player player)
     {
-        if (BuildCameraConfig.DistanceMode == BuildCameraDistanceMode.Fixed)
-        {
-            return $"Fixed {FormatDistanceNumber(BuildCameraConfig.MaxDistanceFromAvatar)}";
-        }
-
         int comfort = GetDistanceComfortLevel(player);
         return $"{FormatDistanceNumber(BuildCameraConfig.BaseDistanceFromAvatar)}+" +
-               $"{FormatDistanceNumber(BuildCameraConfig.DistancePerComfortLevel)}*{comfort}(Comfort)";
+               $"{FormatDistanceNumber(BuildCameraConfig.DistancePerComfortLevel)}*{comfort}({GetComfortLabel()})";
+    }
+
+    private static float GetMaxPlaceDistance(Player player)
+    {
+        int comfort = GetDistanceComfortLevel(player);
+        return BuildCameraConfig.MaxPlaceDistance +
+               comfort * BuildCameraConfig.MaxPlaceDistancePerComfortLevel;
+    }
+
+    private static string GetMaxPlaceDistanceDetail(Player player)
+    {
+        int comfort = GetDistanceComfortLevel(player);
+        return $"{FormatDistanceNumber(BuildCameraConfig.MaxPlaceDistance)}+" +
+               $"{FormatDistanceNumber(BuildCameraConfig.MaxPlaceDistancePerComfortLevel)}*{comfort}({GetComfortLabel()})";
+    }
+
+    private static float GetResourcePickupRange(Player player)
+    {
+        int comfort = GetDistanceComfortLevel(player);
+        return BuildCameraConfig.ResourcePickupRange +
+               comfort * BuildCameraConfig.ResourcePickupRangePerComfortLevel;
+    }
+
+    private static string GetResourcePickupRangeDetail(Player player)
+    {
+        int comfort = GetDistanceComfortLevel(player);
+        return $"{FormatDistanceNumber(BuildCameraConfig.ResourcePickupRange)}+" +
+               $"{FormatDistanceNumber(BuildCameraConfig.ResourcePickupRangePerComfortLevel)}*{comfort}({GetComfortLabel()})";
     }
 
     private static int GetDistanceComfortLevel(Player player)
@@ -610,18 +685,24 @@ internal static class ZoneBuildCamera
 
     private static bool ShouldRestrictCameraEntry()
     {
-        return BuildCameraConfig.RestrictionMode == BuildCameraRestrictionMode.CameraNeedsCoziness;
-    }
-
-    private static bool ShouldRestrictCameraPickup()
-    {
-        return BuildCameraConfig.RestrictionMode == BuildCameraRestrictionMode.CameraPickUpNeedsCoziness;
+        return BuildCameraConfig.MinimumComfortLevel > 0;
     }
 
     private static bool MeetsComfortGate()
     {
         Player player = Player.m_localPlayer;
-        if (!player || player.GetComfortLevel() < BuildCameraConfig.MinimumComfortLevel)
+        if (!player)
+        {
+            return false;
+        }
+
+        int minimumComfortLevel = BuildCameraConfig.MinimumComfortLevel;
+        if (minimumComfortLevel <= 0)
+        {
+            return true;
+        }
+
+        if (player.GetComfortLevel() < minimumComfortLevel)
         {
             return false;
         }
@@ -652,87 +733,6 @@ internal static class ZoneBuildCamera
         return nearFire && shelterOrSitting && !enemyAlert && !coldOrFreezing && !wetWithoutWarmth && !burning;
     }
 
-    private static void NotifyNeedCozyForCurrentMode()
-    {
-        Player player = Player.m_localPlayer;
-        if (!player || Time.time < _nextMessageTime)
-        {
-            return;
-        }
-
-        _nextMessageTime = Time.time + 1.5f;
-        string message = FormatWithMinimumComfort(LocalizeText(
-            "hs_build_camera_need_cozy_center",
-            "Be cozy to use build camera (Comfort {0})"));
-        player.Message(MessageHud.MessageType.Center, message);
-    }
-
-    private static bool ShouldShowPickupBlockedHud()
-    {
-        return ShouldRestrictCameraPickup() &&
-               InBuildMode() &&
-               !MeetsComfortGate() &&
-               GameCamera.instance &&
-               HasNearbyPickupCandidate();
-    }
-
-    private static bool HasNearbyPickupCandidate()
-    {
-        if (Time.time < _nextPickupCandidateScanTime)
-        {
-            return _cachedPickupCandidate;
-        }
-
-        _nextPickupCandidateScanTime = Time.time + 0.05f;
-        _cachedPickupCandidate = HasNearbyPickupCandidateUncached();
-        return _cachedPickupCandidate;
-    }
-
-    private static bool HasNearbyPickupCandidateUncached()
-    {
-        Player player = Player.m_localPlayer;
-        GameCamera camera = GameCamera.instance;
-        if (!player || !camera || player.IsTeleporting() || !Player.m_enableAutoPickup)
-        {
-            return false;
-        }
-
-        Vector3 center = camera.transform.position + Vector3.up;
-        float range = BuildCameraConfig.ResourcePickupRange;
-        int hitCount = Physics.OverlapSphereNonAlloc(center, range, PickupHudOverlapBuffer, player.m_autoPickupMask);
-        Collider[] colliders = PickupHudOverlapBuffer;
-        if (hitCount >= PickupHudOverlapBuffer.Length)
-        {
-            colliders = Physics.OverlapSphere(center, range, player.m_autoPickupMask);
-            hitCount = colliders.Length;
-        }
-
-        for (int i = 0; i < hitCount; i++)
-        {
-            Collider collider = colliders[i];
-            if (!collider || !collider.attachedRigidbody)
-            {
-                continue;
-            }
-
-            ItemDrop? itemDrop = collider.attachedRigidbody.GetComponent<ItemDrop>();
-            if (itemDrop == null &&
-                collider.attachedRigidbody.gameObject.GetComponent<FloatingTerrainDummy>() is { } terrainDummy &&
-                terrainDummy &&
-                terrainDummy.m_parent)
-            {
-                itemDrop = terrainDummy.m_parent.gameObject.GetComponent<ItemDrop>();
-            }
-
-            if (IsPickupCandidate(player, itemDrop) && Vector3.Distance(itemDrop!.transform.position, center) <= range)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static bool IsPickupCandidate(Player player, ItemDrop? itemDrop)
     {
         if (itemDrop == null || !itemDrop.m_autoPickup || itemDrop.InTar())
@@ -761,29 +761,25 @@ internal static class ZoneBuildCamera
                itemDrop.m_itemData.GetWeight() + player.m_inventory.GetTotalWeight() <= player.GetMaxCarryWeight();
     }
 
-    private static string LocalizeText(string key, string fallback)
+    private static void NotifyNeedCozyForCurrentMode()
     {
-        Localization localization = Localization.instance;
-        if (localization == null)
+        Player player = Player.m_localPlayer;
+        if (!player || Time.time < _nextMessageTime)
         {
-            return fallback;
+            return;
         }
 
-        string token = "$" + key;
-        string localized = localization.Localize(token);
-        return localized == token ? fallback : localized;
+        _nextMessageTime = Time.time + 1.5f;
+        string message = HomesteadLocalization.Format(
+            "hs_build_camera_need_cozy_center",
+            GetComfortLabel(),
+            BuildCameraConfig.MinimumComfortLevel);
+        player.Message(MessageHud.MessageType.Center, message);
     }
 
-    private static string FormatWithMinimumComfort(string template)
+    private static string GetComfortLabel()
     {
-        try
-        {
-            return string.Format(template, BuildCameraConfig.MinimumComfortLevel);
-        }
-        catch (FormatException)
-        {
-            return $"{template} (Comfort {BuildCameraConfig.MinimumComfortLevel})";
-        }
+        return HomesteadLocalization.Text("hs_common_comfort");
     }
 
     private static string FormatComfortProgress()

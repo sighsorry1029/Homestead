@@ -644,37 +644,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return;
         }
 
-        List<ZoneBlueprintRequirement> missing = GetMissingPurchaseRequirementList();
-        int index = 0;
-        foreach (InventoryGrid.Element element in grid.m_elements)
-        {
-            if (index >= missing.Count)
-            {
-                break;
-            }
-
-            if (element.m_used)
-            {
-                continue;
-            }
-
-            ZoneBlueprintRequirement requirement = missing[index++];
-            Sprite? icon = GetRequirementIcon(requirement);
-            element.m_used = true;
-            element.m_icon.enabled = icon != null;
-            element.m_icon.sprite = icon;
-            element.m_icon.color = new Color(1f, 1f, 1f, 0.45f);
-            element.m_amount.enabled = true;
-            element.m_amount.text = requirement.Amount.ToString();
-            element.m_quality.enabled = false;
-            element.m_equiped.enabled = false;
-            element.m_queued.enabled = false;
-            element.m_noteleport.enabled = false;
-            element.m_food.enabled = false;
-            element.m_durability.gameObject.SetActive(false);
-            element.m_tooltip.m_topic = Localization.instance.Localize(requirement.DisplayName);
-            element.m_tooltip.m_text = HomesteadLocalization.Format("hs_store_requirement_tooltip", requirement.Amount);
-        }
+        ZoneMaterialEscrow.DrawRequirementOverlay(grid, GetMissingPurchaseRequirementList(), "hs_store_requirement_tooltip");
     }
 
     public List<ZoneBlueprintRequirement> GetMissingPurchaseRequirementList()
@@ -686,7 +656,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     private void TouchWhenInventoryChanged()
     {
-        int signature = GetInventorySignatureHash();
+        int signature = ZoneMaterialEscrow.GetInventorySignatureHash(_container?.m_inventory);
         if (!_hasInventorySignature)
         {
             _lastInventorySignatureHash = signature;
@@ -792,32 +762,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         }
 
         return false;
-    }
-
-    private int GetInventorySignatureHash()
-    {
-        Inventory? inventory = _container?.m_inventory;
-        if (inventory == null)
-        {
-            return 0;
-        }
-
-        unchecked
-        {
-            int hash = 17;
-            int count = 0;
-            foreach (ItemDrop.ItemData item in inventory.GetAllItems())
-            {
-                string name = item.m_shared?.m_name ?? "";
-                int itemHash = StringComparer.Ordinal.GetHashCode(name);
-                itemHash = (itemHash * 397) ^ item.m_stack;
-                hash += itemHash;
-                hash ^= (itemHash << 7) | (int)((uint)itemHash >> 25);
-                count++;
-            }
-
-            return (hash * 397) ^ count;
-        }
     }
 
     private void RefreshCachedIdentity()
@@ -1268,13 +1212,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     private static ZoneMaterialEscrow.Session CreatePurchaseEscrow(ZDO? zdo, IEnumerable<ZoneBlueprintRequirement> requirements)
     {
         return new ZoneMaterialEscrow.Session(requirements, itemName => GetPurchaseDeposited(zdo, itemName), (_, _) => { });
-    }
-
-    private static Sprite? GetRequirementIcon(ZoneBlueprintRequirement requirement)
-    {
-        GameObject? prefab = ZoneBlueprintStoreVisuals.FindItemPrefab(requirement.PrefabName);
-        ItemDrop? drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
-        return drop != null ? drop.m_itemData.GetIcon() : null;
     }
 
     private static string FormatShortcut(BepInEx.Configuration.KeyboardShortcut shortcut)

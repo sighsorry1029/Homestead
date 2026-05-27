@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Jotunn.Managers;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -318,6 +319,89 @@ internal static class ZoneMaterialEscrow
             : inventory.GetAllItems()
                 .Where(item => string.Equals(item.m_shared.m_name, itemName, StringComparison.Ordinal))
                 .Sum(item => item.m_stack);
+    }
+
+    public static int GetInventorySignatureHash(Inventory? inventory)
+    {
+        if (inventory == null)
+        {
+            return 0;
+        }
+
+        unchecked
+        {
+            int hash = 17;
+            int count = 0;
+            foreach (ItemDrop.ItemData item in inventory.GetAllItems())
+            {
+                string name = item.m_shared?.m_name ?? "";
+                int itemHash = StringComparer.Ordinal.GetHashCode(name);
+                itemHash = (itemHash * 397) ^ item.m_stack;
+                hash += itemHash;
+                hash ^= (itemHash << 7) | (int)((uint)itemHash >> 25);
+                count++;
+            }
+
+            return (hash * 397) ^ count;
+        }
+    }
+
+    public static void DrawRequirementOverlay(InventoryGrid grid, IReadOnlyList<ZoneBlueprintRequirement> missing, string tooltipToken)
+    {
+        if (grid == null || missing.Count == 0)
+        {
+            return;
+        }
+
+        int index = 0;
+        foreach (InventoryGrid.Element element in grid.m_elements)
+        {
+            if (index >= missing.Count)
+            {
+                break;
+            }
+
+            if (element.m_used)
+            {
+                continue;
+            }
+
+            ZoneBlueprintRequirement requirement = missing[index++];
+            Sprite? icon = GetRequirementIcon(requirement);
+            element.m_used = true;
+            element.m_icon.enabled = icon != null;
+            element.m_icon.sprite = icon;
+            element.m_icon.color = new Color(1f, 1f, 1f, 0.45f);
+            element.m_amount.enabled = true;
+            element.m_amount.text = requirement.Amount.ToString();
+            element.m_quality.enabled = false;
+            element.m_equiped.enabled = false;
+            element.m_queued.enabled = false;
+            element.m_noteleport.enabled = false;
+            element.m_food.enabled = false;
+            element.m_durability.gameObject.SetActive(false);
+            element.m_tooltip.m_topic = Localization.instance.Localize(requirement.DisplayName);
+            element.m_tooltip.m_text = HomesteadLocalization.Format(tooltipToken, requirement.Amount);
+        }
+    }
+
+    private static Sprite? GetRequirementIcon(ZoneBlueprintRequirement requirement)
+    {
+        GameObject? prefab = FindPrefab(requirement.PrefabName);
+        ItemDrop? drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
+        return drop != null ? drop.m_itemData.GetIcon() : null;
+    }
+
+    private static GameObject? FindPrefab(string prefabName)
+    {
+        if (string.IsNullOrWhiteSpace(prefabName))
+        {
+            return null;
+        }
+
+        return ObjectDB.instance?.GetItemPrefab(prefabName) ??
+               ZNetScene.instance?.GetPrefab(prefabName) ??
+               PrefabManager.Instance.GetPrefab(prefabName);
     }
 
     public static int TakeAllowedAmount(Inventory sourceInventory, ItemDrop.ItemData item, int requestedAmount, int remaining)

@@ -188,21 +188,21 @@ internal static class ZoneBlueprintNetworkPayload
         return DecompressUtf8(raw.CompressedEnvelope, raw.MaxOutputBytes);
     }
 
-    public static bool TryCreateBlueprintPayload(string yaml, bool enforceUploadLimit, out byte[] payload, out string reason)
+    public static bool TryCreateBlueprintPayload(string blueprintText, bool enforceUploadLimit, out byte[] payload, out string reason)
     {
         payload = [];
-        if (enforceUploadLimit && !TryValidateBlueprintYamlSize(yaml, out reason))
+        if (enforceUploadLimit && !TryValidateBlueprintTextSize(blueprintText, out reason))
         {
             return false;
         }
 
-        payload = CompressUtf8(yaml ?? "");
-            if (payload.Length > MaxCompressedBlueprintPayloadBytes)
-            {
-                reason = HomesteadLocalization.Format("hs_blueprint_payload_too_large_compressed", FormatBytes(payload.Length), FormatBytes(MaxCompressedBlueprintPayloadBytes));
-                payload = [];
-                return false;
-            }
+        payload = CompressUtf8(blueprintText ?? "");
+        if (payload.Length > MaxCompressedBlueprintPayloadBytes)
+        {
+            reason = HomesteadLocalization.Format("hs_blueprint_payload_too_large_compressed", FormatBytes(payload.Length), FormatBytes(MaxCompressedBlueprintPayloadBytes));
+            payload = [];
+            return false;
+        }
 
         reason = "";
         return true;
@@ -254,23 +254,18 @@ internal static class ZoneBlueprintNetworkPayload
     public static bool TryDeserializeBlueprintUpload(byte[] payload, string encoding, out ZoneBlueprintFile blueprint, out string reason)
     {
         blueprint = null!;
-        if (!TryDecodeBlueprintPayloadToYaml(payload, encoding, BlueprintConfig.NetworkSettings.MaxUploadBytes, out string yaml, out reason))
+        if (!TryDecodeBlueprintPayloadToText(payload, encoding, BlueprintConfig.NetworkSettings.MaxUploadBytes, out string blueprintText, out reason))
         {
             return false;
         }
 
         try
         {
-            blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(yaml);
+            blueprint = ZoneBlueprintFileFormat.Deserialize(blueprintText);
         }
         catch (Exception ex)
         {
             reason = HomesteadLocalization.Format("hs_blueprint_payload_invalid", ex.Message);
-            return false;
-        }
-
-        if (!TryValidateBlueprintEntryCount(blueprint, upload: true, out reason))
-        {
             return false;
         }
 
@@ -280,14 +275,14 @@ internal static class ZoneBlueprintNetworkPayload
     public static bool TryDeserializeBlueprintPayload(byte[] payload, string encoding, out ZoneBlueprintFile blueprint, out string reason)
     {
         blueprint = null!;
-        if (!TryDecodeBlueprintPayloadToYaml(payload, encoding, MaxGeneralBlueprintBytes, out string yaml, out reason))
+        if (!TryDecodeBlueprintPayloadToText(payload, encoding, MaxGeneralBlueprintBytes, out string blueprintText, out reason))
         {
             return false;
         }
 
         try
         {
-            blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(yaml);
+            blueprint = ZoneBlueprintFileFormat.Deserialize(blueprintText);
         }
         catch (Exception ex)
         {
@@ -298,14 +293,14 @@ internal static class ZoneBlueprintNetworkPayload
         return true;
     }
 
-    public static bool TryDecodeBlueprintPayloadToYaml(byte[] payload, string encoding, out string yaml, out string reason)
+    public static bool TryDecodeBlueprintPayloadToText(byte[] payload, string encoding, out string blueprintText, out string reason)
     {
-        return TryDecodeBlueprintPayloadToYaml(payload, encoding, MaxGeneralBlueprintBytes, out yaml, out reason);
+        return TryDecodeBlueprintPayloadToText(payload, encoding, MaxGeneralBlueprintBytes, out blueprintText, out reason);
     }
 
-    public static bool TryDecodeBlueprintPayloadToYaml(byte[] payload, string encoding, int maxOutputBytes, out string yaml, out string reason)
+    public static bool TryDecodeBlueprintPayloadToText(byte[] payload, string encoding, int maxOutputBytes, out string blueprintText, out string reason)
     {
-        yaml = "";
+        blueprintText = "";
         reason = "";
         if (payload == null || payload.Length == 0)
         {
@@ -327,7 +322,7 @@ internal static class ZoneBlueprintNetworkPayload
 
         try
         {
-            yaml = DecompressUtf8(payload, maxOutputBytes);
+            blueprintText = DecompressUtf8(payload, maxOutputBytes);
             return true;
         }
         catch (Exception ex)
@@ -337,37 +332,34 @@ internal static class ZoneBlueprintNetworkPayload
         }
     }
 
-    public static bool TryCreatePreviewYaml(ZoneBlueprintFile source, out string previewYaml, out string reason)
+    public static bool TryCreatePreviewText(ZoneBlueprintFile source, out string previewText, out string reason)
     {
-        previewYaml = "";
+        previewText = "";
         ZoneBlueprintFile preview = ZoneBlueprintStorePreviewPayload.CreatePreviewBlueprint(source);
-        if (!TryValidateBlueprintEntryCount(preview, upload: false, out reason))
-        {
-            return false;
-        }
 
-        previewYaml = HomesteadYaml.Serialize(preview);
-        int bytes = Encoding.UTF8.GetByteCount(previewYaml);
+        previewText = ZoneBlueprintFileFormat.Serialize(preview);
+        int bytes = Encoding.UTF8.GetByteCount(previewText);
         int maxUploadBytes = BlueprintConfig.NetworkSettings.MaxUploadBytes;
         if (bytes > maxUploadBytes)
         {
             reason = HomesteadLocalization.Format("hs_blueprint_preview_payload_too_large", FormatBytes(bytes), FormatBytes(maxUploadBytes));
-            previewYaml = "";
+            previewText = "";
             return false;
         }
 
+        reason = "";
         return true;
     }
 
     public static bool TryCreatePreviewPayload(ZoneBlueprintFile source, out byte[] payload, out string reason)
     {
         payload = [];
-        if (!TryCreatePreviewYaml(source, out string previewYaml, out reason))
+        if (!TryCreatePreviewText(source, out string previewText, out reason))
         {
             return false;
         }
 
-        return TryCreateBlueprintPayload(previewYaml, enforceUploadLimit: false, out payload, out reason);
+        return TryCreateBlueprintPayload(previewText, enforceUploadLimit: false, out payload, out reason);
     }
 
     public static bool TryValidateIconBase64(string payload, out string reason)
@@ -417,32 +409,14 @@ internal static class ZoneBlueprintNetworkPayload
                EstimateBase64Bytes(payload) <= BlueprintConfig.NetworkSettings.MaxIconBytes;
     }
 
-    public static bool TryValidateBlueprintYamlSize(string yaml, out string reason)
+    public static bool TryValidateBlueprintTextSize(string blueprintText, out string reason)
     {
         reason = "";
-        int bytes = Encoding.UTF8.GetByteCount(yaml ?? "");
+        int bytes = Encoding.UTF8.GetByteCount(blueprintText ?? "");
         int maxUploadBytes = BlueprintConfig.NetworkSettings.MaxUploadBytes;
         if (bytes > maxUploadBytes)
         {
             reason = HomesteadLocalization.Format("hs_blueprint_upload_too_large", FormatBytes(bytes), FormatBytes(maxUploadBytes));
-            return false;
-        }
-
-        return true;
-    }
-
-    public static bool TryValidateBlueprintEntryCount(ZoneBlueprintFile blueprint, bool upload, out string reason)
-    {
-        reason = "";
-        BlueprintNetworkSettings settings = BlueprintConfig.NetworkSettings;
-        int limit = upload ? settings.MaxEntries : settings.MaxPreviewEntries;
-        int count = blueprint?.Entries?.Count ?? 0;
-        if (count > limit)
-        {
-            string kind = upload
-                ? HomesteadLocalization.Text("hs_blueprint_payload_kind_upload")
-                : HomesteadLocalization.Text("hs_blueprint_payload_kind_preview");
-            reason = HomesteadLocalization.Format("hs_blueprint_entry_count_too_high", kind, count, limit);
             return false;
         }
 

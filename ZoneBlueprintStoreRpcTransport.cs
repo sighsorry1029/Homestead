@@ -70,18 +70,7 @@ internal static class ZoneBlueprintStoreRpcTransport
     {
         if (response.Type == ZoneBlueprintStoreRpcType.List)
         {
-            ZoneBlueprintStoreListResponse payload = ReadPayload<ZoneBlueprintStoreListResponse>(response);
-            if (payload.IconsOnly)
-            {
-                ZoneBlueprintStoreUi.ApplyListingIcons(payload);
-                return;
-            }
-
-            ZoneBlueprintStoreUi.SetListings(payload);
-            if (payload.Notifications.Count > 0)
-            {
-                ZoneBlueprintStoreNotificationsUi.SetNotifications(payload.Notifications);
-            }
+            HandleListResponse(response);
             return;
         }
 
@@ -95,188 +84,197 @@ internal static class ZoneBlueprintStoreRpcTransport
             return;
         }
 
-        if (response.Type == ZoneBlueprintStoreRpcType.Preview)
+        switch (response.Type)
         {
-            ZoneBlueprintStorePreviewResponse payload = ReadPayload<ZoneBlueprintStorePreviewResponse>(response);
-            if (payload.Success)
+            case ZoneBlueprintStoreRpcType.Preview:
+                HandlePreviewResponse(response);
+                return;
+            case ZoneBlueprintStoreRpcType.PurchaseComplete:
+                HandlePurchaseCompleteResponse(response);
+                return;
+            case ZoneBlueprintStoreRpcType.PreviewRestore:
+                ZoneBlueprintStoreChest.HandlePreviewRestoreResponse(ReadPayload<ZoneBlueprintStorePreviewRestoreResponse>(response));
+                return;
+            case ZoneBlueprintStoreRpcType.ConfirmListing:
+                HandleConfirmListingResponse(response);
+                return;
+            case ZoneBlueprintStoreRpcType.Delist:
+                HandleListingPatchStatusResponse(response, refreshOffers: false);
+                return;
+            case ZoneBlueprintStoreRpcType.EditPrice:
+            case ZoneBlueprintStoreRpcType.CreateOffer:
+            case ZoneBlueprintStoreRpcType.DecideOffer:
+            case ZoneBlueprintStoreRpcType.DeleteOffer:
+                HandleListingPatchStatusResponse(
+                    response,
+                    refreshOffers: response.Type == ZoneBlueprintStoreRpcType.DecideOffer ||
+                                   response.Type == ZoneBlueprintStoreRpcType.DeleteOffer);
+                return;
+            case ZoneBlueprintStoreRpcType.ListOffers:
+                ZoneBlueprintStoreOffersUi.SetOffers(ReadPayload<ZoneBlueprintStoreListOffersResponse>(response));
+                return;
+            case ZoneBlueprintStoreRpcType.PriceChest:
+                HandlePriceChestResponse(response);
+                return;
+            case ZoneBlueprintStoreRpcType.Buy:
+                HandleBuyResponse(response);
+                return;
+            case ZoneBlueprintStoreRpcType.WithdrawComplete:
+                HandleWithdrawCompleteResponse(response);
+                return;
+        }
+
+        HandleStatusResponse(response);
+    }
+
+    private static void HandleListResponse(ZoneBlueprintStoreRpcEnvelope response)
+    {
+        ZoneBlueprintStoreListResponse payload = ReadPayload<ZoneBlueprintStoreListResponse>(response);
+        if (payload.IconsOnly)
+        {
+            ZoneBlueprintStoreUi.ApplyListingIcons(payload);
+            return;
+        }
+
+        ZoneBlueprintStoreUi.SetListings(payload);
+        if (payload.Notifications.Count > 0)
+        {
+            ZoneBlueprintStoreNotificationsUi.SetNotifications(payload.Notifications);
+        }
+    }
+
+    private static void HandlePreviewResponse(ZoneBlueprintStoreRpcEnvelope response)
+    {
+        ZoneBlueprintStorePreviewResponse payload = ReadPayload<ZoneBlueprintStorePreviewResponse>(response);
+        if (payload.Success)
+        {
+            if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(payload.BlueprintPayload, payload.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
             {
-                if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(payload.BlueprintPayload, payload.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
-                {
-                    ZoneBlueprintStorePreviewTool.Activate(payload.ListingId, payload.OfferId, payload.Name, blueprint, allowPurchase: true);
-                }
-                else
-                {
-                    ZoneBlueprintStoreVisuals.Message(reason, MessageHud.MessageType.Center);
-                }
+                ZoneBlueprintStorePreviewTool.Activate(payload.ListingId, payload.OfferId, payload.Name, blueprint, allowPurchase: true);
             }
-            else if (!string.IsNullOrWhiteSpace(payload.Message))
+            else
             {
-                ZoneBlueprintStoreVisuals.Message(payload.Message, MessageHud.MessageType.Center);
+                ZoneBlueprintStoreVisuals.Message(reason, MessageHud.MessageType.Center);
             }
 
             return;
         }
 
-        if (response.Type == ZoneBlueprintStoreRpcType.PurchaseComplete)
-        {
-            ZoneBlueprintStorePurchaseCompleteResponse payload = ReadPayload<ZoneBlueprintStorePurchaseCompleteResponse>(response);
-            if (payload.Success)
-            {
-                if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(payload.BlueprintPayload, payload.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
-                {
-                    string path = ZoneBlueprintCommands.SaveBlueprintFromStore(payload.Name, blueprint);
-                    ZoneBlueprintSaveTool.QueueMenuRefresh(blueprint.Name);
-                    ZoneBlueprintStorePreviewTool.RemovePurchasePreview(payload.ListingId, payload.OfferId);
-                    ZoneBlueprintStoreVisuals.PlayCompletionVfxAtPlayer();
-                    ZoneBlueprintStoreVisuals.Message($"{payload.Message} Saved to {path}", MessageHud.MessageType.TopLeft);
-                }
-                else
-                {
-                    ZoneBlueprintStoreVisuals.Message(reason, MessageHud.MessageType.Center);
-                }
-            }
-            else if (!string.IsNullOrWhiteSpace(payload.Message))
-            {
-                ZoneBlueprintStoreVisuals.Message(payload.Message, MessageHud.MessageType.Center);
-            }
+        ShowStatusMessage(payload.Message, success: false);
+    }
 
-            return;
-        }
-
-        if (response.Type == ZoneBlueprintStoreRpcType.PreviewRestore)
+    private static void HandlePurchaseCompleteResponse(ZoneBlueprintStoreRpcEnvelope response)
+    {
+        ZoneBlueprintStorePurchaseCompleteResponse payload = ReadPayload<ZoneBlueprintStorePurchaseCompleteResponse>(response);
+        if (payload.Success)
         {
-            ZoneBlueprintStoreChest.HandlePreviewRestoreResponse(ReadPayload<ZoneBlueprintStorePreviewRestoreResponse>(response));
-            return;
-        }
-
-        if (response.Type == ZoneBlueprintStoreRpcType.ConfirmListing)
-        {
-            ZoneBlueprintStoreConfirmListingResponse payload = ReadPayload<ZoneBlueprintStoreConfirmListingResponse>(response);
-            if (payload.Success)
+            if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(payload.BlueprintPayload, payload.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
             {
-                ZoneBlueprintStorePreviewTool.RemoveListingPreview(payload.ListingId);
+                string path = ZoneBlueprintCommands.SaveBlueprintFromStore(payload.Name, blueprint);
+                ZoneBlueprintSaveTool.QueueMenuRefresh(blueprint.Name);
+                ZoneBlueprintStorePreviewTool.RemovePurchasePreview(payload.ListingId, payload.OfferId);
                 ZoneBlueprintStoreVisuals.PlayCompletionVfxAtPlayer();
-                ZoneBlueprintStoreVisuals.Message(payload.Message, MessageHud.MessageType.TopLeft);
-            }
-            else if (!string.IsNullOrWhiteSpace(payload.Message))
-            {
-                ZoneBlueprintStoreVisuals.Message(payload.Message, MessageHud.MessageType.Center);
-            }
-
-            return;
-        }
-
-        if (response.Type == ZoneBlueprintStoreRpcType.Delist)
-        {
-            ZoneBlueprintStoreStatusResponse payload = ReadPayload<ZoneBlueprintStoreStatusResponse>(response);
-            if (!string.IsNullOrWhiteSpace(payload.Message))
-            {
-                ZoneBlueprintStoreVisuals.Message(payload.Message, payload.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
-            }
-
-            if (payload.Success)
-            {
-                if (!ZoneBlueprintStoreUi.TryApplyListingPatch(payload))
-                {
-                    ZoneBlueprintStore.ScheduleListingRefresh();
-                }
-            }
-
-            return;
-        }
-
-        if (response.Type == ZoneBlueprintStoreRpcType.EditPrice ||
-            response.Type == ZoneBlueprintStoreRpcType.CreateOffer ||
-            response.Type == ZoneBlueprintStoreRpcType.DecideOffer ||
-            response.Type == ZoneBlueprintStoreRpcType.DeleteOffer)
-        {
-            ZoneBlueprintStoreStatusResponse payload = ReadPayload<ZoneBlueprintStoreStatusResponse>(response);
-            if (!string.IsNullOrWhiteSpace(payload.Message))
-            {
-                ZoneBlueprintStoreVisuals.Message(payload.Message, payload.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
-            }
-
-            if (payload.Success)
-            {
-                if (response.Type == ZoneBlueprintStoreRpcType.DecideOffer ||
-                    response.Type == ZoneBlueprintStoreRpcType.DeleteOffer)
-                {
-                    ZoneBlueprintStoreOffersUi.RefreshCurrent();
-                }
-
-                if (!ZoneBlueprintStoreUi.TryApplyListingPatch(payload))
-                {
-                    ZoneBlueprintStore.ScheduleListingRefresh();
-                }
-            }
-
-            return;
-        }
-
-        if (response.Type == ZoneBlueprintStoreRpcType.ListOffers)
-        {
-            ZoneBlueprintStoreOffersUi.SetOffers(ReadPayload<ZoneBlueprintStoreListOffersResponse>(response));
-            return;
-        }
-
-        if (response.Type == ZoneBlueprintStoreRpcType.PriceChest)
-        {
-            ZoneBlueprintStorePriceChestResponse payload = ReadPayload<ZoneBlueprintStorePriceChestResponse>(response);
-            if (payload.Success)
-            {
-                ZoneBlueprintStorePreviewTool.ConfirmPendingListingPreview(payload.Name, payload.ListingId);
-                ZoneBlueprintStoreVisuals.TryPlayStoreChestPlaceVfx(payload.Chest, ZoneBlueprintStoreChest.ModePrice);
+                ZoneBlueprintStoreVisuals.Message($"{payload.Message} Saved to {path}", MessageHud.MessageType.TopLeft);
             }
             else
             {
-                ZoneBlueprintStorePreviewTool.CancelPendingPlacement(response.Type, payload.ListingId, payload.Name);
-            }
-
-            if (!string.IsNullOrWhiteSpace(payload.Message))
-            {
-                ZoneBlueprintStoreVisuals.Message(payload.Message, payload.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
+                ZoneBlueprintStoreVisuals.Message(reason, MessageHud.MessageType.Center);
             }
 
             return;
         }
 
-        if (response.Type == ZoneBlueprintStoreRpcType.Buy)
+        ShowStatusMessage(payload.Message, success: false);
+    }
+
+    private static void HandleConfirmListingResponse(ZoneBlueprintStoreRpcEnvelope response)
+    {
+        ZoneBlueprintStoreConfirmListingResponse payload = ReadPayload<ZoneBlueprintStoreConfirmListingResponse>(response);
+        if (payload.Success)
         {
-            ZoneBlueprintStoreBuyResponse payload = ReadPayload<ZoneBlueprintStoreBuyResponse>(response);
-            if (payload.Success)
-            {
-                ZoneBlueprintStoreVisuals.TryPlayStoreChestPlaceVfx(payload.Chest, ZoneBlueprintStoreChest.ModePurchase);
-            }
-            else
-            {
-                ZoneBlueprintStorePreviewTool.CancelPendingPlacement(response.Type, payload.ListingId, payload.Name);
-            }
-
-            if (!string.IsNullOrWhiteSpace(payload.Message))
-            {
-                ZoneBlueprintStoreVisuals.Message(payload.Message, payload.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
-            }
-
+            ZoneBlueprintStorePreviewTool.RemoveListingPreview(payload.ListingId);
+            ZoneBlueprintStoreVisuals.PlayCompletionVfxAtPlayer();
+            ShowStatusMessage(payload.Message, success: true);
             return;
         }
 
-        if (response.Type == ZoneBlueprintStoreRpcType.WithdrawComplete)
+        ShowStatusMessage(payload.Message, success: false);
+    }
+
+    private static void HandleListingPatchStatusResponse(ZoneBlueprintStoreRpcEnvelope response, bool refreshOffers)
+    {
+        ZoneBlueprintStoreStatusResponse payload = ReadPayload<ZoneBlueprintStoreStatusResponse>(response);
+        ShowStatusMessage(payload.Message, payload.Success);
+        if (!payload.Success)
         {
-            ZoneBlueprintStoreWithdrawResponse payload = ReadPayload<ZoneBlueprintStoreWithdrawResponse>(response);
-            if (payload.Success)
-            {
-                ZoneBlueprintStoreUi.SetWithdrawableBalance(false);
-                ZoneBlueprintStoreVisuals.TryPlayStoreChestPlaceVfx(payload.Chests, ZoneBlueprintStoreChest.ModePayout);
-            }
-
-            ZoneBlueprintStoreVisuals.Message(payload.Message, payload.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
             return;
         }
 
+        if (refreshOffers)
+        {
+            ZoneBlueprintStoreOffersUi.RefreshCurrent();
+        }
+
+        if (!ZoneBlueprintStoreUi.TryApplyListingPatch(payload))
+        {
+            ZoneBlueprintStore.ScheduleListingRefresh();
+        }
+    }
+
+    private static void HandlePriceChestResponse(ZoneBlueprintStoreRpcEnvelope response)
+    {
+        ZoneBlueprintStorePriceChestResponse payload = ReadPayload<ZoneBlueprintStorePriceChestResponse>(response);
+        if (payload.Success)
+        {
+            ZoneBlueprintStorePreviewTool.ConfirmPendingListingPreview(payload.Name, payload.ListingId);
+            ZoneBlueprintStoreVisuals.TryPlayStoreChestPlaceVfx(payload.Chest, ZoneBlueprintStoreChest.ModePrice);
+        }
+        else
+        {
+            ZoneBlueprintStorePreviewTool.CancelPendingPlacement(response.Type, payload.ListingId, payload.Name);
+        }
+
+        ShowStatusMessage(payload.Message, payload.Success);
+    }
+
+    private static void HandleBuyResponse(ZoneBlueprintStoreRpcEnvelope response)
+    {
+        ZoneBlueprintStoreBuyResponse payload = ReadPayload<ZoneBlueprintStoreBuyResponse>(response);
+        if (payload.Success)
+        {
+            ZoneBlueprintStoreVisuals.TryPlayStoreChestPlaceVfx(payload.Chest, ZoneBlueprintStoreChest.ModePurchase);
+        }
+        else
+        {
+            ZoneBlueprintStorePreviewTool.CancelPendingPlacement(response.Type, payload.ListingId, payload.Name);
+        }
+
+        ShowStatusMessage(payload.Message, payload.Success);
+    }
+
+    private static void HandleWithdrawCompleteResponse(ZoneBlueprintStoreRpcEnvelope response)
+    {
+        ZoneBlueprintStoreWithdrawResponse payload = ReadPayload<ZoneBlueprintStoreWithdrawResponse>(response);
+        if (payload.Success)
+        {
+            ZoneBlueprintStoreUi.SetWithdrawableBalance(false);
+            ZoneBlueprintStoreVisuals.TryPlayStoreChestPlaceVfx(payload.Chests, ZoneBlueprintStoreChest.ModePayout);
+        }
+
+        ShowStatusMessage(payload.Message, payload.Success);
+    }
+
+    private static void HandleStatusResponse(ZoneBlueprintStoreRpcEnvelope response)
+    {
         ZoneBlueprintStoreStatusResponse status = ReadPayload<ZoneBlueprintStoreStatusResponse>(response);
-        if (!string.IsNullOrWhiteSpace(status.Message))
+        ShowStatusMessage(status.Message, status.Success);
+    }
+
+    private static void ShowStatusMessage(string message, bool success)
+    {
+        if (!string.IsNullOrWhiteSpace(message))
         {
-            ZoneBlueprintStoreVisuals.Message(status.Message, status.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
+            ZoneBlueprintStoreVisuals.Message(message, success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
         }
     }
 

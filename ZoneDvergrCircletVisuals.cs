@@ -163,16 +163,15 @@ internal static partial class ZoneDvergrCirclet
                 return;
             }
 
-            bool culled = !IsWithinRemoteLightRange(visEquipment);
             if (visEquipment.m_currentHelmetItemHash == PrefabHash && visEquipment.m_helmetItemInstance)
             {
                 DestroyCustomRoot();
-                EnsureRemoteVisualComponent(visEquipment.m_helmetItemInstance, nview, culled);
+                EnsureRemoteVisualComponent(visEquipment.m_helmetItemInstance, nview, culled: false);
                 return;
             }
 
             CullRemoteVisualComponent(visEquipment.m_helmetItemInstance, nview);
-            if (culled || !visEquipment.m_helmet)
+            if (!visEquipment.m_helmet)
             {
                 DestroyCustomRoot();
                 return;

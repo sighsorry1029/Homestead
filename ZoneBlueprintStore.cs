@@ -94,10 +94,10 @@ internal static class ZoneBlueprintStore
             return;
         }
 
-        string blueprintYaml;
+        string blueprintText;
         try
         {
-            blueprintYaml = ZoneBlueprintCommands.SerializeBlueprintForStore(blueprintName);
+            blueprintText = ZoneBlueprintCommands.SerializeBlueprintForStore(blueprintName);
         }
         catch (Exception ex)
         {
@@ -105,7 +105,7 @@ internal static class ZoneBlueprintStore
             return;
         }
 
-        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintYaml, enforceUploadLimit: true, out byte[] blueprintPayload, out string payloadReason))
+        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintText, enforceUploadLimit: true, out byte[] blueprintPayload, out string payloadReason))
         {
             ZoneBlueprintStoreVisuals.Message(payloadReason, MessageHud.MessageType.Center);
             return;
@@ -140,8 +140,8 @@ internal static class ZoneBlueprintStore
 
         try
         {
-            string blueprintYaml = ZoneBlueprintCommands.SerializeBlueprintForStore(blueprintName);
-            ZoneBlueprintFile blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(blueprintYaml);
+            string blueprintText = ZoneBlueprintCommands.SerializeBlueprintForStore(blueprintName);
+            ZoneBlueprintFile blueprint = ZoneBlueprintFileFormat.Deserialize(blueprintText, blueprintName);
             ZoneBlueprintStorePreviewTool.ActivateListing(blueprintName, blueprint);
             Hud.HidePieceSelection();
         }
@@ -171,10 +171,10 @@ internal static class ZoneBlueprintStore
             return;
         }
 
-        string blueprintYaml;
+        string blueprintText;
         try
         {
-            blueprintYaml = ZoneBlueprintCommands.SerializeBlueprintForStore(blueprintName);
+            blueprintText = ZoneBlueprintCommands.SerializeBlueprintForStore(blueprintName);
         }
         catch (Exception ex)
         {
@@ -182,7 +182,7 @@ internal static class ZoneBlueprintStore
             return;
         }
 
-        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintYaml, enforceUploadLimit: true, out byte[] blueprintPayload, out string payloadReason))
+        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintText, enforceUploadLimit: true, out byte[] blueprintPayload, out string payloadReason))
         {
             ZoneBlueprintStoreVisuals.Message(payloadReason, MessageHud.MessageType.Center);
             return;

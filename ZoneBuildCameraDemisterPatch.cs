@@ -21,8 +21,7 @@ internal static class ZoneBuildCameraDemisterPatch
         Player? player = __instance.m_character as Player;
         if (player == null ||
             !ZoneBuildCamera.IsLocalPlayer(player) ||
-            !ZoneBuildCamera.InBuildMode() ||
-            !BuildCameraConfig.DemisterFollowCamera)
+            !ZoneBuildCamera.InBuildMode())
         {
             RestoreNormalForceField(__instance);
             return true;

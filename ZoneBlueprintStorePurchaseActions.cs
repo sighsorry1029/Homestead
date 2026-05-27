@@ -150,7 +150,7 @@ internal static class ZoneBlueprintStorePurchaseAction
             return HomesteadCommandResult.Fail(reason);
         }
 
-        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(HomesteadYaml.Serialize(blueprint), enforceUploadLimit: false, out byte[] purchasePayload, out string payloadReason))
+        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(ZoneBlueprintFileFormat.Serialize(blueprint), enforceUploadLimit: false, out byte[] purchasePayload, out string payloadReason))
         {
             return HomesteadCommandResult.Fail(payloadReason);
         }

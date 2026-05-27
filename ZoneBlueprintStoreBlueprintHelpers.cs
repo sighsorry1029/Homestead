@@ -45,11 +45,6 @@ internal static class ZoneBlueprintStoreBlueprints
             return HomesteadLocalization.Text("hs_store_blueprint_no_entries");
         }
 
-        if (!ZoneBlueprintNetworkPayload.TryValidateBlueprintEntryCount(blueprint, upload: true, out string entryCountReason))
-        {
-            return entryCountReason;
-        }
-
         if (ZNetScene.instance == null)
         {
             return HomesteadLocalization.Text("hs_common_world_not_ready");

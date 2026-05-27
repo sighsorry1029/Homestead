@@ -72,6 +72,11 @@ internal static class ZoneBlueprintChestInventoryScroll
     {
         private static void Postfix(InventoryGui __instance, Container container)
         {
+            if (__instance != null && container != null)
+            {
+                __instance.m_firstContainerUpdate = true;
+            }
+
             Request(container, __instance != null ? __instance.m_containerGrid : null);
         }
     }

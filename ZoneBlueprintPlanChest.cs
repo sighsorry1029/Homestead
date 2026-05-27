@@ -13,7 +13,7 @@ namespace Homestead;
 
 internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 {
-    private const string BlueprintNameKey = "hs_blueprint_name";
+    internal const string BlueprintNameKey = "hs_blueprint_name";
     private const string AnchorXKey = "hs_anchor_x";
     private const string AnchorYKey = "hs_anchor_y";
     private const string AnchorZKey = "hs_anchor_z";
@@ -228,7 +228,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     private void TouchWhenInventoryChanged()
     {
-        int signature = GetInventorySignatureHash();
+        int signature = ZoneMaterialEscrow.GetInventorySignatureHash(_container?.m_inventory);
         if (!_hasInventorySignature)
         {
             _lastInventorySignatureHash = signature;
@@ -276,32 +276,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
 
         return ReadRefundMaterials().Any(material => material.Amount > 0);
-    }
-
-    private int GetInventorySignatureHash()
-    {
-        Inventory? inventory = _container?.m_inventory;
-        if (inventory == null)
-        {
-            return 0;
-        }
-
-        unchecked
-        {
-            int hash = 17;
-            int count = 0;
-            foreach (ItemDrop.ItemData item in inventory.GetAllItems())
-            {
-                string name = item.m_shared?.m_name ?? "";
-                int itemHash = StringComparer.Ordinal.GetHashCode(name);
-                itemHash = (itemHash * 397) ^ item.m_stack;
-                hash += itemHash;
-                hash ^= (itemHash << 7) | (int)((uint)itemHash >> 25);
-                count++;
-            }
-
-            return (hash * 397) ^ count;
-        }
     }
 
     private bool ReloadPlan(bool force = false)
@@ -1212,44 +1186,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return;
         }
 
-        List<ZoneBlueprintRequirement> missing = GetMissingRequirementList();
-        int index = 0;
-        foreach (InventoryGrid.Element element in grid.m_elements)
-        {
-            if (index >= missing.Count)
-            {
-                break;
-            }
-
-            if (element.m_used)
-            {
-                continue;
-            }
-
-            ZoneBlueprintRequirement requirement = missing[index++];
-            Sprite? icon = GetRequirementIcon(requirement);
-            element.m_used = true;
-            element.m_icon.enabled = icon != null;
-            element.m_icon.sprite = icon;
-            element.m_icon.color = new Color(1f, 1f, 1f, 0.45f);
-            element.m_amount.enabled = true;
-            element.m_amount.text = requirement.Amount.ToString();
-            element.m_quality.enabled = false;
-            element.m_equiped.enabled = false;
-            element.m_queued.enabled = false;
-            element.m_noteleport.enabled = false;
-            element.m_food.enabled = false;
-            element.m_durability.gameObject.SetActive(false);
-            element.m_tooltip.m_topic = Localization.instance.Localize(requirement.DisplayName);
-            element.m_tooltip.m_text = HomesteadLocalization.Format("hs_blueprint_requirement_tooltip", requirement.Amount);
-        }
-    }
-
-    private static Sprite? GetRequirementIcon(ZoneBlueprintRequirement requirement)
-    {
-        GameObject? prefab = FindPrefab(requirement.PrefabName);
-        ItemDrop? drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
-        return drop != null ? drop.m_itemData.GetIcon() : null;
+        ZoneMaterialEscrow.DrawRequirementOverlay(grid, GetMissingRequirementList(), "hs_blueprint_requirement_tooltip");
     }
 
     public static bool TryGetAnchor(Container? container, out ZoneBlueprintPlanAnchor anchor)
@@ -1472,7 +1409,7 @@ internal static class ZoneBlueprintPlanChestPrefab
         {
             container.m_name = HomesteadLocalization.Token("hs_blueprint_chest_name");
             container.m_width = 8;
-            container.m_height = BlueprintConfig.ChestRows;
+            container.m_height = BlueprintConfig.BlueprintChestRows;
             container.m_autoDestroyEmpty = false;
             container.m_privacy = Container.PrivacySetting.Public;
             container.m_defaultItems = new DropTable();

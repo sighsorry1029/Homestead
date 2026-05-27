@@ -7,6 +7,7 @@ internal sealed class ZoneBlueprintFile
 {
     public int Version { get; set; } = 1;
     public string Name { get; set; } = "";
+    public string Creator { get; set; } = "";
     public string World { get; set; } = "";
     public string SavedAt { get; set; } = "";
     public float Radius { get; set; }
@@ -16,12 +17,11 @@ internal sealed class ZoneBlueprintFile
 
 internal sealed class ZoneBlueprintEntry
 {
-    public string SaveId { get; set; } = "";
     public string Prefab { get; set; } = "";
     public float[] LocalPos { get; set; } = new float[3];
     public float[] LocalRot { get; set; } = new float[4];
     public float[] Scale { get; set; } = new float[3];
-    public string Data { get; set; } = "";
+    public string Text { get; set; } = "";
 }
 
 internal sealed class ZoneBlueprintTerrainContact

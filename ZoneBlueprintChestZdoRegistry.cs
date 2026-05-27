@@ -48,6 +48,8 @@ internal static class ZoneBlueprintChestZdoRegistry
         Reset();
     }
 
+    public static bool IsReady => CanIndex && _initialized;
+
     public static void Refresh(ZDO? zdo)
     {
         if (!CanIndex || zdo == null || !zdo.IsValid())

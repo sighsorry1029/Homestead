@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -798,27 +797,10 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
     }
 }
 
-internal sealed class ZoneBlueprintSaveToolMarker : MonoBehaviour
-{
-    public ZoneBlueprintToolKind Kind;
-    public string BlueprintName = "";
-}
-
-internal enum ZoneBlueprintToolKind
-{
-    AreaSave,
-    AreaDismantle,
-    Blueprint,
-    Store
-}
-
 internal static class ZoneBlueprintSaveToolMenu
 {
     private const string CategoryId = "Homestead";
     private const string CategoryLabelKey = "hs_hammer_category";
-    private const string ToolObjectName = "Homestead_BlueprintSaveTool";
-    private const string DismantleToolObjectName = "Homestead_AreaDismantleTool";
-    private const string StoreToolObjectName = "Homestead_BlueprintStoreTool";
     private const string HammerTable = "Hammer";
     private const float BlueprintListRefreshCooldownSeconds = 15f;
     private const float HammerRefreshDelaySeconds = 0.08f;
@@ -831,17 +813,6 @@ internal static class ZoneBlueprintSaveToolMenu
     private static readonly List<string> CachedBlueprintNames = [];
     private static readonly Queue<string> PendingBlueprintPieceNames = new();
     private static readonly HashSet<string> PendingBlueprintPieceNameSet = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly List<PieceTable> TempPieceTables = [];
-    private static readonly object BlueprintDirectoryChangeLock = new();
-    private static readonly HashSet<string> PendingIconInvalidations = new(StringComparer.OrdinalIgnoreCase);
-    private static FileSystemWatcher? _blueprintDirectoryWatcher;
-    private static string _blueprintDirectoryWatcherPath = "";
-    private static float _nextBlueprintDirectoryWatcherRetryAt;
-    private static volatile bool _blueprintDirectoryChangePending;
-    private static Sprite? _areaSaveIcon;
-    private static Sprite? _areaDismantleIcon;
-    private static Sprite? _storeIcon;
-    private static Sprite? _fallbackIcon;
     private static Piece? _toolPiece;
     private static Piece? _dismantleToolPiece;
     private static Piece? _storeToolPiece;
@@ -892,8 +863,7 @@ internal static class ZoneBlueprintSaveToolMenu
 
     public static void Update()
     {
-        EnsureBlueprintDirectoryWatcher();
-        ProcessBlueprintDirectoryChange();
+        ZoneBlueprintDirectoryWatcher.Update(ProcessBlueprintDirectoryChange);
         ZoneBlueprintStoreHoverPrompt.Update();
         ProcessPendingBlueprintPieceRefresh();
         ProcessPendingHammerRefresh();
@@ -905,13 +875,7 @@ internal static class ZoneBlueprintSaveToolMenu
         CachedBlueprintNames.Clear();
         PendingBlueprintPieceNames.Clear();
         PendingBlueprintPieceNameSet.Clear();
-        lock (BlueprintDirectoryChangeLock)
-        {
-            PendingIconInvalidations.Clear();
-            _blueprintDirectoryChangePending = false;
-        }
-
-        DisposeBlueprintDirectoryWatcher();
+        ZoneBlueprintDirectoryWatcher.Reset();
         _blueprintListDirty = true;
         _blueprintRefreshRequested = true;
         _nextBlueprintListRefreshAt = 0f;
@@ -1028,7 +992,7 @@ internal static class ZoneBlueprintSaveToolMenu
         }
 
         PieceTable table = player.m_buildPieces;
-        if (table == null || !LooksLikeHammerTable(table))
+        if (table == null || !ZoneBlueprintHammerTable.LooksLike(table))
         {
             return false;
         }
@@ -1041,24 +1005,24 @@ internal static class ZoneBlueprintSaveToolMenu
         bool visibleSelectionChanged = false;
         if (_toolPiece != null && _toolPiece)
         {
-            tableChanged |= EnsurePieceInTable(table, _toolPiece);
+            tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, _toolPiece, HomesteadCategory, CategoryLabel);
         }
 
         if (_dismantleToolPiece != null && _dismantleToolPiece)
         {
-            tableChanged |= EnsurePieceInTable(table, _dismantleToolPiece);
+            tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, _dismantleToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         if (_storeToolPiece != null && _storeToolPiece)
         {
-            tableChanged |= EnsurePieceInTable(table, _storeToolPiece);
+            tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         foreach (Piece piece in BlueprintPieces.Values)
         {
             if (piece != null && piece)
             {
-                tableChanged |= EnsurePieceInTable(table, piece);
+                tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, piece, HomesteadCategory, CategoryLabel);
             }
         }
 
@@ -1079,7 +1043,7 @@ internal static class ZoneBlueprintSaveToolMenu
             savedPiece != null &&
             savedPiece)
         {
-            EnsureCategoryLabels(table);
+            ZoneBlueprintHammerTable.EnsureCategoryLabels(table, HomesteadCategory, CategoryLabel);
             int categoryListIndex = table.m_categories.IndexOf(savedPiece.m_category);
             if (categoryListIndex >= 0)
             {
@@ -1091,7 +1055,7 @@ internal static class ZoneBlueprintSaveToolMenu
         availableListRefreshNeeded |= visibleSelectionChanged;
         if (availableListRefreshNeeded)
         {
-            RefreshVisiblePieceSelection(player);
+            ZoneBlueprintHammerTable.RefreshVisibleSelection(player, HomesteadCategory, CategoryLabel);
         }
 
         timer.Stop();
@@ -1242,7 +1206,7 @@ internal static class ZoneBlueprintSaveToolMenu
             timer.Stop();
             if (removed > 0)
             {
-                SanitizeLocalPlayerPieceTables(removeBlueprintPieces: true);
+                ZoneBlueprintHammerTable.SanitizeLocalPlayerTables(removeBlueprintPieces: true);
                 RequestHammerTableRefresh();
             }
 
@@ -1256,81 +1220,8 @@ internal static class ZoneBlueprintSaveToolMenu
         }
     }
 
-    private static void EnsureBlueprintDirectoryWatcher()
+    private static void ProcessBlueprintDirectoryChange(IReadOnlyList<string> iconInvalidations)
     {
-        if (Time.realtimeSinceStartup < _nextBlueprintDirectoryWatcherRetryAt)
-        {
-            return;
-        }
-
-        string directory = HomesteadPlugin.BlueprintStorageFullPath;
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-        {
-            _nextBlueprintDirectoryWatcherRetryAt = Time.realtimeSinceStartup + 2f;
-            return;
-        }
-
-        if (_blueprintDirectoryWatcher != null &&
-            string.Equals(_blueprintDirectoryWatcherPath, directory, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        DisposeBlueprintDirectoryWatcher();
-        try
-        {
-            FileSystemWatcher watcher = new(directory)
-            {
-                Filter = "*.hsbp.*",
-                IncludeSubdirectories = false,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
-            };
-            watcher.Created += OnBlueprintDirectoryChanged;
-            watcher.Changed += OnBlueprintDirectoryChanged;
-            watcher.Deleted += OnBlueprintDirectoryChanged;
-            watcher.Renamed += OnBlueprintDirectoryRenamed;
-            watcher.EnableRaisingEvents = true;
-            _blueprintDirectoryWatcher = watcher;
-            _blueprintDirectoryWatcherPath = directory;
-        }
-        catch (Exception ex)
-        {
-            _nextBlueprintDirectoryWatcherRetryAt = Time.realtimeSinceStartup + 5f;
-            HomesteadPlugin.HomesteadLogger.LogDebug($"Could not watch Homestead blueprint directory yet: {ex.Message}");
-        }
-    }
-
-    private static void OnBlueprintDirectoryChanged(object sender, FileSystemEventArgs args)
-    {
-        if (IsBlueprintFile(args.FullPath))
-        {
-            QueueBlueprintDirectoryChange(args.FullPath, null);
-        }
-    }
-
-    private static void OnBlueprintDirectoryRenamed(object sender, RenamedEventArgs args)
-    {
-        if (IsBlueprintFile(args.FullPath) || IsBlueprintFile(args.OldFullPath))
-        {
-            QueueBlueprintDirectoryChange(args.FullPath, args.OldFullPath);
-        }
-    }
-
-    private static void ProcessBlueprintDirectoryChange()
-    {
-        List<string> iconInvalidations = [];
-        lock (BlueprintDirectoryChangeLock)
-        {
-            if (!_blueprintDirectoryChangePending)
-            {
-                return;
-            }
-
-            _blueprintDirectoryChangePending = false;
-            iconInvalidations.AddRange(PendingIconInvalidations);
-            PendingIconInvalidations.Clear();
-        }
-
         foreach (string name in iconInvalidations)
         {
             ZoneBlueprintVisuals.InvalidateIcon(name);
@@ -1345,63 +1236,6 @@ internal static class ZoneBlueprintSaveToolMenu
 
         MarkBlueprintListDirty();
         RequestHammerTableRefresh();
-    }
-
-    private static void QueueBlueprintDirectoryChange(string path, string? oldPath)
-    {
-        lock (BlueprintDirectoryChangeLock)
-        {
-            _blueprintDirectoryChangePending = true;
-            AddPendingIconInvalidation(path);
-            if (!string.IsNullOrWhiteSpace(oldPath))
-            {
-                AddPendingIconInvalidation(oldPath!);
-            }
-        }
-    }
-
-    private static void AddPendingIconInvalidation(string path)
-    {
-        if (!IsBlueprintPng(path))
-        {
-            return;
-        }
-
-        string file = Path.GetFileName(path);
-        const string suffix = ".hsbp.png";
-        if (file.Length > suffix.Length)
-        {
-            PendingIconInvalidations.Add(file.Substring(0, file.Length - suffix.Length));
-        }
-    }
-
-    private static bool IsBlueprintFile(string path)
-    {
-        string file = Path.GetFileName(path);
-        return file.EndsWith(".hsbp.yml", StringComparison.OrdinalIgnoreCase) ||
-               file.EndsWith(".hsbp.png", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsBlueprintPng(string path)
-    {
-        return Path.GetFileName(path).EndsWith(".hsbp.png", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static void DisposeBlueprintDirectoryWatcher()
-    {
-        if (_blueprintDirectoryWatcher == null)
-        {
-            return;
-        }
-
-        _blueprintDirectoryWatcher.EnableRaisingEvents = false;
-        _blueprintDirectoryWatcher.Created -= OnBlueprintDirectoryChanged;
-        _blueprintDirectoryWatcher.Changed -= OnBlueprintDirectoryChanged;
-        _blueprintDirectoryWatcher.Deleted -= OnBlueprintDirectoryChanged;
-        _blueprintDirectoryWatcher.Renamed -= OnBlueprintDirectoryRenamed;
-        _blueprintDirectoryWatcher.Dispose();
-        _blueprintDirectoryWatcher = null;
-        _blueprintDirectoryWatcherPath = "";
     }
 
     private static int RemoveMissingBlueprintPieces(HashSet<string> currentNames)
@@ -1421,7 +1255,7 @@ internal static class ZoneBlueprintSaveToolMenu
                 }
             }
 
-            RegisteredPrefabs.Remove("Homestead_Blueprint_" + SanitizePrefabName(name));
+            RegisteredPrefabs.Remove(ZoneBlueprintToolPieceFactory.BlueprintPrefabName(name));
             ZoneBlueprintVisuals.InvalidateIcon(name);
         }
 
@@ -1454,7 +1288,7 @@ internal static class ZoneBlueprintSaveToolMenu
 
     private static void ClearBlueprintPiecesForWorldSession()
     {
-        SanitizeLocalPlayerPieceTables(removeBlueprintPieces: true);
+        ZoneBlueprintHammerTable.SanitizeLocalPlayerTables(removeBlueprintPieces: true);
         foreach (Piece piece in BlueprintPieces.Values)
         {
             if (piece != null && piece && piece.gameObject)
@@ -1469,12 +1303,12 @@ internal static class ZoneBlueprintSaveToolMenu
 
     private static void EnsureBlueprintPiecesInHammerTable(PieceTable table)
     {
-        if (table == null || !LooksLikeHammerTable(table))
+        if (table == null || !ZoneBlueprintHammerTable.LooksLike(table))
         {
             return;
         }
 
-        SanitizePieceTable(table, removeBlueprintPieces: false);
+        ZoneBlueprintHammerTable.Sanitize(table, removeBlueprintPieces: false);
         RefreshBlueprintPieces(processNow: true);
         EnsureToolPiece();
         EnsureDismantleToolPiece();
@@ -1482,57 +1316,57 @@ internal static class ZoneBlueprintSaveToolMenu
 
         if (_toolPiece != null && _toolPiece)
         {
-            EnsurePieceInTable(table, _toolPiece);
+            ZoneBlueprintHammerTable.EnsurePiece(table, _toolPiece, HomesteadCategory, CategoryLabel);
         }
 
         if (_dismantleToolPiece != null && _dismantleToolPiece)
         {
-            EnsurePieceInTable(table, _dismantleToolPiece);
+            ZoneBlueprintHammerTable.EnsurePiece(table, _dismantleToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         if (_storeToolPiece != null && _storeToolPiece)
         {
-            EnsurePieceInTable(table, _storeToolPiece);
+            ZoneBlueprintHammerTable.EnsurePiece(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         foreach (Piece piece in BlueprintPieces.Values)
         {
             if (piece != null && piece)
             {
-                EnsurePieceInTable(table, piece);
+                ZoneBlueprintHammerTable.EnsurePiece(table, piece, HomesteadCategory, CategoryLabel);
             }
         }
     }
 
     private static void EnsureBlueprintPiecesVisibleInHammerTable(PieceTable table)
     {
-        if (table == null || !LooksLikeHammerTable(table))
+        if (table == null || !ZoneBlueprintHammerTable.LooksLike(table))
         {
             return;
         }
 
-        EnsureCategoryLabels(table);
-        EnsureAvailableCategorySlots(table);
+        ZoneBlueprintHammerTable.EnsureCategoryLabels(table, HomesteadCategory, CategoryLabel);
+        ZoneBlueprintHammerTable.EnsureAvailableCategorySlots(table);
         if (_toolPiece != null && _toolPiece)
         {
-            EnsurePieceVisibleInAvailableList(table, _toolPiece);
+            ZoneBlueprintHammerTable.EnsurePieceVisible(table, _toolPiece, HomesteadCategory, CategoryLabel);
         }
 
         if (_dismantleToolPiece != null && _dismantleToolPiece)
         {
-            EnsurePieceVisibleInAvailableList(table, _dismantleToolPiece);
+            ZoneBlueprintHammerTable.EnsurePieceVisible(table, _dismantleToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         if (_storeToolPiece != null && _storeToolPiece)
         {
-            EnsurePieceVisibleInAvailableList(table, _storeToolPiece);
+            ZoneBlueprintHammerTable.EnsurePieceVisible(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         foreach (Piece piece in BlueprintPieces.Values)
         {
             if (piece != null && piece)
             {
-                EnsurePieceVisibleInAvailableList(table, piece);
+                ZoneBlueprintHammerTable.EnsurePieceVisible(table, piece, HomesteadCategory, CategoryLabel);
             }
         }
     }
@@ -1540,7 +1374,7 @@ internal static class ZoneBlueprintSaveToolMenu
     public static bool TrySelectTool(Player player)
     {
         PieceTable table = player.m_buildPieces;
-        if (table == null || !LooksLikeHammerTable(table))
+        if (table == null || !ZoneBlueprintHammerTable.LooksLike(table))
         {
             return false;
         }
@@ -1572,346 +1406,43 @@ internal static class ZoneBlueprintSaveToolMenu
         return true;
     }
 
-    private static bool LooksLikeHammerTable(PieceTable table)
-    {
-        string name = table.name.ToLowerInvariant();
-        if (name.Contains("hammer"))
-        {
-            return true;
-        }
-
-        return table.m_pieces.Any(piece => piece && Utils.GetPrefabName(piece).Equals("piece_repair", StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static void SanitizeLocalPlayerPieceTables(bool removeBlueprintPieces)
-    {
-        Player? player = Player.m_localPlayer;
-        if (player == null)
-        {
-            return;
-        }
-
-        if (player.m_buildPieces != null && LooksLikeHammerTable(player.m_buildPieces))
-        {
-            SanitizePieceTable(player.m_buildPieces, removeBlueprintPieces);
-        }
-
-        TempPieceTables.Clear();
-        player.m_inventory?.GetAllPieceTables(TempPieceTables);
-        foreach (PieceTable table in TempPieceTables)
-        {
-            if (table != null && LooksLikeHammerTable(table))
-            {
-                SanitizePieceTable(table, removeBlueprintPieces);
-            }
-        }
-
-        TempPieceTables.Clear();
-    }
-
-    private static void SanitizePieceTable(PieceTable table, bool removeBlueprintPieces)
-    {
-        if (table == null)
-        {
-            return;
-        }
-
-        table.m_pieces.RemoveAll(pieceObject => ShouldRemovePieceObject(pieceObject, removeBlueprintPieces));
-        foreach (List<Piece> availablePieces in table.m_availablePieces)
-        {
-            availablePieces.RemoveAll(piece => ShouldRemoveAvailablePiece(piece, removeBlueprintPieces));
-        }
-    }
-
-    private static bool ShouldRemovePieceObject(GameObject? pieceObject, bool removeBlueprintPieces)
-    {
-        if (pieceObject == null || !pieceObject)
-        {
-            return true;
-        }
-
-        Piece? piece;
-        try
-        {
-            piece = pieceObject.GetComponent<Piece>();
-        }
-        catch
-        {
-            return true;
-        }
-
-        return ShouldRemoveAvailablePiece(piece, removeBlueprintPieces);
-    }
-
-    private static bool ShouldRemoveAvailablePiece(Piece? piece, bool removeBlueprintPieces)
-    {
-        if (piece == null || !piece || piece.gameObject == null || !piece.gameObject)
-        {
-            return true;
-        }
-
-        return removeBlueprintPieces &&
-               GetMarker(piece) is { Kind: ZoneBlueprintToolKind.Blueprint };
-    }
-
-    private static bool EnsurePieceInTable(PieceTable table, Piece piece)
-    {
-        if (piece == null || !piece || !piece.gameObject)
-        {
-            return false;
-        }
-
-        bool changed = false;
-        if (!table.m_categories.Contains(piece.m_category))
-        {
-            table.m_categories.Add(piece.m_category);
-            changed = true;
-        }
-
-        changed |= EnsureCategoryLabels(table);
-
-        if (!table.m_pieces.Contains(piece.gameObject))
-        {
-            table.m_pieces.Add(piece.gameObject);
-            changed = true;
-        }
-
-        return changed;
-    }
-
-    private static bool EnsureCategoryLabels(PieceTable table)
-    {
-        bool changed = false;
-        while (table.m_categoryLabels.Count < table.m_categories.Count)
-        {
-            int labelIndex = table.m_categoryLabels.Count;
-            Piece.PieceCategory category = table.m_categories[labelIndex];
-            table.m_categoryLabels.Add(category == HomesteadCategory ? CategoryLabel : category.ToString());
-            changed = true;
-        }
-
-        int homesteadIndex = table.m_categories.IndexOf(HomesteadCategory);
-        if (homesteadIndex >= 0 && homesteadIndex < table.m_categoryLabels.Count)
-        {
-            string label = CategoryLabel;
-            if (!string.Equals(table.m_categoryLabels[homesteadIndex], label, StringComparison.Ordinal))
-            {
-                table.m_categoryLabels[homesteadIndex] = label;
-                changed = true;
-            }
-
-            changed |= MoveHomesteadCategoryToEnd(table, homesteadIndex);
-        }
-
-        return changed;
-    }
-
-    private static bool MoveHomesteadCategoryToEnd(PieceTable table, int homesteadIndex)
-    {
-        int lastIndex = table.m_categories.Count - 1;
-        if (homesteadIndex < 0 || homesteadIndex >= lastIndex)
-        {
-            return false;
-        }
-
-        Piece.PieceCategory category = table.m_categories[homesteadIndex];
-        table.m_categories.RemoveAt(homesteadIndex);
-        table.m_categories.Add(category);
-
-        if (homesteadIndex < table.m_categoryLabels.Count)
-        {
-            string label = table.m_categoryLabels[homesteadIndex];
-            table.m_categoryLabels.RemoveAt(homesteadIndex);
-            table.m_categoryLabels.Add(label);
-        }
-
-        int finalIndex = table.m_categories.Count - 1;
-        if (finalIndex >= 0 && finalIndex < table.m_categoryLabels.Count)
-        {
-            table.m_categoryLabels[finalIndex] = CategoryLabel;
-        }
-
-        return true;
-    }
-
-    private static void EnsureAvailableCategorySlots(PieceTable table)
-    {
-        int requiredSlots = table.m_categories.Count;
-        foreach (Piece.PieceCategory category in table.m_categories)
-        {
-            requiredSlots = Mathf.Max(requiredSlots, (int)category + 1);
-        }
-
-        while (table.m_availablePieces.Count < requiredSlots)
-        {
-            table.m_availablePieces.Add([]);
-        }
-
-        if (table.m_selectedPiece.Length < requiredSlots)
-        {
-            Array.Resize(ref table.m_selectedPiece, requiredSlots);
-        }
-
-        if (table.m_lastSelectedPiece.Length < requiredSlots)
-        {
-            Array.Resize(ref table.m_lastSelectedPiece, requiredSlots);
-        }
-    }
-
-    private static void EnsurePieceVisibleInAvailableList(PieceTable table, Piece piece)
-    {
-        int categoryListIndex = table.m_categories.IndexOf(piece.m_category);
-        if (categoryListIndex < 0)
-        {
-            if (EnsurePieceInTable(table, piece))
-            {
-                EnsureAvailableCategorySlots(table);
-            }
-
-            categoryListIndex = table.m_categories.IndexOf(piece.m_category);
-            if (categoryListIndex < 0)
-            {
-                return;
-            }
-        }
-
-        EnsureAvailableCategorySlots(table);
-        int availableIndex = (int)piece.m_category;
-        if (availableIndex < 0 || availableIndex >= table.m_availablePieces.Count)
-        {
-            return;
-        }
-
-        List<Piece> availablePieces = table.m_availablePieces[availableIndex];
-        if (!availablePieces.Contains(piece))
-        {
-            availablePieces.Add(piece);
-        }
-    }
-
-    private static void RefreshVisiblePieceSelection(Player player)
-    {
-        Hud hud = Hud.instance;
-        if (hud == null || !hud.m_buildHud.activeSelf)
-        {
-            return;
-        }
-
-        PieceTable table = player.m_buildPieces;
-        if (table != null && LooksLikeHammerTable(table))
-        {
-            EnsureCategoryLabels(table);
-        }
-
-        hud.m_lastPieceCategory = Piece.PieceCategory.Max;
-        hud.UpdateBuild(player, forceUpdateAllBuildStatuses: true);
-    }
-
     private static void EnsureToolPiece()
     {
         if (_toolPiece != null && _toolPiece)
         {
-            _toolPiece.m_icon = GetAreaSaveIcon();
-            _toolPiece.m_description = FormatAreaSaveDescription();
+            ZoneBlueprintToolPieceFactory.RefreshAreaSave(_toolPiece);
             RegisterWithJotunn(_toolPiece.gameObject);
             return;
         }
 
-        GameObject toolObject = new(ToolObjectName);
-        Object.DontDestroyOnLoad(toolObject);
-        ZoneBlueprintSaveToolMarker marker = toolObject.AddComponent<ZoneBlueprintSaveToolMarker>();
-        marker.Kind = ZoneBlueprintToolKind.AreaSave;
-        Piece piece = toolObject.AddComponent<Piece>();
-        piece.m_name = HomesteadLocalization.Token("hs_area_save_name");
-        piece.m_description = FormatAreaSaveDescription();
-        piece.m_category = HomesteadCategory;
-        piece.m_resources = Array.Empty<Piece.Requirement>();
-        piece.m_icon = GetAreaSaveIcon();
-        piece.m_enabled = true;
-        piece.m_canRotate = false;
-        piece.m_clipEverything = true;
-        _toolPiece = piece;
-        RegisterWithJotunn(toolObject);
+        _toolPiece = ZoneBlueprintToolPieceFactory.CreateAreaSave(HomesteadCategory);
+        RegisterWithJotunn(_toolPiece.gameObject);
     }
 
     private static void EnsureDismantleToolPiece()
     {
         if (_dismantleToolPiece != null && _dismantleToolPiece)
         {
-            _dismantleToolPiece.m_icon = GetAreaDismantleIcon();
-            _dismantleToolPiece.m_description = FormatAreaDismantleDescription();
+            ZoneBlueprintToolPieceFactory.RefreshAreaDismantle(_dismantleToolPiece);
             RegisterWithJotunn(_dismantleToolPiece.gameObject);
             return;
         }
 
-        GameObject toolObject = new(DismantleToolObjectName);
-        Object.DontDestroyOnLoad(toolObject);
-        ZoneBlueprintSaveToolMarker marker = toolObject.AddComponent<ZoneBlueprintSaveToolMarker>();
-        marker.Kind = ZoneBlueprintToolKind.AreaDismantle;
-        Piece piece = toolObject.AddComponent<Piece>();
-        piece.m_name = HomesteadLocalization.Token("hs_area_dismantle_name");
-        piece.m_description = FormatAreaDismantleDescription();
-        piece.m_category = HomesteadCategory;
-        piece.m_resources = Array.Empty<Piece.Requirement>();
-        piece.m_icon = GetAreaDismantleIcon();
-        piece.m_enabled = true;
-        piece.m_canRotate = false;
-        piece.m_clipEverything = true;
-        _dismantleToolPiece = piece;
-        RegisterWithJotunn(toolObject);
+        _dismantleToolPiece = ZoneBlueprintToolPieceFactory.CreateAreaDismantle(HomesteadCategory);
+        RegisterWithJotunn(_dismantleToolPiece.gameObject);
     }
 
     private static void EnsureStoreToolPiece()
     {
         if (_storeToolPiece != null && _storeToolPiece)
         {
-            _storeToolPiece.m_icon = GetStoreIcon();
+            ZoneBlueprintToolPieceFactory.RefreshStore(_storeToolPiece);
             RegisterWithJotunn(_storeToolPiece.gameObject);
             return;
         }
 
-        GameObject toolObject = new(StoreToolObjectName);
-        Object.DontDestroyOnLoad(toolObject);
-        ZoneBlueprintSaveToolMarker marker = toolObject.AddComponent<ZoneBlueprintSaveToolMarker>();
-        marker.Kind = ZoneBlueprintToolKind.Store;
-        Piece piece = toolObject.AddComponent<Piece>();
-        piece.m_name = HomesteadLocalization.Token("hs_blueprint_store_name");
-        piece.m_description = HomesteadLocalization.Token("hs_blueprint_store_desc");
-        piece.m_category = HomesteadCategory;
-        piece.m_resources = Array.Empty<Piece.Requirement>();
-        piece.m_icon = GetStoreIcon();
-        piece.m_enabled = true;
-        piece.m_canRotate = false;
-        piece.m_clipEverything = true;
-        _storeToolPiece = piece;
-        RegisterWithJotunn(toolObject);
-    }
-
-    private static string FormatAreaSaveDescription()
-    {
-        return HomesteadLocalization.Format("hs_area_save_desc", "Wheel", FormatAreaScaleInput(), FormatAreaDepthInput(), FormatAreaWidthInput(), "Mouse0") +
-               "\n" +
-               HomesteadLocalization.Text("hs_area_save_color_hint");
-    }
-
-    private static string FormatAreaDismantleDescription()
-    {
-        return HomesteadLocalization.Format("hs_area_dismantle_desc", "Wheel", FormatAreaScaleInput(), FormatAreaDepthInput(), FormatAreaWidthInput(), "Mouse0");
-    }
-
-    private static string FormatAreaScaleInput()
-    {
-        return ZoneAreaToolShared.FormatScaleInput();
-    }
-
-    private static string FormatAreaDepthInput()
-    {
-        return ZoneAreaToolShared.FormatDepthInput();
-    }
-
-    private static string FormatAreaWidthInput()
-    {
-        return ZoneAreaToolShared.FormatWidthInput();
+        _storeToolPiece = ZoneBlueprintToolPieceFactory.CreateStore(HomesteadCategory);
+        RegisterWithJotunn(_storeToolPiece.gameObject);
     }
 
     private static Piece? EnsureBlueprintPiece(string name, ZoneBlueprintFile? loadedBlueprint = null, bool queueMissingIcon = true)
@@ -1937,39 +1468,15 @@ internal static class ZoneBlueprintSaveToolMenu
             return null;
         }
 
-        GameObject toolObject = new("Homestead_Blueprint_" + SanitizePrefabName(name));
-        Object.DontDestroyOnLoad(toolObject);
-        ZoneBlueprintSaveToolMarker marker = toolObject.AddComponent<ZoneBlueprintSaveToolMarker>();
-        marker.Kind = ZoneBlueprintToolKind.Blueprint;
-        marker.BlueprintName = name;
-
-        Piece piece = toolObject.AddComponent<Piece>();
-        UpdateBlueprintPiece(piece, name, blueprint, queueMissingIcon);
-        piece.m_enabled = true;
-        piece.m_canRotate = false;
-        piece.m_clipEverything = true;
-
+        Piece piece = ZoneBlueprintToolPieceFactory.CreateBlueprint(name, blueprint, HomesteadCategory, GetStoreListInputLabel(), queueMissingIcon);
         BlueprintPieces[name] = piece;
-        RegisterWithJotunn(toolObject);
+        RegisterWithJotunn(piece.gameObject);
         return piece;
     }
 
     private static void UpdateBlueprintPiece(Piece piece, string name, ZoneBlueprintFile blueprint, bool queueMissingIcon = true)
     {
-        ZoneBlueprintSaveToolMarker marker = piece.GetComponent<ZoneBlueprintSaveToolMarker>() ?? piece.gameObject.AddComponent<ZoneBlueprintSaveToolMarker>();
-        marker.Kind = ZoneBlueprintToolKind.Blueprint;
-        marker.BlueprintName = name;
-
-        piece.m_name = name;
-        piece.m_description = HomesteadLocalization.Format("hs_blueprint_piece_desc", blueprint.Entries.Count, GetStoreListInputLabel());
-        piece.m_category = HomesteadCategory;
-        piece.m_resources = Array.Empty<Piece.Requirement>();
-        bool hasCachedIcon = ZoneBlueprintVisuals.TryGetIcon(name, out Sprite? icon);
-        piece.m_icon = icon ?? GetFallbackIcon();
-        if (!hasCachedIcon && queueMissingIcon)
-        {
-            ZoneBlueprintSaveTool.QueueIconRender(name);
-        }
+        ZoneBlueprintToolPieceFactory.UpdateBlueprint(piece, name, blueprint, HomesteadCategory, GetStoreListInputLabel(), queueMissingIcon);
     }
 
     private static void RegisterWithJotunn(GameObject prefab)
@@ -2010,314 +1517,13 @@ internal static class ZoneBlueprintSaveToolMenu
         RegisteredPrefabs.Add(prefab.name);
     }
 
-    private static Sprite GetFallbackIcon()
-    {
-        if (_fallbackIcon != null)
-        {
-            return _fallbackIcon;
-        }
-
-        Texture2D texture = new(2, 2, TextureFormat.RGBA32, false);
-        texture.SetPixels([new Color(0.15f, 0.75f, 1f, 1f), new Color(0.05f, 0.2f, 0.35f, 1f), new Color(0.05f, 0.2f, 0.35f, 1f), new Color(0.15f, 0.75f, 1f, 1f)]);
-        texture.Apply();
-        _fallbackIcon = Sprite.Create(texture, new Rect(0f, 0f, 2f, 2f), new Vector2(0.5f, 0.5f));
-        return _fallbackIcon;
-    }
-
-    private static Sprite GetStoreIcon()
-    {
-        if (_storeIcon != null)
-        {
-            return _storeIcon;
-        }
-
-        const int size = 64;
-        Texture2D texture = new(size, size, TextureFormat.RGBA32, false)
-        {
-            filterMode = FilterMode.Bilinear,
-            wrapMode = TextureWrapMode.Clamp
-        };
-
-        Color clear = new(0f, 0f, 0f, 0f);
-        Color panel = new(0.08f, 0.11f, 0.10f, 0.95f);
-        Color ring = new(0.22f, 0.82f, 1f, 1f);
-        Color ringSoft = new(0.22f, 0.82f, 1f, 0.34f);
-        Color coinColor = new(1f, 0.72f, 0.18f, 1f);
-        Color chest = new(0.62f, 0.35f, 0.14f, 1f);
-        Color chestDark = new(0.21f, 0.12f, 0.06f, 1f);
-        Color blueprint = new(0.22f, 0.78f, 1f, 1f);
-        Color blueprintDark = new(0.04f, 0.20f, 0.26f, 1f);
-        Vector2 center = new((size - 1) * 0.5f, (size - 1) * 0.5f);
-
-        for (int y = 0; y < size; y++)
-        {
-            for (int x = 0; x < size; x++)
-            {
-                Vector2 p = new(x, y);
-                float distance = Vector2.Distance(p, center);
-                Color color = clear;
-                if (distance <= 28f)
-                {
-                    color = panel;
-                }
-
-                if (distance is >= 21f and <= 25f)
-                {
-                    color = ring;
-                }
-                else if (distance is >= 17.5f and < 21f)
-                {
-                    color = Color.Lerp(color, ringSoft, 0.65f);
-                }
-
-                bool chestBody = x >= 17 && x <= 47 && y >= 18 && y <= 38;
-                bool chestLid = x >= 20 && x <= 44 && y >= 37 && y <= 47;
-                bool chestEdge = (chestBody || chestLid) && (x <= 19 || x >= 45 || y <= 20 || y >= 45 || y == 37);
-                if (chestBody || chestLid)
-                {
-                    color = chestEdge ? chestDark : chest;
-                }
-
-                bool paper = x >= 25 && x <= 43 && y >= 25 && y <= 48;
-                bool paperEdge = paper && (x <= 27 || x >= 41 || y <= 27 || y >= 46);
-                if (paper)
-                {
-                    color = paperEdge ? blueprintDark : blueprint;
-                }
-
-                bool coin = (x - 46) * (x - 46) + (y - 18) * (y - 18) <= 36;
-                if (coin)
-                {
-                    color = coinColor;
-                }
-
-                texture.SetPixel(x, y, color);
-            }
-        }
-
-        texture.Apply();
-        _storeIcon = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), size);
-        return _storeIcon;
-    }
-
-    private static Sprite GetAreaSaveIcon()
-    {
-        if (_areaSaveIcon != null)
-        {
-            return _areaSaveIcon;
-        }
-
-        const int size = 64;
-        Texture2D texture = new(size, size, TextureFormat.RGBA32, false)
-        {
-            filterMode = FilterMode.Bilinear,
-            wrapMode = TextureWrapMode.Clamp
-        };
-
-        Color clear = new(0f, 0f, 0f, 0f);
-        Color panel = new(0.05f, 0.12f, 0.14f, 0.95f);
-        Color ring = new(1f, 0.74f, 0.22f, 1f);
-        Color ringSoft = new(1f, 0.74f, 0.22f, 0.34f);
-        Color piece = new(0.22f, 0.82f, 1f, 1f);
-        Color pieceDark = new(0.04f, 0.22f, 0.28f, 1f);
-        Vector2 center = new((size - 1) * 0.5f, (size - 1) * 0.5f);
-
-        for (int y = 0; y < size; y++)
-        {
-            for (int x = 0; x < size; x++)
-            {
-                Vector2 p = new(x, y);
-                float distance = Vector2.Distance(p, center);
-                Color color = clear;
-                if (distance <= 28f)
-                {
-                    color = panel;
-                }
-
-                if (distance is >= 21f and <= 25f)
-                {
-                    color = ring;
-                }
-                else if (distance is >= 17.5f and < 21f)
-                {
-                    color = Color.Lerp(color, ringSoft, 0.65f);
-                }
-
-                bool inPiece = x >= 24 && x <= 40 && y >= 23 && y <= 39;
-                bool pieceBorder = inPiece && (x <= 26 || x >= 38 || y <= 25 || y >= 37);
-                if (inPiece)
-                {
-                    color = pieceBorder ? piece : pieceDark;
-                }
-
-                bool crosshair = (Mathf.Abs(x - 32) <= 1 && y >= 11 && y <= 18) ||
-                                 (Mathf.Abs(x - 32) <= 1 && y >= 46 && y <= 53) ||
-                                 (Mathf.Abs(y - 32) <= 1 && x >= 11 && x <= 18) ||
-                                 (Mathf.Abs(y - 32) <= 1 && x >= 46 && x <= 53);
-                if (crosshair)
-                {
-                    color = ring;
-                }
-
-                texture.SetPixel(x, y, color);
-            }
-        }
-
-        texture.Apply();
-        _areaSaveIcon = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), size);
-        return _areaSaveIcon;
-    }
-
-    private static Sprite GetAreaDismantleIcon()
-    {
-        if (_areaDismantleIcon != null)
-        {
-            return _areaDismantleIcon;
-        }
-
-        const int size = 64;
-        Texture2D texture = new(size, size, TextureFormat.RGBA32, false)
-        {
-            filterMode = FilterMode.Bilinear,
-            wrapMode = TextureWrapMode.Clamp
-        };
-
-        Color clear = new(0f, 0f, 0f, 0f);
-        Color panel = new(0.13f, 0.07f, 0.05f, 0.95f);
-        Color ring = new(1f, 0.31f, 0.12f, 1f);
-        Color ringSoft = new(1f, 0.31f, 0.12f, 0.34f);
-        Color stack = new(0.86f, 0.68f, 0.42f, 1f);
-        Color stackDark = new(0.28f, 0.17f, 0.09f, 1f);
-        Color slash = new(1f, 0.92f, 0.7f, 1f);
-        Vector2 center = new((size - 1) * 0.5f, (size - 1) * 0.5f);
-
-        for (int y = 0; y < size; y++)
-        {
-            for (int x = 0; x < size; x++)
-            {
-                Vector2 p = new(x, y);
-                float distance = Vector2.Distance(p, center);
-                Color color = clear;
-                if (distance <= 28f)
-                {
-                    color = panel;
-                }
-
-                if (distance is >= 21f and <= 25f)
-                {
-                    color = ring;
-                }
-                else if (distance is >= 17.5f and < 21f)
-                {
-                    color = Color.Lerp(color, ringSoft, 0.65f);
-                }
-
-                bool bottomStack = x >= 20 && x <= 44 && y >= 21 && y <= 29;
-                bool middleStack = x >= 23 && x <= 47 && y >= 30 && y <= 38;
-                bool topStack = x >= 17 && x <= 41 && y >= 39 && y <= 47;
-                bool inStack = bottomStack || middleStack || topStack;
-                bool stackEdge = inStack && (
-                    x is 17 or 20 or 23 or 41 or 44 or 47 ||
-                    y is 21 or 29 or 30 or 38 or 39 or 47);
-                if (inStack)
-                {
-                    color = stackEdge ? stackDark : stack;
-                }
-
-                bool slashPixel = Mathf.Abs(y - (55 - x)) <= 1 && x >= 17 && x <= 47 && y >= 17 && y <= 47;
-                if (slashPixel)
-                {
-                    color = slash;
-                }
-
-                texture.SetPixel(x, y, color);
-            }
-        }
-
-        texture.Apply();
-        _areaDismantleIcon = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), size);
-        return _areaDismantleIcon;
-    }
-
-    private static string SanitizePrefabName(string name)
-    {
-        char[] chars = name.Select(ch => char.IsLetterOrDigit(ch) || ch == '_' || ch == '-' ? ch : '_').ToArray();
-        string sanitized = new(chars);
-        return string.IsNullOrWhiteSpace(sanitized) ? "unnamed" : sanitized;
-    }
-
-    private static class ZoneBlueprintStoreHoverPrompt
-    {
-        private static GameObject? _root;
-        private static Text? _text;
-        private static float _hideAt;
-
-        public static void Show(string message)
-        {
-            Ensure();
-            if (_root == null || _text == null)
-            {
-                return;
-            }
-
-            _text.text = Localization.instance.Localize(message);
-            _root.SetActive(true);
-            _hideAt = Time.unscaledTime + 0.12f;
-            RectTransform rect = (RectTransform)_root.transform;
-            Vector3 mouse = Input.mousePosition;
-            const float width = 420f;
-            const float height = 42f;
-            Vector3 position = mouse + new Vector3(18f, 28f, 0f);
-            position.x = Mathf.Clamp(position.x, 8f, Mathf.Max(8f, Screen.width - width - 8f));
-            position.y = Mathf.Clamp(position.y, height * 0.5f + 8f, Screen.height - height * 0.5f - 8f);
-            rect.position = position;
-        }
-
-        public static void Update()
-        {
-            if (_root != null && _root && _root.activeSelf && Time.unscaledTime > _hideAt)
-            {
-                _root.SetActive(false);
-            }
-        }
-
-        private static void Ensure()
-        {
-            if (_root != null && _root && _text != null && _text)
-            {
-                return;
-            }
-
-            if (GUIManager.CustomGUIFront == null)
-            {
-                return;
-            }
-
-            GUIManager gui = GUIManager.Instance;
-            _root = new GameObject("HomesteadBlueprintStoreHoverPrompt", typeof(RectTransform));
-            _root.transform.SetParent(GUIManager.CustomGUIFront.transform, false);
-            RectTransform rect = (RectTransform)_root.transform;
-            rect.anchorMin = new Vector2(0f, 0f);
-            rect.anchorMax = new Vector2(0f, 0f);
-            rect.pivot = new Vector2(0f, 0.5f);
-            rect.sizeDelta = new Vector2(420f, 42f);
-
-            Image image = _root.AddComponent<Image>();
-            image.color = new Color(0.02f, 0.02f, 0.02f, 0.82f);
-
-            _text = gui.CreateText("", _root.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, gui.AveriaSerifBold, 17, gui.ValheimOrange, true, Color.black, 390f, 30f, false).GetComponent<Text>();
-            _text.alignment = TextAnchor.MiddleCenter;
-            _root.SetActive(false);
-        }
-    }
-
     [HarmonyPatch(typeof(PieceTable), nameof(PieceTable.UpdateAvailable))]
     private static class PieceTableUpdateAvailablePatch
     {
         [HarmonyPriority(Priority.High)]
         private static void Prefix(PieceTable __instance)
         {
-            if (__instance != null && LooksLikeHammerTable(__instance))
+            if (__instance != null && ZoneBlueprintHammerTable.LooksLike(__instance))
             {
                 EnsureBlueprintPiecesInHammerTable(__instance);
                 if (_forceHammerRefreshOnNextTableUpdate)
@@ -2331,7 +1537,7 @@ internal static class ZoneBlueprintSaveToolMenu
         [HarmonyPriority(Priority.Last)]
         private static void Postfix(PieceTable __instance)
         {
-            if (__instance != null && LooksLikeHammerTable(__instance))
+            if (__instance != null && ZoneBlueprintHammerTable.LooksLike(__instance))
             {
                 EnsureBlueprintPiecesVisibleInHammerTable(__instance);
             }
@@ -2346,9 +1552,9 @@ internal static class ZoneBlueprintSaveToolMenu
         {
             Player? player = Player.m_localPlayer;
             PieceTable? table = player != null ? player.m_buildPieces : null;
-            if (table != null && LooksLikeHammerTable(table))
+            if (table != null && ZoneBlueprintHammerTable.LooksLike(table))
             {
-                EnsureCategoryLabels(table);
+                ZoneBlueprintHammerTable.EnsureCategoryLabels(table, HomesteadCategory, CategoryLabel);
             }
         }
     }
@@ -2361,7 +1567,7 @@ internal static class ZoneBlueprintSaveToolMenu
         {
             if (__instance == Player.m_localPlayer)
             {
-                SanitizeLocalPlayerPieceTables(removeBlueprintPieces: true);
+                ZoneBlueprintHammerTable.SanitizeLocalPlayerTables(removeBlueprintPieces: true);
             }
         }
     }

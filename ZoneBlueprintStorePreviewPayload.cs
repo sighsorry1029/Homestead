@@ -79,6 +79,7 @@ internal static class ZoneBlueprintStorePreviewPayload
         {
             Version = source.Version,
             Name = source.Name,
+            Creator = source.Creator,
             World = source.World,
             SavedAt = source.SavedAt,
             Radius = source.Radius,
@@ -89,12 +90,11 @@ internal static class ZoneBlueprintStorePreviewPayload
         {
             preview.Entries.Add(new ZoneBlueprintEntry
             {
-                SaveId = entry.SaveId,
                 Prefab = entry.Prefab,
                 LocalPos = entry.LocalPos.ToArray(),
                 LocalRot = entry.LocalRot.ToArray(),
                 Scale = entry.Scale.ToArray(),
-                Data = ""
+                Text = ""
             });
         }
 

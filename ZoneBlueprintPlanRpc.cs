@@ -48,8 +48,8 @@ internal static class ZoneBlueprintPlanRpc
             return;
         }
 
-        string blueprintYaml = HomesteadYaml.Serialize(blueprint);
-        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintYaml, enforceUploadLimit: true, out byte[] blueprintPayload, out string reason))
+        string blueprintText = ZoneBlueprintFileFormat.Serialize(blueprint);
+        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintText, enforceUploadLimit: true, out byte[] blueprintPayload, out string reason))
         {
             Message(reason, MessageHud.MessageType.Center);
             return;
@@ -219,7 +219,7 @@ internal static class ZoneBlueprintPlanRpc
                 return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(HomesteadLocalization.Format("hs_blueprint_no_valid_entries", savedName)));
             }
 
-            if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(HomesteadYaml.Serialize(serverBlueprint), enforceUploadLimit: false, out byte[] responsePayload, out string payloadReason))
+            if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(ZoneBlueprintFileFormat.Serialize(serverBlueprint), enforceUploadLimit: false, out byte[] responsePayload, out string payloadReason))
             {
                 return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(payloadReason));
             }
@@ -252,8 +252,8 @@ internal static class ZoneBlueprintPlanRpc
     {
         try
         {
-            string yaml = ZoneBlueprintCommands.SerializePreviewBlueprintForPlan(request.Name);
-            if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(yaml, enforceUploadLimit: false, out byte[] previewPayload, out string payloadReason))
+            string blueprintText = ZoneBlueprintCommands.SerializePreviewBlueprintForPlan(request.Name);
+            if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintText, enforceUploadLimit: false, out byte[] previewPayload, out string payloadReason))
             {
                 throw new InvalidOperationException(payloadReason);
             }
@@ -322,11 +322,11 @@ internal static class ZoneBlueprintPlanRpc
         {
             try
             {
-                if (ZoneBlueprintNetworkPayload.TryDecodeBlueprintPayloadToYaml(place.BlueprintPayload, place.BlueprintEncoding, out string yaml, out string reason))
+                if (ZoneBlueprintNetworkPayload.TryDecodeBlueprintPayloadToText(place.BlueprintPayload, place.BlueprintEncoding, out string blueprintText, out string reason))
                 {
-                    ZoneBlueprintFile blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(yaml);
+                    ZoneBlueprintFile blueprint = ZoneBlueprintFileFormat.Deserialize(blueprintText, place.BlueprintName);
                     CachePreview(place.BlueprintName, blueprint);
-                    ZoneBlueprintCommands.EnsureLocalPlanBlueprintCopy(place.BlueprintName, yaml);
+                    ZoneBlueprintCommands.EnsureLocalPlanBlueprintCopy(place.BlueprintName, blueprintText);
                 }
                 else
                 {

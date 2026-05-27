@@ -18,7 +18,6 @@ internal static partial class ZoneDvergrCirclet
         }
 
         bool publish = Active &&
-                       DvergrCircletConfig.RemoteVisualSync &&
                        item != null &&
                        IsDvergrCircletItem(item);
 
@@ -57,30 +56,13 @@ internal static partial class ZoneDvergrCirclet
 
     private static bool ShouldSyncRemoteVisuals()
     {
-        return Active && DvergrCircletConfig.RemoteVisualSync;
+        return Active;
     }
 
     private static bool IsLocalVisEquipment(VisEquipment visEquipment)
     {
         Player localPlayer = Player.m_localPlayer;
         return localPlayer && localPlayer.m_visEquipment == visEquipment;
-    }
-
-    private static bool IsWithinRemoteLightRange(VisEquipment visEquipment)
-    {
-        float maxDistance = DvergrCircletConfig.RemoteLightMaxDistance;
-        if (maxDistance <= 0f)
-        {
-            return true;
-        }
-
-        Player localPlayer = Player.m_localPlayer;
-        if (!localPlayer)
-        {
-            return true;
-        }
-
-        return (visEquipment.transform.position - localPlayer.transform.position).sqrMagnitude <= maxDistance * maxDistance;
     }
 
     private static void EnsureRemoteVisualComponent(GameObject root, ZNetView nview, bool culled)

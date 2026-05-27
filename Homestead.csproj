@@ -173,6 +173,8 @@
         <Compile Include="ZoneBuildCameraWardCompat.cs"/>
         <Compile Include="ZoneContentsWithinCompat.cs"/>
         <Compile Include="ZoneBlueprintCommands.cs"/>
+        <Compile Include="ZoneBlueprintFileFormat.cs"/>
+        <Compile Include="ZoneBlueprintHammerTable.cs"/>
         <Compile Include="ZoneDvergrCirclet.cs"/>
         <Compile Include="ZoneDvergrCircletEquipment.cs"/>
         <Compile Include="ZoneDvergrCircletLocalVisual.cs"/>
@@ -196,6 +198,7 @@
         <Compile Include="ZoneBlueprintChestLifecycle.cs"/>
         <Compile Include="ZoneBlueprintChestMapPins.cs"/>
         <Compile Include="ZoneBlueprintChestZdoRegistry.cs"/>
+        <Compile Include="ZoneBlueprintDirectoryWatcher.cs"/>
         <Compile Include="ZoneBlueprintStoreActions.cs"/>
         <Compile Include="ZoneBlueprintStoreBlueprintHelpers.cs"/>
         <Compile Include="ZoneBlueprintStore.cs"/>
@@ -206,6 +209,7 @@
         <Compile Include="ZoneBlueprintStoreDraftRepository.cs"/>
         <Compile Include="ZoneBlueprintStoreDtoHelpers.cs"/>
         <Compile Include="ZoneBlueprintStoreEconomy.cs"/>
+        <Compile Include="ZoneBlueprintStoreHoverPrompt.cs"/>
         <Compile Include="ZoneBlueprintStoreIdentity.cs"/>
         <Compile Include="ZoneBlueprintStoreIdentityHelpers.cs"/>
         <Compile Include="ZoneBlueprintStoreListActions.cs"/>
@@ -221,6 +225,7 @@
         <Compile Include="ZoneBlueprintStorePreviewActions.cs"/>
         <Compile Include="ZoneBlueprintStorePreviewTool.cs"/>
         <Compile Include="ZoneBlueprintStorePriceHelpers.cs"/>
+        <Compile Include="ZoneBlueprintStorePriceRowsUi.cs"/>
         <Compile Include="ZoneBlueprintStorePriceEditorUi.cs"/>
         <Compile Include="ZoneBlueprintStorePriceInputUi.cs"/>
         <Compile Include="ZoneBlueprintStorePurchaseActions.cs"/>
@@ -231,6 +236,9 @@
         <Compile Include="ZoneBlueprintStoreUi.cs"/>
         <Compile Include="ZoneBlueprintStoreVisualHelpers.cs"/>
         <Compile Include="ZoneBlueprintStoreWithdrawActions.cs"/>
+        <Compile Include="ZoneBlueprintToolIcons.cs"/>
+        <Compile Include="ZoneBlueprintToolMarker.cs"/>
+        <Compile Include="ZoneBlueprintToolPieceFactory.cs"/>
         <Compile Include="ZoneBlueprintVisuals.cs"/>
         <Compile Include="ZoneGridSnap.cs"/>
         <Compile Include="ZonePlacementOffset.cs"/>
@@ -251,7 +259,6 @@
         <Content Include="Libs\ServerSync.dll">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </Content>
-        <Content Include="LICENSE.txt"/>
         <Content Include="README.md"/>
         <Content Include="Thunderstore\CHANGELOG.md"/>
         <Content Include="Thunderstore\icon.png"/>

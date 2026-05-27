@@ -54,10 +54,10 @@ internal static class ZoneBlueprintStoreDraftRepository
     {
         Directory.CreateDirectory(StoreDirectory);
         string listingId = CreateListingId(name);
-        string blueprintFile = listingId + ".hsbp.yml";
+        string blueprintFile = listingId + ZoneBlueprintFileFormat.BlueprintExtension;
         blueprint.Name = name;
         blueprint.SavedAt = HomesteadTimestamp.Now();
-        File.WriteAllText(Path.Combine(StoreDirectory, blueprintFile), HomesteadYaml.Serialize(blueprint));
+        ZoneBlueprintFileFormat.WriteFile(Path.Combine(StoreDirectory, blueprintFile), blueprint);
         return new ZoneBlueprintStoreDraftLease(listingId, blueprintFile);
     }
 
@@ -323,6 +323,12 @@ internal static class ZoneBlueprintStoreDraftRepository
             return false;
         }
 
+        if (!fileName.EndsWith(ZoneBlueprintFileFormat.BlueprintExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            reason = "Blueprint store file is not a .blueprint file.";
+            return false;
+        }
+
         string path = Path.Combine(StoreDirectory, fileName);
         if (!File.Exists(path))
         {
@@ -332,7 +338,7 @@ internal static class ZoneBlueprintStoreDraftRepository
 
         try
         {
-            blueprint = HomesteadYaml.Deserialize<ZoneBlueprintFile>(File.ReadAllText(path));
+            blueprint = ZoneBlueprintFileFormat.ReadFile(path);
             return true;
         }
         catch (Exception ex)
@@ -399,7 +405,7 @@ internal static class ZoneBlueprintStoreDraftRepository
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             DateTime cutoff = DateTime.UtcNow - grace;
 
-            foreach (string path in Directory.GetFiles(StoreDirectory, "*.hsbp.yml", SearchOption.TopDirectoryOnly))
+            foreach (string path in Directory.GetFiles(StoreDirectory, "*" + ZoneBlueprintFileFormat.BlueprintExtension, SearchOption.TopDirectoryOnly))
             {
                 string fileName = Path.GetFileName(path);
                 if (!catalogFiles.Contains(fileName) && File.GetLastWriteTimeUtc(path) <= cutoff)
@@ -433,7 +439,7 @@ internal static class ZoneBlueprintStoreDraftRepository
             DateTime cutoff = DateTime.UtcNow - grace;
             int deleted = 0;
 
-            foreach (string path in Directory.GetFiles(StoreDirectory, "*.hsbp.yml", SearchOption.TopDirectoryOnly))
+            foreach (string path in Directory.GetFiles(StoreDirectory, "*" + ZoneBlueprintFileFormat.BlueprintExtension, SearchOption.TopDirectoryOnly))
             {
                 string fileName = Path.GetFileName(path);
                 if (catalogFiles.Contains(fileName) || liveDraftFiles.Contains(fileName))

@@ -7,10 +7,79 @@ namespace Homestead;
 
 internal static class ZoneBlueprintStoreListingAction
 {
+    private readonly struct UploadedListingDraft
+    {
+        public UploadedListingDraft(string name, string iconPngBase64, ZoneBlueprintFile blueprint, ZoneBlueprintStoreDraftLease lease)
+        {
+            Name = name;
+            IconPngBase64 = iconPngBase64;
+            Blueprint = blueprint;
+            ListingId = lease.ListingId;
+            BlueprintFile = lease.BlueprintFile;
+        }
+
+        public string Name { get; }
+        public string IconPngBase64 { get; }
+        public ZoneBlueprintFile Blueprint { get; }
+        public string ListingId { get; }
+        public string BlueprintFile { get; }
+        public int EntryCount => Blueprint.Entries.Count;
+    }
+
     private static string GetListingExpiryAt(DateTime utcNow)
     {
         int listingDays = BlueprintConfig.StoreSettings.ListingDays;
         return listingDays <= 0 ? "" : HomesteadTimestamp.Format(utcNow.AddDays(listingDays));
+    }
+
+    private static bool TryNormalizeListingName(string requestedName, out string name, out string reason)
+    {
+        name = ZoneBlueprintStoreDraftRepository.TrimName(requestedName);
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            reason = "";
+            return true;
+        }
+
+        reason = HomesteadLocalization.Text("hs_store_blueprint_name_required");
+        return false;
+    }
+
+    private static bool TryCreateUploadedListingDraft(
+        string name,
+        string iconPngBase64,
+        IZoneBlueprintPayloadCarrier upload,
+        long sellerPlayerId,
+        string sellerPlatformId,
+        out UploadedListingDraft draft,
+        out string reason)
+    {
+        draft = default;
+        ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
+        if (!ZoneBlueprintStoreAccess.CheckStoreListingLimit(catalog, sellerPlayerId, sellerPlatformId, out reason))
+        {
+            return false;
+        }
+
+        if (!ZoneBlueprintNetworkPayload.TryValidateIconBase64(iconPngBase64, out reason))
+        {
+            return false;
+        }
+
+        if (!ZoneBlueprintNetworkPayload.TryDeserializeBlueprintUpload(upload.BlueprintPayload, upload.BlueprintEncoding, out ZoneBlueprintFile blueprint, out reason))
+        {
+            return false;
+        }
+
+        reason = ZoneBlueprintStoreBlueprints.ValidateStoreBlueprint(blueprint);
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            return false;
+        }
+
+        draft = new UploadedListingDraft(name, iconPngBase64, blueprint, ZoneBlueprintStoreDraftRepository.CreateDraft(name, blueprint));
+        reason = "";
+        return true;
     }
 
     public static ZoneBlueprintStoreRpcEnvelope ExecutePriceChest(ZoneBlueprintStorePriceChestRequest request, Player? player, long sender)
@@ -31,44 +100,23 @@ internal static class ZoneBlueprintStoreListingAction
         }
 
         string sellerPlatformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, sellerPlayerId);
-        ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
-        if (!ZoneBlueprintStoreAccess.CheckStoreListingLimit(catalog, sellerPlayerId, sellerPlatformId, out string limitReason))
+        if (!TryNormalizeListingName(request.Name, out string name, out reason))
         {
-            return FailPrice(limitReason);
+            return FailPrice(reason);
         }
 
-        string name = ZoneBlueprintStoreDraftRepository.TrimName(request.Name);
-        if (string.IsNullOrWhiteSpace(name))
+        if (!TryCreateUploadedListingDraft(name, request.IconPngBase64, request, sellerPlayerId, sellerPlatformId, out UploadedListingDraft draft, out reason))
         {
-            return FailPrice(HomesteadLocalization.Text("hs_store_blueprint_name_required"));
+            return FailPrice(reason);
         }
 
-        if (!ZoneBlueprintNetworkPayload.TryValidateIconBase64(request.IconPngBase64, out string iconReason))
-        {
-            return FailPrice(iconReason);
-        }
-
-        if (!ZoneBlueprintNetworkPayload.TryDeserializeBlueprintUpload(request.BlueprintPayload, request.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string uploadReason))
-        {
-            return FailPrice(uploadReason);
-        }
-
-        string validationError = ZoneBlueprintStoreBlueprints.ValidateStoreBlueprint(blueprint);
-        if (!string.IsNullOrWhiteSpace(validationError))
-        {
-            return FailPrice(validationError);
-        }
-
-        ZoneBlueprintStoreDraftLease draft = ZoneBlueprintStoreDraftRepository.CreateDraft(name, blueprint);
-        string listingId = draft.ListingId;
-        string blueprintFile = draft.BlueprintFile;
         Vector3 chestPosition;
         Quaternion chestRotation = rotation;
         Vector3 previewAnchor = position;
         Quaternion previewRotation = rotation;
         if (!ZoneBlueprintStorePlacement.TryReadOptionalStoreChestTarget(request.Target, position, rotation, out bool hasTarget, out Vector3 targetPosition, out Quaternion targetRotation, out reason))
         {
-            ZoneBlueprintStoreDraftRepository.DeleteFile(blueprintFile);
+            ZoneBlueprintStoreDraftRepository.DeleteFile(draft.BlueprintFile);
             return FailPrice(reason);
         }
 
@@ -87,16 +135,16 @@ internal static class ZoneBlueprintStoreListingAction
 
         if (!ZoneBlueprintStorePlacement.TryReadOptionalStorePreviewAnchor(request.PreviewAnchor, position, previewAnchor, previewRotation, out previewAnchor, out previewRotation, out reason))
         {
-            ZoneBlueprintStoreDraftRepository.DeleteFile(blueprintFile);
+            ZoneBlueprintStoreDraftRepository.DeleteFile(draft.BlueprintFile);
             return FailPrice(reason);
         }
 
         HomesteadCommandResult result = ZoneBlueprintStoreChestPrefab.PlacePriceChest(
-            listingId,
-            name,
-            blueprintFile,
-            request.IconPngBase64,
-            blueprint.Entries.Count,
+            draft.ListingId,
+            draft.Name,
+            draft.BlueprintFile,
+            draft.IconPngBase64,
+            draft.EntryCount,
             sellerPlayerId,
             sellerName,
             sellerPlatformId,
@@ -107,15 +155,15 @@ internal static class ZoneBlueprintStoreListingAction
             sender);
         if (!result.Success)
         {
-            ZoneBlueprintStoreDraftRepository.DeleteFile(blueprintFile);
+            ZoneBlueprintStoreDraftRepository.DeleteFile(draft.BlueprintFile);
         }
 
         return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.PriceChest, new ZoneBlueprintStorePriceChestResponse
         {
             Success = result.Success,
             Message = result.Message,
-            ListingId = listingId,
-            Name = name,
+            ListingId = draft.ListingId,
+            Name = draft.Name,
             Chest = result.Success ? ZoneTransformPayload.From(chestPosition, chestRotation) : null
         });
     }
@@ -128,10 +176,9 @@ internal static class ZoneBlueprintStoreListingAction
         }
 
         string sellerPlatformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, sellerPlayerId);
-        string name = ZoneBlueprintStoreDraftRepository.TrimName(request.Name);
-        if (string.IsNullOrWhiteSpace(name))
+        if (!TryNormalizeListingName(request.Name, out string name, out reason))
         {
-            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, HomesteadLocalization.Text("hs_store_blueprint_name_required"));
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, reason);
         }
 
         List<ZoneBlueprintStorePriceItem> priceItems = ZoneBlueprintStorePrices.NormalizePriceItems(request.PriceItems);
@@ -150,45 +197,26 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, priceReason);
         }
 
+        if (!TryCreateUploadedListingDraft(name, request.IconPngBase64, request, sellerPlayerId, sellerPlatformId, out UploadedListingDraft draft, out reason))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, reason);
+        }
+
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
-        if (!ZoneBlueprintStoreAccess.CheckStoreListingLimit(catalog, sellerPlayerId, sellerPlatformId, out string limitReason))
-        {
-            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, limitReason);
-        }
-
-        if (!ZoneBlueprintNetworkPayload.TryValidateIconBase64(request.IconPngBase64, out string iconReason))
-        {
-            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, iconReason);
-        }
-
-        if (!ZoneBlueprintNetworkPayload.TryDeserializeBlueprintUpload(request.BlueprintPayload, request.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string uploadReason))
-        {
-            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, uploadReason);
-        }
-
-        string validationError = ZoneBlueprintStoreBlueprints.ValidateStoreBlueprint(blueprint);
-        if (!string.IsNullOrWhiteSpace(validationError))
-        {
-            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, validationError);
-        }
-
-        ZoneBlueprintStoreDraftLease draft = ZoneBlueprintStoreDraftRepository.CreateDraft(name, blueprint);
-        string listingId = draft.ListingId;
-        string blueprintFile = draft.BlueprintFile;
         DateTime utcNow = DateTime.UtcNow;
         ZoneBlueprintStoreListing listing = new()
         {
-            ListingId = listingId,
-            Name = name,
+            ListingId = draft.ListingId,
+            Name = draft.Name,
             SellerName = sellerName,
             SellerPlayerId = sellerPlayerId,
             SellerPlatformId = sellerPlatformId,
             CreatedAt = HomesteadTimestamp.Format(utcNow),
             ExpiresAt = GetListingExpiryAt(utcNow),
             PriceItems = priceItems,
-            EntryCount = blueprint.Entries.Count,
-            BlueprintFile = blueprintFile,
-            IconPngBase64 = request.IconPngBase64,
+            EntryCount = draft.EntryCount,
+            BlueprintFile = draft.BlueprintFile,
+            IconPngBase64 = draft.IconPngBase64,
             Active = true
         };
         catalog.Listings.Add(listing);
@@ -198,13 +226,13 @@ internal static class ZoneBlueprintStoreListingAction
             catalog.Listings.Remove(listing);
             catalog.Notifications.Remove(notification);
             ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
-            ZoneBlueprintStoreDraftRepository.DeleteFile(blueprintFile);
+            ZoneBlueprintStoreDraftRepository.DeleteFile(draft.BlueprintFile);
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, saveReason);
         }
 
         ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
 
-        return ZoneBlueprintStoreDtos.Status(ZoneBlueprintStoreRpcType.Publish, true, HomesteadLocalization.Format("hs_store_listed", name, ZoneBlueprintStorePrices.FormatPrice(priceItems)));
+        return ZoneBlueprintStoreDtos.Status(ZoneBlueprintStoreRpcType.Publish, true, HomesteadLocalization.Format("hs_store_listed", draft.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)));
     }
 
     public static ZoneBlueprintStoreRpcEnvelope ExecuteConfirmListingResponse(ZoneBlueprintStoreConfirmListingRequest request, Player? player, long sender)

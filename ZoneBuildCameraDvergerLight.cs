@@ -85,8 +85,7 @@ internal static class ZoneBuildCameraDvergerLight
     private static void UpdateProxyLights(GameCamera camera)
     {
         Player player = Player.m_localPlayer;
-        if (!BuildCameraConfig.FollowDvergrCircletLight ||
-            !player ||
+        if (!player ||
             !camera ||
             !ZoneBuildCamera.InBuildMode() ||
             !IsAnySupportedCircletEquipped(player))

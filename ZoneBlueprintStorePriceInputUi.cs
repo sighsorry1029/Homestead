@@ -15,15 +15,13 @@ namespace Homestead;
 
 internal static class ZoneBlueprintStorePriceInputUi
 {
-    private const int SlotCount = ZoneBlueprintStoreChest.MaxPriceItemTypes;
-
     private static GameObject? _panel;
     private static Text? _headerText;
     private static Text? _titleText;
     private static Text? _statusText;
     private static Button? _submitButton;
     private static Text? _backButtonText;
-    private static readonly List<PriceRow> Rows = [];
+    private static readonly List<ZoneBlueprintStorePriceRow> Rows = [];
     private static ZoneBlueprintStoreListingSummaryDto? _listing;
     private static Mode _mode;
     private static bool _inputBlocked;
@@ -98,18 +96,8 @@ internal static class ZoneBlueprintStorePriceInputUi
         Transform panel = _panel.transform;
         _headerText = gui.CreateText("", panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), gui.AveriaSerifBold, 21, gui.ValheimOrange, true, Color.black, 540f, 28f, false).GetComponent<Text>();
         _titleText = gui.CreateText("", panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -58f), gui.AveriaSerif, 14, gui.ValheimBeige, true, Color.black, 540f, 24f, false).GetComponent<Text>();
-        _ = gui.CreateText(HomesteadLocalization.Text("hs_store_item_prefab_or_name"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(-126f, -88f), gui.AveriaSerifBold, 13, gui.ValheimOrange, true, Color.black, 300f, 20f, false);
-        _ = gui.CreateText(HomesteadLocalization.Text("hs_store_amount"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(160f, -88f), gui.AveriaSerifBold, 13, gui.ValheimOrange, true, Color.black, 120f, 20f, false);
-
-        for (int i = 0; i < SlotCount; i++)
-        {
-            float y = -118f - i * 35f;
-            InputField itemInput = gui.CreateInputField(panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(-126f, y), InputField.ContentType.Standard, "", 13, 300f, 28f).GetComponent<InputField>();
-            itemInput.characterLimit = 64;
-            InputField amountInput = gui.CreateInputField(panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(160f, y), InputField.ContentType.IntegerNumber, "", 13, 120f, 28f).GetComponent<InputField>();
-            amountInput.characterLimit = 9;
-            Rows.Add(new PriceRow(itemInput, amountInput));
-        }
+        ZoneBlueprintStorePriceRowsUi.CreateColumnHeaders(gui, panel);
+        Rows.AddRange(ZoneBlueprintStorePriceRowsUi.CreateRows(gui, panel));
 
         _statusText = gui.CreateText("", panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -410f), gui.AveriaSerif, 13, gui.ValheimYellow, true, Color.black, 540f, 36f, false).GetComponent<Text>();
         Button back = gui.CreateButton(HomesteadLocalization.Text("hs_common_back"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(-216f, -458f), 160f, 34f).GetComponent<Button>();
@@ -196,55 +184,12 @@ internal static class ZoneBlueprintStorePriceInputUi
 
     private static void LoadRows(IEnumerable<ZoneBlueprintStorePriceItem> priceItems)
     {
-        ClearRows(setStatus: false);
-        List<ZoneBlueprintStorePriceItem> normalized = ZoneBlueprintStorePrices.NormalizePriceItems(priceItems).Take(SlotCount).ToList();
-        for (int i = 0; i < Rows.Count && i < normalized.Count; i++)
-        {
-            Rows[i].ItemInput.text = normalized[i].PrefabName;
-            Rows[i].AmountInput.text = normalized[i].Amount.ToString();
-        }
+        ZoneBlueprintStorePriceRowsUi.LoadRows(Rows, priceItems);
     }
 
     private static bool TryReadRows(out List<ZoneBlueprintStorePriceItem> priceItems)
     {
-        priceItems = [];
-        foreach (PriceRow row in Rows)
-        {
-            string token = row.ItemInput.text.Trim();
-            string amountText = row.AmountInput.text.Trim();
-            if (string.IsNullOrWhiteSpace(token) && string.IsNullOrWhiteSpace(amountText))
-            {
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                SetStatus(HomesteadLocalization.Text("hs_store_item_required"));
-                return false;
-            }
-
-            if (!int.TryParse(amountText, out int amount) || amount <= 0)
-            {
-                SetStatus(HomesteadLocalization.Format("hs_store_amount_min", token));
-                return false;
-            }
-
-            if (!ZoneBlueprintStorePrices.TryResolvePriceItem(token, amount, out ZoneBlueprintStorePriceItem item, out string reason))
-            {
-                SetStatus(reason);
-                return false;
-            }
-
-            priceItems.Add(item);
-        }
-
-        if (!ZoneBlueprintStorePrices.TryValidatePriceItems(priceItems, out priceItems, out string validationReason))
-        {
-            SetStatus(validationReason);
-            return false;
-        }
-
-        return true;
+        return ZoneBlueprintStorePriceRowsUi.TryReadRows(Rows, true, SetStatus, out priceItems);
     }
 
     private static void ClearRows()
@@ -254,11 +199,7 @@ internal static class ZoneBlueprintStorePriceInputUi
 
     private static void ClearRows(bool setStatus)
     {
-        foreach (PriceRow row in Rows)
-        {
-            row.ItemInput.text = "";
-            row.AmountInput.text = "";
-        }
+        ZoneBlueprintStorePriceRowsUi.ClearRows(Rows);
 
         if (setStatus)
         {
@@ -288,18 +229,6 @@ internal static class ZoneBlueprintStorePriceInputUi
     private static void SetInputBlocked(bool blocked)
     {
         ZoneBlueprintStorePanelRuntime.SetInputBlocked(ref _inputBlocked, blocked);
-    }
-
-    private readonly struct PriceRow
-    {
-        public PriceRow(InputField itemInput, InputField amountInput)
-        {
-            ItemInput = itemInput;
-            AmountInput = amountInput;
-        }
-
-        public InputField ItemInput { get; }
-        public InputField AmountInput { get; }
     }
 }
 

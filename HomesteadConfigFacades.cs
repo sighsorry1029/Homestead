@@ -20,23 +20,15 @@ internal static class GeneralConfig
 
 internal static class ClientConfig
 {
-    private static ConfigEntry<float> _counterVisibleSeconds = null!;
     private static ConfigEntry<float> _statusHudX = null!;
     private static ConfigEntry<float> _statusHudY = null!;
     private static ConfigEntry<int> _statusHudFontSize = null!;
 
-    public static float CounterVisibleSeconds => Mathf.Max(0.1f, _counterVisibleSeconds.Value);
     public static Vector2 StatusHudPosition => new(Mathf.Clamp(_statusHudX.Value, 0f, 3000f), -Mathf.Clamp(_statusHudY.Value, 0f, 3000f));
     public static int StatusHudFontSize => Mathf.Clamp(_statusHudFontSize.Value, 10, 64);
 
     public static void Bind(HomesteadPlugin plugin)
     {
-        _counterVisibleSeconds = plugin.config(
-            "02 - Client",
-            "Build Counter Visible Seconds",
-            2.5f,
-            new ConfigDescription("How long the top build counter stays visible after you place a build piece.", new AcceptableValueRange<float>(0.1f, 10f)),
-            synchronizedSetting: false);
         _statusHudX = plugin.config(
             "02 - Client",
             "Status HUD X Offset",
@@ -60,17 +52,13 @@ internal static class ClientConfig
 
 internal readonly struct BlueprintNetworkSettings
 {
-    public BlueprintNetworkSettings(int maxUploadBytes, int maxEntries, int maxPreviewEntries, int maxIconBytes)
+    public BlueprintNetworkSettings(int maxUploadBytes, int maxIconBytes)
     {
         MaxUploadBytes = maxUploadBytes;
-        MaxEntries = maxEntries;
-        MaxPreviewEntries = maxPreviewEntries;
         MaxIconBytes = maxIconBytes;
     }
 
     public int MaxUploadBytes { get; }
-    public int MaxEntries { get; }
-    public int MaxPreviewEntries { get; }
     public int MaxIconBytes { get; }
 }
 
@@ -96,16 +84,16 @@ internal readonly struct BlueprintStoreSettings
 
 internal static class BlueprintConfig
 {
+    public const int BlueprintChestRows = 40;
+    private const int FixedMaxIconKb = 500;
+    private const float FixedStorePanelScale = 1.8f;
+
     private static ConfigEntry<BlueprintTerrainSupportMode> _terrainSupport = null!;
-    private static ConfigEntry<int> _chestRows = null!;
     private static ConfigEntry<KeyboardShortcut> _chestConfirmHotkey = null!;
     private static ConfigEntry<BlueprintAzuCraftyBoxesPullMode> _azuCraftyBoxesPullMode = null!;
     private static ConfigEntry<float> _terrainSupportContactTolerance = null!;
     private static ConfigEntry<float> _terrainSupportFeatherWidth = null!;
     private static ConfigEntry<int> _maxUploadKb = null!;
-    private static ConfigEntry<int> _maxEntries = null!;
-    private static ConfigEntry<int> _maxPreviewEntries = null!;
-    private static ConfigEntry<int> _maxIconKb = null!;
     private static ConfigEntry<int> _storeListingDays = null!;
     private static ConfigEntry<int> _storeAutoDelistMaxPurchases = null!;
     private static ConfigEntry<int> _storeMaxListingsPerSteamId = null!;
@@ -113,10 +101,8 @@ internal static class BlueprintConfig
     private static ConfigEntry<int> _chestTimeoutMinutes = null!;
     private static ConfigEntry<int> _chestMapIconSize = null!;
     private static ConfigEntry<int> _maxActiveChestsPerPlayer = null!;
-    private static ConfigEntry<float> _storeLargePanelScale = null!;
     private static ConfigEntry<float> _storeLargePanelX = null!;
     private static ConfigEntry<float> _storeLargePanelY = null!;
-    private static ConfigEntry<float> _storeFormPanelScale = null!;
     private static ConfigEntry<float> _storeFormPanelX = null!;
     private static ConfigEntry<float> _storeFormPanelY = null!;
     private static ConfigEntry<HomesteadPlugin.Toggle> _storeAnonymousNotifications = null!;
@@ -125,22 +111,17 @@ internal static class BlueprintConfig
     private static ConfigEntry<float> _storeNotificationButtonY = null!;
     private static ConfigEntry<KeyboardShortcut> _storeListModifierKey = null!;
     private static ConfigEntry<KeyboardShortcut> _storeBackHotkey = null!;
-    private static ConfigEntry<Color> _storeListingPreviewColor = null!;
-    private static ConfigEntry<Color> _storePurchasePreviewColor = null!;
     private static ConfigEntry<float> _areaSaveMaxSide = null!;
     private static ConfigEntry<float> _areaSaveDefaultWidth = null!;
     private static ConfigEntry<float> _areaSaveDefaultDepth = null!;
     private static ConfigEntry<BlueprintAreaSaveCreatorMode> _areaSaveCreatorMode = null!;
-    private static ConfigEntry<Color> _areaSaveBoundaryColor = null!;
     private static ConfigEntry<float> _areaDismantleMaxSide = null!;
     private static ConfigEntry<float> _areaDismantleDefaultWidth = null!;
     private static ConfigEntry<float> _areaDismantleDefaultDepth = null!;
-    private static ConfigEntry<Color> _areaDismantleBoundaryColor = null!;
     private static ConfigEntry<string> _areaDismantlePrefabBlacklist = null!;
     private static ConfigEntry<KeyboardShortcut> _areaToolDepthModifierKey = null!;
     private static ConfigEntry<KeyboardShortcut> _areaToolWidthModifierKey = null!;
     private static ConfigEntry<Color> _previewGhostColor = null!;
-    private static ConfigEntry<float> _previewGhostBrightness = null!;
     private static readonly HashSet<string> BuiltInAreaDismantleProtectedPrefabs = new(StringComparer.OrdinalIgnoreCase)
     {
         ZoneBlueprintPlanChestPrefab.PrefabName,
@@ -150,7 +131,6 @@ internal static class BlueprintConfig
     };
 
     public static bool TerrainSupportEnabled => _terrainSupport.Value == BlueprintTerrainSupportMode.On;
-    public static int ChestRows => Mathf.Clamp(_chestRows.Value, 10, 40);
     public static KeyboardShortcut ChestConfirmHotkey => _chestConfirmHotkey.Value;
     public static bool AzuCraftyBoxesPullOnConfirm => _azuCraftyBoxesPullMode.Value != BlueprintAzuCraftyBoxesPullMode.Off;
     public static bool AzuCraftyBoxesPullOnOpen => _azuCraftyBoxesPullMode.Value == BlueprintAzuCraftyBoxesPullMode.OpenAndConfirm;
@@ -158,11 +138,8 @@ internal static class BlueprintConfig
     public static float TerrainSupportFeatherWidth => Mathf.Clamp(_terrainSupportFeatherWidth.Value, 0f, 64f);
     public static int MaxUploadKb => Mathf.Clamp(_maxUploadKb.Value, 64, 16384);
     public static int MaxUploadBytes => MaxUploadKb * 1024;
-    public static int MaxEntries => Mathf.Clamp(_maxEntries.Value, 1, 20000);
-    public static int MaxPreviewEntries => Mathf.Clamp(_maxPreviewEntries.Value, 1, MaxEntries);
-    public static int MaxIconKb => Mathf.Clamp(_maxIconKb.Value, 0, 2048);
-    public static int MaxIconBytes => MaxIconKb * 1024;
-    public static BlueprintNetworkSettings NetworkSettings => new(MaxUploadBytes, MaxEntries, MaxPreviewEntries, MaxIconBytes);
+    public static int MaxIconBytes => FixedMaxIconKb * 1024;
+    public static BlueprintNetworkSettings NetworkSettings => new(MaxUploadBytes, MaxIconBytes);
     public static int StoreListingDays => Mathf.Clamp(_storeListingDays.Value, 0, 365);
     public static int StoreAutoDelistMaxPurchases => Mathf.Clamp(_storeAutoDelistMaxPurchases.Value, 0, 100000);
     public static int StoreMaxListingsPerSteamId => Mathf.Clamp(_storeMaxListingsPerSteamId.Value, 1, 200);
@@ -171,9 +148,9 @@ internal static class BlueprintConfig
     public static int ChestTimeoutMinutes => Mathf.Clamp(_chestTimeoutMinutes.Value, 0, 60);
     public static int ChestMapIconSize => Mathf.Clamp(_chestMapIconSize.Value, 0, 10);
     public static int MaxActiveChestsPerPlayer => Mathf.Clamp(_maxActiveChestsPerPlayer.Value, 0, 50);
-    public static float StoreLargePanelScale => Mathf.Clamp(_storeLargePanelScale.Value, 0.75f, 2f);
+    public static float StoreLargePanelScale => FixedStorePanelScale;
     public static Vector2 StoreLargePanelOffset => new(Mathf.Clamp(_storeLargePanelX.Value, -2000f, 2000f), Mathf.Clamp(_storeLargePanelY.Value, -2000f, 2000f));
-    public static float StoreFormPanelScale => Mathf.Clamp(_storeFormPanelScale.Value, 0.75f, 2f);
+    public static float StoreFormPanelScale => FixedStorePanelScale;
     public static Vector2 StoreFormPanelOffset => new(Mathf.Clamp(_storeFormPanelX.Value, -2000f, 2000f), Mathf.Clamp(_storeFormPanelY.Value, -2000f, 2000f));
     public static float StoreUiScale => StoreLargePanelScale;
     public static void SetStoreLargePanelOffset(Vector2 offset)
@@ -206,8 +183,8 @@ internal static class BlueprintConfig
     public static KeyboardShortcut StoreBackHotkey => _storeBackHotkey.Value;
     public static string StoreBackHotkeyLabel => ConfigValueHelpers.FormatShortcut(StoreBackHotkey);
     public static bool IsStoreBackHotkeyDown() => ConfigValueHelpers.IsShortcutDown(StoreBackHotkey);
-    public static Color StoreListingPreviewColor => GetStorePendingPreviewColor(_storeListingPreviewColor.Value, new Color(1f, 0.9f, 0.2f, 0.15f));
-    public static Color StorePurchasePreviewColor => GetStorePendingPreviewColor(_storePurchasePreviewColor.Value, new Color(1f, 0.54f, 0.12f, 0.15f));
+    public static Color StoreListingPreviewColor => new(0.8f, 0.72f, 0.16f, 0.1f);
+    public static Color StorePurchasePreviewColor => new(0.8f, 0.432f, 0.096f, 0.1f);
     public static float AreaSaveMaxSide => Mathf.Clamp(_areaSaveMaxSide.Value, 2f, 256f);
     public static float AreaSaveDefaultWidth => Mathf.Clamp(_areaSaveDefaultWidth.Value, 2f, AreaSaveMaxSide);
     public static float AreaSaveDefaultDepth => Mathf.Clamp(_areaSaveDefaultDepth.Value, 2f, AreaSaveMaxSide);
@@ -233,11 +210,11 @@ internal static class BlueprintConfig
         BlueprintAreaSaveCreatorMode.OwnedAndCreatorless => "owned or creatorless WearNTear",
         _ => "owned WearNTear"
     };
-    public static Color AreaSaveBoundaryColor => _areaSaveBoundaryColor.Value;
+    public static Color AreaSaveBoundaryColor => new(1f, 0.9f, 0.2f, 0.9f);
     public static float AreaDismantleMaxSide => Mathf.Clamp(_areaDismantleMaxSide.Value, 1f, 128f);
     public static float AreaDismantleDefaultWidth => Mathf.Clamp(_areaDismantleDefaultWidth.Value, 1f, AreaDismantleMaxSide);
     public static float AreaDismantleDefaultDepth => Mathf.Clamp(_areaDismantleDefaultDepth.Value, 1f, AreaDismantleMaxSide);
-    public static Color AreaDismantleBoundaryColor => _areaDismantleBoundaryColor.Value;
+    public static Color AreaDismantleBoundaryColor => new(1f, 0.3f, 0.12f, 0.9f);
     public static HashSet<string> AreaDismantlePrefabBlacklist => ConfigValueHelpers.SplitPrefabList(_areaDismantlePrefabBlacklist.Value);
     public static KeyboardShortcut AreaToolDepthModifierKey => _areaToolDepthModifierKey.Value;
     public static string AreaToolDepthModifierLabel => ConfigValueHelpers.FormatShortcut(AreaToolDepthModifierKey);
@@ -261,112 +238,125 @@ internal static class BlueprintConfig
         get
         {
             Color color = _previewGhostColor.Value;
-            float brightness = Mathf.Clamp(_previewGhostBrightness.Value, 0.1f, 2f);
-            color.r = Mathf.Clamp01(color.r * brightness);
-            color.g = Mathf.Clamp01(color.g * brightness);
-            color.b = Mathf.Clamp01(color.b * brightness);
-            color.a = Mathf.Clamp01(color.a);
-            return color;
+            return ClampPreviewColor(color);
         }
     }
 
     public static void Bind(HomesteadPlugin plugin)
     {
+        _areaSaveMaxSide = plugin.config(
+            "06 - Area Tools",
+            "Area Save Max Side Length",
+            64f,
+            new ConfigDescription("Server-synced maximum side length in meters for the hammer Area Save blueprint rectangle.", new AcceptableValueRange<float>(2f, 256f)));
         _terrainSupport = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Terrain Support",
             BlueprintTerrainSupportMode.Off,
-            "Controls native blueprint terrain support. Off only places WearNTear. On restores saved terrain support contacts for everyone. AdminDebug restores terrain support only when the placing player is admin and has debug/no-cost build enabled.");
-        _chestRows = plugin.config(
-            "03 - Blueprint",
-            "Blueprint Chest Rows",
-            20,
-            new ConfigDescription("Inventory rows for the Homestead blueprint chest. Width is always 8 columns.", new AcceptableValueRange<int>(10, 40)));
+            new ConfigDescription(
+                "Controls native blueprint terrain support. Off only places WearNTear. On restores saved terrain support contacts for everyone. AdminDebug restores terrain support only when the placing player is admin and has debug/no-cost build enabled.",
+                null,
+                new ConfigurationManagerAttributes { Order = 930 }));
         _chestConfirmHotkey = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Blueprint Chest Confirm Hotkey",
             new KeyboardShortcut(KeyCode.E, KeyCode.LeftAlt),
-            "Client-only hotkey for confirming a Homestead blueprint chest. The default is Alt+E.",
+            new ConfigDescription(
+                "Client-only hotkey for confirming a Homestead blueprint chest. The default is Alt+E.",
+                null,
+                new ConfigurationManagerAttributes { Order = 1000 }),
             synchronizedSetting: false);
         _azuCraftyBoxesPullMode = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "AzuCraftyBoxes Pull Mode",
             BlueprintAzuCraftyBoxesPullMode.ConfirmOnly,
-            "If AzuCraftyBoxes is installed, pulls missing blueprint materials from nearby allowed containers. ConfirmOnly pulls when confirming the blueprint. OpenAndConfirm also pulls before opening the blueprint chest.");
+            new ConfigDescription(
+                "If AzuCraftyBoxes is installed, pulls missing blueprint materials from nearby allowed containers. ConfirmOnly pulls when confirming the blueprint. OpenAndConfirm also pulls before opening the blueprint chest.",
+                null,
+                new ConfigurationManagerAttributes { Order = 940 }));
         _terrainSupportContactTolerance = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Blueprint Terrain Support Contact Tolerance",
             0.5f,
-            new ConfigDescription("How close terrain must be to the lowest WearNTear bottom at a 1m x/z cell to be saved as a blueprint terrain support contact.", new AcceptableValueRange<float>(0.01f, 2f)));
+            new ConfigDescription(
+                "How close terrain must be to the lowest WearNTear bottom at a 1m x/z cell to be saved as a blueprint terrain support contact.",
+                new AcceptableValueRange<float>(0.01f, 2f),
+                new ConfigurationManagerAttributes { Order = 920 }));
         _terrainSupportFeatherWidth = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Blueprint Terrain Support Feather Width",
             6f,
-            new ConfigDescription("Meters around blueprint terrain support contact footprints that blend back to native terrain. Set to 0 to only change exact contact cells.", new AcceptableValueRange<float>(0f, 64f)));
+            new ConfigDescription(
+                "Meters around blueprint terrain support contact footprints that blend back to native terrain. Set to 0 to only change exact contact cells.",
+                new AcceptableValueRange<float>(0f, 64f),
+                new ConfigurationManagerAttributes { Order = 910 }));
         _maxUploadKb = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Max Blueprint Upload KB",
             2048,
-            new ConfigDescription("Server-synced maximum uncompressed YAML size for a client blueprint upload. This is checked before YAML deserialization.", new AcceptableValueRange<int>(64, 16384)));
-        _maxEntries = plugin.config(
-            "03 - Blueprint",
-            "Max Blueprint Entries",
-            5000,
-            new ConfigDescription("Server-synced maximum WearNTear entries accepted in one Homestead blueprint upload.", new AcceptableValueRange<int>(1, 20000)));
-        _maxPreviewEntries = plugin.config(
-            "03 - Blueprint",
-            "Max Blueprint Preview Entries",
-            5000,
-            new ConfigDescription("Server-synced maximum WearNTear entries returned in preview-only blueprint payloads.", new AcceptableValueRange<int>(1, 20000)));
-        _maxIconKb = plugin.config(
-            "04 - Blueprint Store",
-            "Max Blueprint Store Icon KB",
-            256,
-            new ConfigDescription("Server-synced maximum decoded PNG size accepted for blueprint store listing icons. Set to 0 to reject uploaded store icons.", new AcceptableValueRange<int>(0, 2048)));
+            new ConfigDescription(
+                "Server-synced maximum uncompressed blueprint text size for a client blueprint upload. This is checked before blueprint parsing.",
+                new AcceptableValueRange<int>(64, 16384),
+                new ConfigurationManagerAttributes { Order = 950 }));
         _storeListingDays = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Listing Days",
             0,
-            new ConfigDescription("How many days a blueprint store listing stays visible from the time it is listed before the server can automatically hide it. Set to 0 to disable automatic delisting.", new AcceptableValueRange<int>(0, 365)));
+            new ConfigDescription(
+                "How many days a blueprint store listing stays visible from the time it is listed before the server can automatically hide it. Set to 0 to disable automatic delisting.",
+                new AcceptableValueRange<int>(0, 365),
+                new ConfigurationManagerAttributes { Order = 1000 }));
         _storeAutoDelistMaxPurchases = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Auto Delist Max Purchases",
             0,
-            new ConfigDescription("Only listings with this many purchases or fewer are automatically hidden after Blueprint Store Listing Days. Default 0 means only listings with no purchases are auto-delisted.", new AcceptableValueRange<int>(0, 100000)));
+            new ConfigDescription(
+                "Only listings with this many purchases or fewer are automatically hidden after Blueprint Store Listing Days. Default 0 means only listings with no purchases are auto-delisted.",
+                new AcceptableValueRange<int>(0, 100000),
+                new ConfigurationManagerAttributes { Order = 990 }));
         _storeMaxListingsPerSteamId = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Max Listings Per SteamID",
             10,
-            new ConfigDescription("Server-synced maximum active blueprint store listings allowed for one SteamID/platform identity.", new AcceptableValueRange<int>(1, 200)));
+            new ConfigDescription(
+                "Server-synced maximum active blueprint store listings allowed for one SteamID/platform identity.",
+                new AcceptableValueRange<int>(1, 200),
+                new ConfigurationManagerAttributes { Order = 980 }));
         _storeIdentityMode = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Identity Mode",
             BlueprintStoreIdentityMode.PlayerId,
-            "Controls how Blueprint Store ownership and offer buyer permissions are matched. PlayerId treats each Valheim character separately. SteamId treats every character on the same Steam/platform account as the same store identity.");
+            new ConfigDescription(
+                "Controls how Blueprint Store ownership and offer buyer permissions are matched. PlayerId treats each Valheim character separately. SteamId treats every character on the same Steam/platform account as the same store identity.",
+                null,
+                new ConfigurationManagerAttributes { Order = 960 }));
         _chestTimeoutMinutes = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Blueprint Chest Timeout Minutes",
             30,
-            new ConfigDescription("Minutes since last interaction before empty Homestead blueprint/build/store chests are removed. Set to 0 to disable automatic chest cleanup. A chest is kept while it has visible items, absorbed materials, price items, purchase deposits, or payout contents.", new AcceptableValueRange<int>(0, 60)));
+            new ConfigDescription(
+                "Minutes since last interaction before empty Homestead blueprint/build/store chests are removed. Set to 0 to disable automatic chest cleanup. A chest is kept while it has visible items, absorbed materials, price items, purchase deposits, or payout contents.",
+                new AcceptableValueRange<int>(0, 60),
+                new ConfigurationManagerAttributes { Order = 970 }));
         _chestMapIconSize = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Blueprint Chest Map Icon Size",
             1,
-            new ConfigDescription("Client-only icon size for your Homestead blueprint/build/store chests on the large map. Set to 0 to hide these map icons.", new AcceptableValueRange<int>(0, 10)),
+            new ConfigDescription(
+                "Client-only icon size for your Homestead blueprint/build/store chests on the large map. Set to 0 to hide these map icons.",
+                new AcceptableValueRange<int>(0, 10),
+                new ConfigurationManagerAttributes { Order = 990 }),
             synchronizedSetting: false);
         _maxActiveChestsPerPlayer = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Max Active Blueprint Chests Per SteamID",
             5,
-            new ConfigDescription("Maximum active Homestead blueprint/build/store chests per Steam/platform identity. Set to 0 to disable this limit. If a platform identity cannot be resolved, Homestead falls back to the Valheim playerID.", new AcceptableValueRange<int>(0, 50)));
-        _storeLargePanelScale = plugin.config(
-            "04 - Blueprint Store",
-            "Blueprint Store Large Panel Scale",
-            1.5f,
-            new ConfigDescription("Client-only scale multiplier shared by the Blueprint Store listing and offers panels.", new AcceptableValueRange<float>(0.75f, 2f)),
-            synchronizedSetting: false);
+            new ConfigDescription(
+                "Maximum active Homestead blueprint/build/store chests per Steam/platform identity. Set to 0 to disable this limit. If a platform identity cannot be resolved, Homestead falls back to the Valheim playerID.",
+                new AcceptableValueRange<int>(0, 50),
+                new ConfigurationManagerAttributes { Order = 960 }));
         _storeLargePanelX = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Large Panel X Offset",
             0f,
             new ConfigDescription(
@@ -375,7 +365,7 @@ internal static class BlueprintConfig
                 new ConfigurationManagerAttributes { Browsable = false }),
             synchronizedSetting: false);
         _storeLargePanelY = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Large Panel Y Offset",
             0f,
             new ConfigDescription(
@@ -383,14 +373,8 @@ internal static class BlueprintConfig
                 new AcceptableValueRange<float>(-2000f, 2000f),
                 new ConfigurationManagerAttributes { Browsable = false }),
             synchronizedSetting: false);
-        _storeFormPanelScale = plugin.config(
-            "04 - Blueprint Store",
-            "Blueprint Store Form Panel Scale",
-            1.5f,
-            new ConfigDescription("Client-only scale multiplier shared by Blueprint Store offer, edit price, and price chest editor panels.", new AcceptableValueRange<float>(0.75f, 2f)),
-            synchronizedSetting: false);
         _storeFormPanelX = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Form Panel X Offset",
             0f,
             new ConfigDescription(
@@ -399,7 +383,7 @@ internal static class BlueprintConfig
                 new ConfigurationManagerAttributes { Browsable = false }),
             synchronizedSetting: false);
         _storeFormPanelY = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Form Panel Y Offset",
             0f,
             new ConfigDescription(
@@ -408,18 +392,24 @@ internal static class BlueprintConfig
                 new ConfigurationManagerAttributes { Browsable = false }),
             synchronizedSetting: false);
         _storeNotificationMode = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Notification Mode",
             BlueprintStoreNotificationMode.BadgeOnly,
-            "Client-only display mode for Blueprint Store notifications. Off hides the notification button and disables fallback polling. BadgeOnly keeps the button and unread count visible without opening the panel automatically. AutoOpenPanel opens the notification panel when a new unread notification arrives.",
+            new ConfigDescription(
+                "Client-only display mode for Blueprint Store notifications. Off hides the notification button and disables fallback polling. BadgeOnly keeps the button and unread count visible without opening the panel automatically. AutoOpenPanel opens the notification panel when a new unread notification arrives.",
+                null,
+                new ConfigurationManagerAttributes { Order = 950 }),
             synchronizedSetting: false);
         _storeAnonymousNotifications = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Anonymous Notifications",
             HomesteadPlugin.Toggle.Off,
-            "Server-synced toggle for hiding player names in Blueprint Store notification messages. When on, notifications say Anonymous instead of the buyer, seller, or offer creator name.");
+            new ConfigDescription(
+                "Server-synced toggle for hiding player names in Blueprint Store notification messages. When on, notifications say Anonymous instead of the buyer, seller, or offer creator name.",
+                null,
+                new ConfigurationManagerAttributes { Order = 970 }));
         _storeNotificationButtonX = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Notification Button X Offset",
             -333f,
             new ConfigDescription(
@@ -428,7 +418,7 @@ internal static class BlueprintConfig
                 new ConfigurationManagerAttributes { Browsable = false }),
             synchronizedSetting: false);
         _storeNotificationButtonY = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Notification Button Y Offset",
             -55f,
             new ConfigDescription(
@@ -437,109 +427,83 @@ internal static class BlueprintConfig
                 new ConfigurationManagerAttributes { Browsable = false }),
             synchronizedSetting: false);
         _storeListModifierKey = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store List Modifier Key",
             new KeyboardShortcut(KeyCode.LeftAlt),
-            "Client-only modifier key held while left-clicking a blueprint in the Homestead build tab to place its Blueprint Store price chest. Set to None to use left-click without a modifier.",
+            new ConfigDescription(
+                "Client-only modifier key held while left-clicking a blueprint in the Homestead build tab to place its Blueprint Store price chest. Set to None to use left-click without a modifier.",
+                null,
+                new ConfigurationManagerAttributes { Order = 940 }),
             synchronizedSetting: false);
         _storeBackHotkey = plugin.config(
-            "04 - Blueprint Store",
+            "08 - Blueprint Store",
             "Blueprint Store Back Hotkey",
             new KeyboardShortcut(KeyCode.Mouse3),
-            "Client-only hotkey for returning from Blueprint Store sub-panels such as the offers view. Display uses the same Unity key names as Config Manager.",
+            new ConfigDescription(
+                "Client-only hotkey for returning from Blueprint Store sub-panels such as the offers view. Display uses the same Unity key names as Config Manager.",
+                null,
+                new ConfigurationManagerAttributes { Order = 930 }),
             synchronizedSetting: false);
-        _storeListingPreviewColor = plugin.config(
-            "04 - Blueprint Store",
-            "Store Listing Pending Preview Color",
-            new Color(1f, 0.9f, 0.2f, 0.15f),
-            "Client-only color used for a blueprint preview after its store listing price chest has been placed but before the listing is confirmed. Alpha comes from this color's A value.",
-            synchronizedSetting: false);
-        _storePurchasePreviewColor = plugin.config(
-            "04 - Blueprint Store",
-            "Store Purchase Pending Preview Color",
-            new Color(1f, 0.54f, 0.12f, 0.15f),
-            "Client-only color used for a blueprint preview after its purchase chest has been placed but before payment is confirmed. Alpha comes from this color's A value.",
-            synchronizedSetting: false);
-        _areaSaveMaxSide = plugin.config(
-            "03 - Blueprint",
-            "Area Save Max Side Length",
-            64f,
-            new ConfigDescription("Server-synced maximum side length in meters for the hammer Area Save blueprint rectangle.", new AcceptableValueRange<float>(2f, 256f)));
         _areaSaveDefaultWidth = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Save Default Width",
             8f,
             new ConfigDescription("Client-only default Area Save rectangle width. This is clamped by the server max side length.", new AcceptableValueRange<float>(2f, 256f)),
             synchronizedSetting: false);
         _areaSaveDefaultDepth = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Save Default Depth",
             8f,
             new ConfigDescription("Client-only default Area Save rectangle depth. Set a different value from width to start as a rectangle.", new AcceptableValueRange<float>(2f, 256f)),
             synchronizedSetting: false);
         _areaSaveCreatorMode = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Save Creator Mode",
             BlueprintAreaSaveCreatorMode.OwnedAndCreatorless,
             "Controls which WearNTear objects the Area Save tool can select. AllCreators saves your own, creator=0, and other creators' WearNTear. OwnedAndCreatorless saves your own plus creator=0 WearNTear. OwnedOnly saves only WearNTear with your playerID.");
-        _areaSaveBoundaryColor = plugin.config(
-            "03 - Blueprint",
-            "Area Save Boundary Color",
-            new Color(1f, 0.9f, 0.2f, 0.9f),
-            "Client-only color for the Area Save rectangle line.",
-            synchronizedSetting: false);
         _areaDismantleMaxSide = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Dismantle Max Side Length",
             8f,
             new ConfigDescription("Server-synced maximum side length in meters for the hammer Area Dismantle rectangle.", new AcceptableValueRange<float>(1f, 128f)));
         _areaDismantleDefaultWidth = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Dismantle Default Width",
             4f,
             new ConfigDescription("Client-only default Area Dismantle rectangle width. This is clamped by the server max side length.", new AcceptableValueRange<float>(1f, 128f)),
             synchronizedSetting: false);
         _areaDismantleDefaultDepth = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Dismantle Default Depth",
             4f,
             new ConfigDescription("Client-only default Area Dismantle rectangle depth. Set a different value from width to start as a rectangle.", new AcceptableValueRange<float>(1f, 128f)),
             synchronizedSetting: false);
-        _areaDismantleBoundaryColor = plugin.config(
-            "03 - Blueprint",
-            "Area Dismantle Boundary Color",
-            new Color(1f, 0.3f, 0.12f, 0.9f),
-            "Client-only color for the Area Dismantle rectangle line.",
-            synchronizedSetting: false);
         _areaDismantlePrefabBlacklist = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Dismantle Prefab Blacklist",
             "piece_stuward",
             "Comma-separated additional prefab names that Area Dismantle will never dismantle. Homestead blueprint/store chests are always protected internally.");
         PruneBuiltInAreaDismantleBlacklistEntries();
         _areaToolDepthModifierKey = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Tool Depth Modifier Key",
             new KeyboardShortcut(KeyCode.Mouse3),
             "Client-only modifier key held while using the mouse wheel to resize only the depth of Area Save and Area Dismantle rectangles. Set to None to disable depth-only wheel resizing.",
             synchronizedSetting: false);
         _areaToolWidthModifierKey = plugin.config(
-            "03 - Blueprint",
+            "06 - Area Tools",
             "Area Tool Width Modifier Key",
             new KeyboardShortcut(KeyCode.Mouse4),
             "Client-only modifier key held while using the mouse wheel to resize only the width of Area Save and Area Dismantle rectangles. Set to None to disable width-only wheel resizing.",
             synchronizedSetting: false);
         _previewGhostColor = plugin.config(
-            "03 - Blueprint",
+            "07 - Blueprint",
             "Preview Ghost Color",
-            new Color(0.35f, 0.75f, 1f, 0.15f),
-            "Client-only color for unfinished blueprint preview pieces.",
-            synchronizedSetting: false);
-        _previewGhostBrightness = plugin.config(
-            "03 - Blueprint",
-            "Preview Ghost Brightness",
-            0.8f,
-            new ConfigDescription("Client-only brightness multiplier for unfinished blueprint preview pieces.", new AcceptableValueRange<float>(0.1f, 2f)),
+            new Color(0.28f, 0.6f, 0.8f, 0.15f),
+            new ConfigDescription(
+                "Client-only color for unfinished blueprint preview pieces.",
+                null,
+                new ConfigurationManagerAttributes { Order = 980 }),
             synchronizedSetting: false);
     }
 
@@ -609,13 +573,12 @@ internal static class BlueprintConfig
         }
     }
 
-    private static Color GetStorePendingPreviewColor(Color value, Color fallback)
+    private static Color ClampPreviewColor(Color value)
     {
         Color color = value;
-        float brightness = Mathf.Clamp(_previewGhostBrightness.Value, 0.1f, 2f);
-        color.r = Mathf.Clamp01(color.r * brightness);
-        color.g = Mathf.Clamp01(color.g * brightness);
-        color.b = Mathf.Clamp01(color.b * brightness);
+        color.r = Mathf.Clamp01(color.r);
+        color.g = Mathf.Clamp01(color.g);
+        color.b = Mathf.Clamp01(color.b);
         color.a = Mathf.Clamp01(color.a);
         return color;
     }
@@ -625,33 +588,29 @@ internal static class BuildCameraConfig
 {
     private static ConfigEntry<HomesteadPlugin.Toggle> _enabled = null!;
     private static ConfigEntry<float> _resourcePickupRange = null!;
-    private static ConfigEntry<BuildCameraDistanceMode> _distanceMode = null!;
-    private static ConfigEntry<float> _maxDistanceFromAvatar = null!;
+    private static ConfigEntry<float> _resourcePickupRangePerComfortLevel = null!;
+    private static ConfigEntry<float> _maxPlaceDistance = null!;
+    private static ConfigEntry<float> _maxPlaceDistancePerComfortLevel = null!;
     private static ConfigEntry<float> _baseDistanceFromAvatar = null!;
     private static ConfigEntry<float> _distancePerComfortLevel = null!;
     private static ConfigEntry<float> _moveSpeedMultiplier = null!;
     private static ConfigEntry<KeyboardShortcut> _toggleHotkey = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _demisterFollowCamera = null!;
     private static ConfigEntry<KeyboardShortcut> _lookAtLockHotkey = null!;
-    private static ConfigEntry<BuildCameraRestrictionMode> _restrictionMode = null!;
     private static ConfigEntry<int> _minimumComfortLevel = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _followDvergrCircletLight = null!;
     private static ConfigEntry<float> _helmetLightOffsetForward = null!;
     private static ConfigEntry<float> _helmetLightOffsetUp = null!;
 
     public static bool Enabled => _enabled.Value.IsOn();
     public static float ResourcePickupRange => Mathf.Clamp(_resourcePickupRange.Value, 0f, 100f);
-    public static BuildCameraDistanceMode DistanceMode => _distanceMode.Value;
-    public static float MaxDistanceFromAvatar => Mathf.Clamp(_maxDistanceFromAvatar.Value, 1f, 500f);
+    public static float ResourcePickupRangePerComfortLevel => Mathf.Clamp(_resourcePickupRangePerComfortLevel.Value, 0f, 10f);
+    public static float MaxPlaceDistance => Mathf.Clamp(_maxPlaceDistance.Value, 5f, 100f);
+    public static float MaxPlaceDistancePerComfortLevel => Mathf.Clamp(_maxPlaceDistancePerComfortLevel.Value, 0f, 10f);
     public static float BaseDistanceFromAvatar => Mathf.Clamp(_baseDistanceFromAvatar.Value, 1f, 500f);
     public static float DistancePerComfortLevel => Mathf.Clamp(_distancePerComfortLevel.Value, 0f, 50f);
     public static float MoveSpeedMultiplier => Mathf.Clamp(_moveSpeedMultiplier.Value, 0.1f, 20f);
     public static KeyboardShortcut ToggleHotkey => _toggleHotkey.Value;
-    public static bool DemisterFollowCamera => _demisterFollowCamera.Value.IsOn();
     public static KeyboardShortcut LookAtLockHotkey => _lookAtLockHotkey.Value;
-    public static BuildCameraRestrictionMode RestrictionMode => _restrictionMode.Value;
-    public static int MinimumComfortLevel => Mathf.Clamp(_minimumComfortLevel.Value, 1, 30);
-    public static bool FollowDvergrCircletLight => _followDvergrCircletLight.Value.IsOn();
+    public static int MinimumComfortLevel => Mathf.Clamp(_minimumComfortLevel.Value, 0, 30);
     public static float HelmetLightOffsetForward => Mathf.Clamp(_helmetLightOffsetForward.Value, -5f, 5f);
     public static float HelmetLightOffsetUp => Mathf.Clamp(_helmetLightOffsetUp.Value, -5f, 5f);
 
@@ -665,76 +624,97 @@ internal static class BuildCameraConfig
                 "If on, Homestead includes BuildCameraCHE-style free build camera mode. Disable this if the standalone BuildCameraCHE mod is installed.",
                 null,
                 new ConfigurationManagerAttributes { Order = 1000 }));
-        _resourcePickupRange = plugin.config(
-            "05 - Build Camera",
-            "Resource Pickup Range",
-            10f,
-            new ConfigDescription("Distance from which build camera mode can pick up resources on the ground. Valheim default is 2.", new AcceptableValueRange<float>(0f, 100f)));
-        _distanceMode = plugin.config(
-            "05 - Build Camera",
-            "Camera Distance Mode",
-            BuildCameraDistanceMode.ComfortScaled,
-            "Fixed: use Camera Distance(Max) In Fixed Mode. ComfortScaled: use Base Camera Distance From Avatar + current comfort level * Camera Distance Per Comfort Level.");
-        _maxDistanceFromAvatar = plugin.config(
-            "05 - Build Camera",
-            "Camera Distance(Max) In Fixed Mode",
-            32f,
-            new ConfigDescription("Fixed build camera distance in meters when Camera Distance Mode is Fixed.", new AcceptableValueRange<float>(1f, 500f)));
-        _baseDistanceFromAvatar = plugin.config(
-            "05 - Build Camera",
-            "Base Camera Distance From Avatar",
-            32f,
-            new ConfigDescription("Base distance in meters that the build camera can move away from your player avatar before comfort scaling is added.", new AcceptableValueRange<float>(1f, 500f)));
-        _distancePerComfortLevel = plugin.config(
-            "05 - Build Camera",
-            "Camera Distance Per Comfort Level",
-            2f,
-            new ConfigDescription("Extra build camera distance in meters added for each current comfort level.", new AcceptableValueRange<float>(0f, 50f)));
-        _moveSpeedMultiplier = plugin.config(
-            "05 - Build Camera",
-            "Camera Move Speed Multiplier",
-            3f,
-            new ConfigDescription("Multiplies build camera panning speed.", new AcceptableValueRange<float>(0.1f, 20f)));
-        _toggleHotkey = plugin.config(
-            "05 - Build Camera",
-            "Toggle Build Camera Hotkey",
-            new KeyboardShortcut(KeyCode.B),
-            "Client-only hotkey that toggles build camera mode while a build tool is equipped.",
-            synchronizedSetting: false);
-        _demisterFollowCamera = plugin.config(
-            "05 - Build Camera",
-            "Demister Follow Camera",
-            HomesteadPlugin.Toggle.On,
-            "If on, the Wisplight demister ball follows the build camera while build camera mode is active.");
-        _lookAtLockHotkey = plugin.config(
-            "05 - Build Camera",
-            "Look At Lock Hotkey",
-            new KeyboardShortcut(KeyCode.Q),
-            "Client-only hotkey that toggles build camera look-at lock while build camera mode is active.",
-            synchronizedSetting: false);
-        _restrictionMode = plugin.config(
-            "05 - Build Camera",
-            "Restriction Mode",
-            BuildCameraRestrictionMode.Off,
-            "Off: no cozy restriction. CameraNeedsCoziness: cozy required to enter and stay in build camera. CameraPickUpNeedsCoziness: camera entry is allowed, but camera item pickup requires cozy.");
         _minimumComfortLevel = plugin.config(
             "05 - Build Camera",
             "Restriction Mode Minimum Comfort Level",
             1,
-            new ConfigDescription("Minimum comfort level required by the build camera comfort restriction.", new AcceptableValueRange<int>(1, 30)));
-        _followDvergrCircletLight = plugin.config(
+            new ConfigDescription(
+                "Minimum comfort level required to enter and stay in build camera mode. Set to 0 to disable the comfort restriction.",
+                new AcceptableValueRange<int>(0, 30),
+                new ConfigurationManagerAttributes { Order = 990 }));
+        _baseDistanceFromAvatar = plugin.config(
             "05 - Build Camera",
-            "Dvergr Circlet Light Follow Camera",
-            HomesteadPlugin.Toggle.On,
-            "If on, Dvergr circlet light follows the build camera while build camera mode is active.");
+            "Base Camera Distance From Avatar",
+            32f,
+            new ConfigDescription(
+                "Base distance in meters that the build camera can move away from your player avatar before comfort scaling is added.",
+                new AcceptableValueRange<float>(1f, 500f),
+                new ConfigurationManagerAttributes { Order = 980 }));
+        _distancePerComfortLevel = plugin.config(
+            "05 - Build Camera",
+            "Camera Distance Per Comfort Level",
+            3f,
+            new ConfigDescription(
+                "Extra build camera distance in meters added for each current comfort level. Set to 0 to use a fixed camera distance.",
+                new AcceptableValueRange<float>(0f, 50f),
+                new ConfigurationManagerAttributes { Order = 970 }));
+        _maxPlaceDistance = plugin.config(
+            "05 - Build Camera",
+            "Max Place Distance",
+            5f,
+            new ConfigDescription(
+                "Base Player.m_maxPlaceDistance in meters while build camera mode is active. Valheim default is 5.",
+                new AcceptableValueRange<float>(5f, 100f),
+                new ConfigurationManagerAttributes { Order = 960 }));
+        _maxPlaceDistancePerComfortLevel = plugin.config(
+            "05 - Build Camera",
+            "Max Place Distance Per Comfort Level",
+            2f,
+            new ConfigDescription(
+                "Extra Player.m_maxPlaceDistance in meters added for each current comfort level while build camera mode is active.",
+                new AcceptableValueRange<float>(0f, 10f),
+                new ConfigurationManagerAttributes { Order = 950 }));
+        _resourcePickupRange = plugin.config(
+            "05 - Build Camera",
+            "Resource Pickup Range",
+            2f,
+            new ConfigDescription(
+                "Base distance in meters from which build camera mode can pick up resources on the ground. Valheim default is 2.",
+                new AcceptableValueRange<float>(0f, 100f),
+                new ConfigurationManagerAttributes { Order = 940 }));
+        _resourcePickupRangePerComfortLevel = plugin.config(
+            "05 - Build Camera",
+            "Resource Pickup Range Per Comfort Level",
+            0.5f,
+            new ConfigDescription(
+                "Extra build camera resource pickup range in meters added for each current comfort level.",
+                new AcceptableValueRange<float>(0f, 10f),
+                new ConfigurationManagerAttributes { Order = 930 }));
+        _moveSpeedMultiplier = plugin.config(
+            "05 - Build Camera",
+            "Camera Move Speed Multiplier",
+            3f,
+            new ConfigDescription(
+                "Multiplies build camera panning speed.",
+                new AcceptableValueRange<float>(0.1f, 20f),
+                new ConfigurationManagerAttributes { Order = 920 }));
+        _toggleHotkey = plugin.config(
+            "05 - Build Camera",
+            "Toggle Build Camera Hotkey",
+            new KeyboardShortcut(KeyCode.B),
+            new ConfigDescription(
+                "Client-only hotkey that toggles build camera mode while a build tool is equipped.",
+                null,
+                new ConfigurationManagerAttributes { Order = 910 }),
+            synchronizedSetting: false);
+        _lookAtLockHotkey = plugin.config(
+            "05 - Build Camera",
+            "Look At Lock Hotkey",
+            new KeyboardShortcut(KeyCode.Q),
+            new ConfigDescription(
+                "Client-only hotkey that toggles build camera look-at lock while build camera mode is active.",
+                null,
+                new ConfigurationManagerAttributes { Order = 900 }),
+            synchronizedSetting: false);
+
         _helmetLightOffsetForward = plugin.config(
-            "05 - Build Camera",
+            "02 - Client",
             "Dvergr Circlet Light Forward Offset",
             0.65f,
             new ConfigDescription("Client-only Dvergr circlet light offset along the build camera forward axis.", new AcceptableValueRange<float>(-5f, 5f)),
             synchronizedSetting: false);
         _helmetLightOffsetUp = plugin.config(
-            "05 - Build Camera",
+            "02 - Client",
             "Dvergr Circlet Light Up Offset",
             -0.08f,
             new ConfigDescription("Client-only Dvergr circlet light offset along the build camera up axis.", new AcceptableValueRange<float>(-5f, 5f)),
@@ -774,54 +754,54 @@ internal static class PlacementControlConfig
     public static void Bind(HomesteadPlugin plugin)
     {
         _gridSnapToggleHotkey = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "Grid Snap Toggle Hotkey",
             new KeyboardShortcut(KeyCode.G),
             "Client-only hotkey that toggles grid snapping on or off while placing build pieces. The default is G.",
             synchronizedSetting: false);
         _gridSnapSize = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "Grid Size",
             0.5f,
             new ConfigDescription("Client-only grid spacing in meters. Values are clamped and rounded to 0.05m steps between 0.05 and 1.0.", new AcceptableValueRange<float>(0.05f, 1f)),
             synchronizedSetting: false);
         _placementAdjustEnabled = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "Position Adjust",
             HomesteadPlugin.Toggle.On,
             "If on, hammer pieces, Homestead blueprints, and area tools can be nudged with PgUp/PgDn and arrow keys.");
         _placementAdjustHeightStep = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "Position Height Step",
             0.5f,
             new ConfigDescription("Client-only vertical offset step in meters for PgUp/PgDn while adjusting placement.", new AcceptableValueRange<float>(0.01f, 10f)),
             synchronizedSetting: false);
         _placementAdjustHorizontalStep = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "Position Horizontal Step",
             0.5f,
             new ConfigDescription("Client-only horizontal offset step in meters for arrow keys while adjusting placement.", new AcceptableValueRange<float>(0.01f, 10f)),
             synchronizedSetting: false);
         _placementRotationStep = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "Rotation Step",
             22.5f,
             new ConfigDescription("Client-only rotation step in degrees shared by Area Save, Area Dismantle, blueprint yaw rotation, and placement rotation controls. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(0.5f, 90f)),
             synchronizedSetting: false);
         _placementXAxisRotation = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "X Axis Rotation",
             0f,
             new ConfigDescription("Client-only default X-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
             synchronizedSetting: false);
         _placementZAxisRotation = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "Z Axis Rotation",
             0f,
             new ConfigDescription("Client-only default Z-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
             synchronizedSetting: false);
         _placementAdjustModifierKey = plugin.config(
-            "06 - Placement Controls",
+            "04 - Placement Controls",
             "Position Adjust Modifier Key",
             new KeyboardShortcut(KeyCode.LeftAlt),
             "Client-only modifier key held while using PgUp/PgDn and arrow keys for placement offsets. Set to None to allow the old unmodified keys.",
@@ -847,9 +827,6 @@ internal static class DvergrCircletConfig
     private static ConfigEntry<float> _perItemAdjustmentStep = null!;
     private static ConfigEntry<KeyboardShortcut> _toggleLightHotkey = null!;
     private static ConfigEntry<KeyboardShortcut> _adjustmentModifierKey = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _remoteVisualSync = null!;
-    private static ConfigEntry<float> _remoteLightMaxDistance = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _debugLogging = null!;
 
     public static bool ExtensionEnabled => _extensionEnabled.Value.IsOn();
     public static float FuelSeconds => Mathf.Max(1f, _fuelMinutes.Value) * 60f;
@@ -860,73 +837,75 @@ internal static class DvergrCircletConfig
     public static KeyboardShortcut ToggleLightHotkey => _toggleLightHotkey.Value;
     public static KeyboardShortcut AdjustmentModifierKey => _adjustmentModifierKey.Value;
     public static string AdjustmentModifierLabel => ConfigValueHelpers.FormatShortcut(AdjustmentModifierKey);
-    public static bool RemoteVisualSync => _remoteVisualSync.Value.IsOn();
-    public static float RemoteLightMaxDistance => Mathf.Clamp(_remoteLightMaxDistance.Value, 0f, 200f);
-    public static bool DebugLogging => _debugLogging.Value.IsOn();
 
     public static void Bind(HomesteadPlugin plugin)
     {
         _extensionEnabled = plugin.config(
-            "08 - Dvergr Circlet",
+            "03 - Dvergr Circlet",
             "Enabled",
             HomesteadPlugin.Toggle.On,
             new ConfigDescription(
                 "If on, Homestead gives the Dvergr circlet per-item configurable light range, light intensity, durability drain while lit, and custom repair station support. If Circlet Extended is installed, Homestead leaves circlet handling to that mod.",
                 null,
                 new ConfigurationManagerAttributes { Order = 1000 }));
-        _fuelMinutes = plugin.config(
-            "08 - Dvergr Circlet",
-            "Base Fuel Minutes",
-            60f,
-            new ConfigDescription("How many minutes a full Dvergr circlet lasts at 1.0 light intensity and 1.0 light range. Higher intensity and range drain proportionally faster.", new AcceptableValueRange<float>(1f, 10000f)));
         _repairStation = plugin.config(
-            "08 - Dvergr Circlet",
+            "03 - Dvergr Circlet",
             "Repair Station",
             "forge",
-            "Crafting station required to repair the Dvergr circlet. Use the prefab name like forge, workbench, blackforge, or the localized station token like $piece_forge.");
+            new ConfigDescription(
+                "Crafting station required to repair the Dvergr circlet. Use the prefab name like forge, workbench, blackforge, or the localized station token like $piece_forge.",
+                null,
+                new ConfigurationManagerAttributes { Order = 990 }));
+        _fuelMinutes = plugin.config(
+            "03 - Dvergr Circlet",
+            "Base Fuel Minutes",
+            60f,
+            new ConfigDescription(
+                "How many minutes a full Dvergr circlet lasts at 1.0 light intensity and 1.0 light range. Higher intensity and range drain proportionally faster.",
+                new AcceptableValueRange<float>(1f, 10000f),
+                new ConfigurationManagerAttributes { Order = 980 }));
         _perItemMaxIntensityMultiplier = plugin.config(
-            "08 - Dvergr Circlet",
+            "03 - Dvergr Circlet",
             "Maximum Intensity Multiplier",
-            3f,
-            new ConfigDescription("Highest brightness multiplier a player can set on an individual Dvergr circlet with hotkeys.", new AcceptableValueRange<float>(1f, 3f)));
+            2f,
+            new ConfigDescription(
+                "Highest brightness multiplier a player can set on an individual Dvergr circlet with hotkeys.",
+                new AcceptableValueRange<float>(1f, 3f),
+                new ConfigurationManagerAttributes { Order = 970 }));
         _perItemMaxRangeMultiplier = plugin.config(
-            "08 - Dvergr Circlet",
+            "03 - Dvergr Circlet",
             "Maximum Range Multiplier",
-            3f,
-            new ConfigDescription("Highest range multiplier a player can set on an individual Dvergr circlet with hotkeys.", new AcceptableValueRange<float>(1f, 3f)));
+            2f,
+            new ConfigDescription(
+                "Highest range multiplier a player can set on an individual Dvergr circlet with hotkeys.",
+                new AcceptableValueRange<float>(1f, 3f),
+                new ConfigurationManagerAttributes { Order = 960 }));
         _perItemAdjustmentStep = plugin.config(
-            "08 - Dvergr Circlet",
+            "03 - Dvergr Circlet",
             "Adjustment Step",
-            0.5f,
-            new ConfigDescription("Brightness/range multiplier step used by Dvergr circlet hotkeys. 0.5 means 50% per key press.", new AcceptableValueRange<float>(0.05f, 1f)));
-        _toggleLightHotkey = plugin.config(
-            "08 - Dvergr Circlet",
-            "Toggle Light Hotkey",
-            new KeyboardShortcut(KeyCode.L),
-            "Client-only hotkey that toggles the equipped Dvergr circlet light on or off.",
+            0.25f,
+            new ConfigDescription(
+                "Client-only brightness/range multiplier step used by Dvergr circlet hotkeys. 0.25 means 25% per key press.",
+                new AcceptableValueRange<float>(0.05f, 1f),
+                new ConfigurationManagerAttributes { Order = 950 }),
             synchronizedSetting: false);
         _adjustmentModifierKey = plugin.config(
-            "08 - Dvergr Circlet",
+            "03 - Dvergr Circlet",
             "Adjustment Modifier Key",
             new KeyboardShortcut(KeyCode.LeftShift),
-            "Client-only modifier held while using fixed arrow keys to adjust the equipped Dvergr circlet. Up/Down changes brightness, Right/Left changes range. Set to None to use arrow keys without a modifier.",
+            new ConfigDescription(
+                "Client-only modifier held while using fixed arrow keys to adjust the equipped Dvergr circlet. Up/Down changes brightness, Right/Left changes range. Set to None to use arrow keys without a modifier.",
+                null,
+                new ConfigurationManagerAttributes { Order = 940 }),
             synchronizedSetting: false);
-        _remoteVisualSync = plugin.config(
-            "08 - Dvergr Circlet",
-            "Remote Visual Sync",
-            HomesteadPlugin.Toggle.On,
-            "If on, Homestead publishes Dvergr circlet custom-slot visual state through the player ZDO so other clients can see the circlet visual and light. Disable only if another mod owns circlet visuals.");
-        _remoteLightMaxDistance = plugin.config(
-            "08 - Dvergr Circlet",
-            "Remote Light Max Distance",
-            60f,
-            new ConfigDescription("Client-only maximum distance in meters for rendering Homestead-synced remote Dvergr circlet lights. Set to 0 for no distance culling.", new AcceptableValueRange<float>(0f, 200f)),
-            synchronizedSetting: false);
-        _debugLogging = plugin.config(
-            "08 - Dvergr Circlet",
-            "Debug Logging",
-            HomesteadPlugin.Toggle.Off,
-            "Client-only diagnostic logging for Dvergr circlet equip detection, AzuExtended custom slot detection, visual roots, remote sync, and fallback light state.",
+        _toggleLightHotkey = plugin.config(
+            "03 - Dvergr Circlet",
+            "Toggle Light Hotkey",
+            new KeyboardShortcut(KeyCode.L),
+            new ConfigDescription(
+                "Client-only hotkey that toggles the equipped Dvergr circlet light on or off.",
+                null,
+                new ConfigurationManagerAttributes { Order = 930 }),
             synchronizedSetting: false);
     }
 }
