@@ -50,15 +50,15 @@ internal static class ZoneBlueprintStoreBlueprints
             return HomesteadLocalization.Text("hs_common_world_not_ready");
         }
 
+        int validEntries = 0;
         foreach (ZoneBlueprintEntry entry in blueprint.Entries)
         {
-            GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
-            if (!prefab || prefab.GetComponent<WearNTear>() == null || !ZoneBlueprintCommands.HasBuildRecipe(prefab))
+            if (ZoneBlueprintCommands.IsLoadableBlueprintEntry(entry))
             {
-                return HomesteadLocalization.Format("hs_store_blueprint_unsupported_prefab", entry.Prefab);
+                validEntries++;
             }
         }
 
-        return "";
+        return validEntries > 0 ? "" : HomesteadLocalization.Text("hs_store_blueprint_no_entries");
     }
 }

@@ -18,6 +18,7 @@ internal static class ZoneBlueprintCommands
     private const string BlueprintPieceMarkerKey = "sighsorry.Homestead.blueprint_piece";
     private static readonly int BlueprintPlacedHash = StringExtensionMethods.GetStableHashCode(BlueprintPieceMarkerKey);
     private static readonly Dictionary<string, bool> BuildRecipeCache = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> MissingPrefabWarnings = new(StringComparer.OrdinalIgnoreCase);
 
     private static ManualLogSource _logger = null!;
     private static bool _initialized;
@@ -45,6 +46,7 @@ internal static class ZoneBlueprintCommands
     public static void ResetForWorldSession()
     {
         _nextPlanGhostCleanupAt = Time.realtimeSinceStartup + PlanGhostCleanupStartupDelaySeconds;
+        MissingPrefabWarnings.Clear();
     }
 
     internal static HomesteadCommandResult SaveSelectedBlueprint(string name, Player player)
@@ -549,8 +551,14 @@ internal static class ZoneBlueprintCommands
 
         Quaternion inverseChestRotation = Quaternion.Inverse(chestRotation);
         List<Vector3> chestLocalPositions = blueprint.Entries
+            .Where(IsLoadableBlueprintEntry)
             .Select(entry => inverseChestRotation * (anchorRotation * FromVector(entry.LocalPos)))
             .ToList();
+        if (chestLocalPositions.Count == 0)
+        {
+            return anchor;
+        }
+
         float minX = chestLocalPositions.Min(position => position.x);
         float maxX = chestLocalPositions.Max(position => position.x);
         float minZ = chestLocalPositions.Min(position => position.z);
@@ -644,8 +652,8 @@ internal static class ZoneBlueprintCommands
         GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
         if (!prefab)
         {
-            error = $"Missing prefab '{entry.Prefab}' while loading blueprint '{blueprint.Name}'.";
-            return false;
+            LogMissingPrefabOnce(blueprint.Name, entry.Prefab);
+            return true;
         }
 
         if (prefab.GetComponent<WearNTear>() == null || !HasBuildRecipe(prefab))
@@ -664,6 +672,38 @@ internal static class ZoneBlueprintCommands
         Vector3 scale = FromVector(entry.Scale);
         loadEntry = new BlueprintLoadEntry(entry, prefab, position, rotation, scale);
         return true;
+    }
+
+    internal static bool IsLoadableBlueprintEntry(ZoneBlueprintEntry entry)
+    {
+        return IsLoadableBlueprintEntry(entry, out _);
+    }
+
+    internal static bool IsLoadableBlueprintEntry(ZoneBlueprintEntry entry, out bool missingPrefab)
+    {
+        missingPrefab = false;
+        if (entry.LocalPos.Length < 3 || entry.LocalRot.Length < 4 || entry.Scale.Length < 3)
+        {
+            return false;
+        }
+
+        GameObject? prefab = ZNetScene.instance?.GetPrefab(entry.Prefab);
+        if (!prefab)
+        {
+            missingPrefab = true;
+            return false;
+        }
+
+        return prefab && prefab.GetComponent<WearNTear>() != null && HasBuildRecipe(prefab);
+    }
+
+    private static void LogMissingPrefabOnce(string blueprintName, string prefabName)
+    {
+        string key = $"{blueprintName}\n{prefabName}";
+        if (MissingPrefabWarnings.Add(key))
+        {
+            _logger.LogWarning($"Skipping missing prefab '{prefabName}' while loading blueprint '{blueprintName}'.");
+        }
     }
 
     private static Vector3 ToWorldTerrainContact(ZoneBlueprintTerrainContact contact, Vector3 anchor, Quaternion anchorRotation)
@@ -1049,16 +1089,21 @@ internal static class ZoneBlueprintCommands
             return HomesteadLocalization.Text("hs_common_world_not_ready");
         }
 
+        int validEntries = 0;
         foreach (ZoneBlueprintEntry entry in blueprint.Entries)
         {
-            GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
-            if (!prefab || prefab.GetComponent<WearNTear>() == null || !HasBuildRecipe(prefab))
+            if (IsLoadableBlueprintEntry(entry, out bool missingPrefab))
             {
-                return HomesteadLocalization.Format("hs_blueprint_unsupported_prefab", entry.Prefab);
+                validEntries++;
+            }
+
+            if (missingPrefab)
+            {
+                LogMissingPrefabOnce(blueprint.Name, entry.Prefab);
             }
         }
 
-        return "";
+        return validEntries > 0 ? "" : HomesteadLocalization.Format("hs_blueprint_no_valid_entries", blueprint.Name);
     }
 
     private static string GetUniqueBlueprintName(string preferredName)

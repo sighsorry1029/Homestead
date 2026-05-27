@@ -499,7 +499,7 @@ internal static class BlueprintConfig
         _previewGhostColor = plugin.config(
             "07 - Blueprint",
             "Preview Ghost Color",
-            new Color(0.28f, 0.6f, 0.8f, 0.15f),
+            new Color(0.28f, 0.6f, 0.8f, 0.05f),
             new ConfigDescription(
                 "Client-only color for unfinished blueprint preview pieces.",
                 null,

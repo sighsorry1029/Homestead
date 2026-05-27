@@ -176,7 +176,7 @@ internal static class ZoneBlueprintVisuals
 
     public static GameObject CreateBlueprintVisualRoot(ZoneBlueprintFile blueprint, string objectName)
     {
-        return CreateBlueprintVisualRoot(blueprint.Entries, objectName);
+        return CreateBlueprintVisualRoot(blueprint.Entries.Where(ZoneBlueprintCommands.IsLoadableBlueprintEntry), objectName);
     }
 
     public static GameObject CreatePrefabVisualRoot(GameObject prefab, string objectName)
@@ -367,9 +367,12 @@ internal static class ZoneBlueprintVisuals
 
     private static IReadOnlyList<ZoneBlueprintEntry> SelectIconEntries(ZoneBlueprintFile blueprint)
     {
-        if (blueprint.Entries.Count <= FullIconEntryLimit)
+        List<ZoneBlueprintEntry> entries = blueprint.Entries
+            .Where(ZoneBlueprintCommands.IsLoadableBlueprintEntry)
+            .ToList();
+        if (entries.Count <= FullIconEntryLimit)
         {
-            return blueprint.Entries;
+            return entries;
         }
 
         Vector3 viewToCamera = IconViewToCamera;
@@ -380,7 +383,6 @@ internal static class ZoneBlueprintVisuals
         }
 
         Vector3 screenUp = Vector3.Cross(viewToCamera, screenRight).normalized;
-        List<ZoneBlueprintEntry> entries = blueprint.Entries;
         int stride = entries.Count > MaxIconProjectionSourceEntries
             ? Mathf.CeilToInt(entries.Count / (float)MaxIconProjectionSourceEntries)
             : 1;
