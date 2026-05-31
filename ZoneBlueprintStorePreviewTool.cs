@@ -205,30 +205,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
 
     internal static Material ApplyStorePreviewMaterial(GameObject root, Color color)
     {
-        Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
-        Material material = new(shader)
-        {
-            color = color
-        };
-        if (root == null)
-        {
-            return material;
-        }
-
-        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
-        {
-            Material[] materials = renderer.sharedMaterials;
-            for (int i = 0; i < materials.Length; i++)
-            {
-                materials[i] = material;
-            }
-
-            renderer.sharedMaterials = materials;
-            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            renderer.receiveShadows = false;
-        }
-
-        return material;
+        return ZoneBlueprintGhostOwner.ApplyMaterial(root, color);
     }
 
     private static void EnsureInstance()
@@ -631,44 +608,20 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
 
         Color color = GetLockedPreviewColor();
         string signature = ColorUtility.ToHtmlStringRGBA(color);
-        Material material = GetLockedPreviewMaterial(color);
         if (_lockedPreviewMaterialApplied && string.Equals(signature, _lockedPreviewColorSignature, StringComparison.Ordinal))
         {
-            material.color = color;
+            ZoneBlueprintGhostOwner.UpdateMaterialColor(_previewRoot, color);
+            if (_lockedPreviewMaterial != null)
+            {
+                _lockedPreviewMaterial.color = color;
+            }
+
             return;
         }
 
-        foreach (Renderer renderer in _previewRoot.GetComponentsInChildren<Renderer>(true))
-        {
-            Material[] materials = renderer.sharedMaterials;
-            for (int i = 0; i < materials.Length; i++)
-            {
-                materials[i] = material;
-            }
-
-            renderer.sharedMaterials = materials;
-            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            renderer.receiveShadows = false;
-        }
-
+        _lockedPreviewMaterial = ZoneBlueprintGhostOwner.ApplyMaterial(_previewRoot, color);
         _lockedPreviewMaterialApplied = true;
         _lockedPreviewColorSignature = signature;
-    }
-
-    private Material GetLockedPreviewMaterial(Color color)
-    {
-        if (_lockedPreviewMaterial != null)
-        {
-            _lockedPreviewMaterial.color = color;
-            return _lockedPreviewMaterial;
-        }
-
-        Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
-        _lockedPreviewMaterial = new Material(shader)
-        {
-            color = color
-        };
-        return _lockedPreviewMaterial;
     }
 
     private Color GetLockedPreviewColor()

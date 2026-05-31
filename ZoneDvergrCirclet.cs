@@ -241,7 +241,7 @@ internal static partial class ZoneDvergrCirclet
     {
         return Hud.IsPieceSelectionVisible() ||
                global::Console.IsVisible() ||
-               TextInput.IsVisible() ||
+               HomesteadInputBlockers.IsTextInputVisible() ||
                Menu.IsVisible() ||
                InventoryGui.IsVisible() ||
                Minimap.IsOpen();

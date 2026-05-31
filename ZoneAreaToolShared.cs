@@ -140,7 +140,7 @@ internal static class ZoneAreaToolShared
     {
         if (Hud.IsPieceSelectionVisible() ||
             global::Console.IsVisible() ||
-            TextInput.IsVisible() ||
+            HomesteadInputBlockers.IsTextInputVisible() ||
             Menu.IsVisible() ||
             InventoryGui.IsVisible() ||
             Minimap.IsOpen())

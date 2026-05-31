@@ -78,7 +78,7 @@ internal static class ZoneGridSnap
                !player.IsDead() &&
                player.TakeInput() &&
                !global::Console.IsVisible() &&
-               !TextInput.IsVisible() &&
+               !HomesteadInputBlockers.IsTextInputVisible() &&
                !Menu.IsVisible();
     }
 

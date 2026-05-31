@@ -183,8 +183,8 @@ internal static class BlueprintConfig
     public static KeyboardShortcut StoreBackHotkey => _storeBackHotkey.Value;
     public static string StoreBackHotkeyLabel => ConfigValueHelpers.FormatShortcut(StoreBackHotkey);
     public static bool IsStoreBackHotkeyDown() => ConfigValueHelpers.IsShortcutDown(StoreBackHotkey);
-    public static Color StoreListingPreviewColor => new(0.8f, 0.72f, 0.16f, 0.1f);
-    public static Color StorePurchasePreviewColor => new(0.8f, 0.432f, 0.096f, 0.1f);
+    public static Color StoreListingPreviewColor => PreviewGhostColor;
+    public static Color StorePurchasePreviewColor => PreviewGhostColor;
     public static float AreaSaveMaxSide => Mathf.Clamp(_areaSaveMaxSide.Value, 2f, 256f);
     public static float AreaSaveDefaultWidth => Mathf.Clamp(_areaSaveDefaultWidth.Value, 2f, AreaSaveMaxSide);
     public static float AreaSaveDefaultDepth => Mathf.Clamp(_areaSaveDefaultDepth.Value, 2f, AreaSaveMaxSide);
@@ -499,7 +499,7 @@ internal static class BlueprintConfig
         _previewGhostColor = plugin.config(
             "07 - Blueprint",
             "Preview Ghost Color",
-            new Color(0.28f, 0.6f, 0.8f, 0.05f),
+            Color.white,
             new ConfigDescription(
                 "Client-only color for unfinished blueprint preview pieces.",
                 null,

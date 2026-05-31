@@ -10,6 +10,7 @@ internal static class HomesteadFeatureBootstrap
 
     public static void Initialize(ManualLogSource logger, Harmony harmony)
     {
+        HomesteadInputBlockers.Initialize(logger);
         ZoneSessionResetRegistry.Initialize(logger);
         ZoneBlueprintCommands.Initialize(logger);
         ZoneBlueprintSaveTool.Initialize(logger);

@@ -146,6 +146,7 @@
         <Compile Include="HomesteadCommandResult.cs"/>
         <Compile Include="HomesteadConfigFacades.cs"/>
         <Compile Include="HomesteadFeatureBootstrap.cs"/>
+        <Compile Include="HomesteadInputBlockers.cs"/>
         <Compile Include="HomesteadLocalization.cs"/>
         <Compile Include="HomesteadPlayerIdentity.cs"/>
         <Compile Include="SavedZdoData.cs"/>

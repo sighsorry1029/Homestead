@@ -280,7 +280,7 @@ internal static class ZoneBuildCamera
     {
         return (Chat.instance && Chat.instance.HasFocus()) ||
                global::Console.IsVisible() ||
-               TextInput.IsVisible() ||
+               HomesteadInputBlockers.IsTextInputVisible() ||
                StoreGui.IsVisible() ||
                InventoryGui.IsVisible() ||
                Menu.IsVisible() ||
