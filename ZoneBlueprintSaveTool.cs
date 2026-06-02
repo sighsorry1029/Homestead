@@ -1018,7 +1018,7 @@ internal static class ZoneBlueprintSaveToolMenu
             tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
         }
 
-        foreach (Piece piece in BlueprintPieces.Values)
+        foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
         {
             if (piece != null && piece)
             {
@@ -1026,12 +1026,13 @@ internal static class ZoneBlueprintSaveToolMenu
             }
         }
 
+        bool pieceOrderChanged = SortHomesteadPiecesInPieceTable(table);
         if (tableChanged)
         {
             player.UpdateKnownRecipesList();
         }
 
-        bool availableListRefreshNeeded = tableChanged || !string.IsNullOrWhiteSpace(highlightName);
+        bool availableListRefreshNeeded = tableChanged || pieceOrderChanged || !string.IsNullOrWhiteSpace(highlightName);
         if (availableListRefreshNeeded)
         {
             player.UpdateAvailablePiecesList();
@@ -1329,13 +1330,15 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintHammerTable.EnsurePiece(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
         }
 
-        foreach (Piece piece in BlueprintPieces.Values)
+        foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
         {
             if (piece != null && piece)
             {
                 ZoneBlueprintHammerTable.EnsurePiece(table, piece, HomesteadCategory, CategoryLabel);
             }
         }
+
+        SortHomesteadPiecesInPieceTable(table);
     }
 
     private static void EnsureBlueprintPiecesVisibleInHammerTable(PieceTable table)
@@ -1362,13 +1365,232 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintHammerTable.EnsurePieceVisible(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
         }
 
-        foreach (Piece piece in BlueprintPieces.Values)
+        foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
         {
             if (piece != null && piece)
             {
                 ZoneBlueprintHammerTable.EnsurePieceVisible(table, piece, HomesteadCategory, CategoryLabel);
             }
         }
+
+        SortHomesteadAvailablePiecesInHammerTable(table);
+    }
+
+    private static List<Piece> GetBlueprintPiecesInMenuOrder()
+    {
+        return BlueprintPieces
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(pair => pair.Value)
+            .Where(IsValidMenuPiece)
+            .ToList();
+    }
+
+    private static List<Piece> GetHomesteadPiecesInMenuOrder()
+    {
+        List<Piece> pieces = [];
+        AddMenuPiece(pieces, _toolPiece);
+        AddMenuPiece(pieces, _dismantleToolPiece);
+        AddMenuPiece(pieces, _storeToolPiece);
+        foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
+        {
+            AddMenuPiece(pieces, piece);
+        }
+
+        return pieces;
+    }
+
+    private static void AddMenuPiece(List<Piece> pieces, Piece? piece)
+    {
+        if (!IsValidMenuPiece(piece))
+        {
+            return;
+        }
+
+        Piece validPiece = piece!;
+        if (!pieces.Contains(validPiece))
+        {
+            pieces.Add(validPiece);
+        }
+    }
+
+    private static bool SortHomesteadPiecesInPieceTable(PieceTable table)
+    {
+        if (table == null || table.m_pieces == null)
+        {
+            return false;
+        }
+
+        List<Piece> orderedPieces = GetHomesteadPiecesInMenuOrder();
+        if (orderedPieces.Count == 0)
+        {
+            return false;
+        }
+
+        List<GameObject> sorted = new(table.m_pieces.Count + orderedPieces.Count);
+        List<GameObject> orderedObjects = [];
+        int insertIndex = -1;
+        for (int i = 0; i < table.m_pieces.Count; i++)
+        {
+            GameObject pieceObject = table.m_pieces[i];
+            if (IsHomesteadPieceObject(pieceObject))
+            {
+                if (insertIndex < 0)
+                {
+                    insertIndex = sorted.Count;
+                }
+
+                continue;
+            }
+
+            sorted.Add(pieceObject);
+        }
+
+        foreach (Piece piece in orderedPieces)
+        {
+            if (IsValidMenuPiece(piece) && !orderedObjects.Contains(piece.gameObject))
+            {
+                orderedObjects.Add(piece.gameObject);
+            }
+        }
+
+        if (orderedObjects.Count == 0)
+        {
+            return false;
+        }
+
+        if (insertIndex < 0)
+        {
+            insertIndex = sorted.Count;
+        }
+
+        sorted.InsertRange(Mathf.Clamp(insertIndex, 0, sorted.Count), orderedObjects);
+        return ReplacePieceObjectsIfChanged(table.m_pieces, sorted);
+    }
+
+    private static bool SortHomesteadAvailablePiecesInHammerTable(PieceTable table)
+    {
+        if (table == null || table.m_availablePieces == null)
+        {
+            return false;
+        }
+
+        int availableIndex = (int)HomesteadCategory;
+        if (availableIndex < 0 || availableIndex >= table.m_availablePieces.Count)
+        {
+            return false;
+        }
+
+        List<Piece> availablePieces = table.m_availablePieces[availableIndex];
+        Piece? selectedPiece = GetMarker(table.GetSelectedPiece()) != null ? table.GetSelectedPiece() : null;
+        List<Piece> sorted = new(availablePieces.Count + BlueprintPieces.Count + 3);
+        foreach (Piece piece in availablePieces)
+        {
+            if (IsRepairPiece(piece))
+            {
+                AddMenuPiece(sorted, piece);
+            }
+        }
+
+        foreach (Piece piece in GetHomesteadPiecesInMenuOrder())
+        {
+            AddMenuPiece(sorted, piece);
+        }
+
+        foreach (Piece piece in availablePieces)
+        {
+            if (!IsRepairPiece(piece) && !IsHomesteadPiece(piece) && IsValidMenuPiece(piece))
+            {
+                sorted.Add(piece);
+            }
+        }
+
+        bool changed = ReplacePiecesIfChanged(availablePieces, sorted);
+        if (selectedPiece != null && selectedPiece)
+        {
+            int selectedIndex = availablePieces.IndexOf(selectedPiece);
+            if (selectedIndex >= 0)
+            {
+                table.SetSelected(new Vector2Int(selectedIndex % 15, selectedIndex / 15));
+            }
+        }
+
+        return changed;
+    }
+
+    private static bool ReplacePieceObjectsIfChanged(List<GameObject> target, List<GameObject> sorted)
+    {
+        if (target.Count == sorted.Count)
+        {
+            bool same = true;
+            for (int i = 0; i < target.Count; i++)
+            {
+                if (target[i] != sorted[i])
+                {
+                    same = false;
+                    break;
+                }
+            }
+
+            if (same)
+            {
+                return false;
+            }
+        }
+
+        target.Clear();
+        target.AddRange(sorted);
+        return true;
+    }
+
+    private static bool ReplacePiecesIfChanged(List<Piece> target, List<Piece> sorted)
+    {
+        if (target.Count == sorted.Count)
+        {
+            bool same = true;
+            for (int i = 0; i < target.Count; i++)
+            {
+                if (target[i] != sorted[i])
+                {
+                    same = false;
+                    break;
+                }
+            }
+
+            if (same)
+            {
+                return false;
+            }
+        }
+
+        target.Clear();
+        target.AddRange(sorted);
+        return true;
+    }
+
+    private static bool IsHomesteadPieceObject(GameObject? pieceObject)
+    {
+        return pieceObject != null &&
+               pieceObject &&
+               pieceObject.GetComponent<ZoneBlueprintSaveToolMarker>() != null;
+    }
+
+    private static bool IsHomesteadPiece(Piece? piece)
+    {
+        return GetMarker(piece) != null;
+    }
+
+    private static bool IsRepairPiece(Piece? piece)
+    {
+        return IsValidMenuPiece(piece) &&
+               string.Equals(Utils.GetPrefabName(piece!.gameObject), "piece_repair", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsValidMenuPiece(Piece? piece)
+    {
+        return piece != null &&
+               piece &&
+               piece.gameObject != null &&
+               piece.gameObject;
     }
 
     public static bool TrySelectTool(Player player)

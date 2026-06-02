@@ -12,11 +12,11 @@ namespace Homestead;
 internal static class ZoneBlueprintVisuals
 {
     private const int FullIconEntryLimit = 120;
-    private const int MaxIconProjectionSourceEntries = 2500;
-    private const int MaxOptimizedIconEntries = 180;
-    private const int IconProjectionGrid = 18;
-    private static readonly Vector3 IconViewToCamera = new Vector3(0.75f, 0.55f, -0.75f).normalized;
+    private const int IconVisibilityGrid = 64;
+    private const int IconVisibilityFrontLayerCount = 3;
+    private const float IconVisibilityDepthTolerance = 1.25f;
     private static readonly Dictionary<string, Sprite?> IconCache = [];
+    private static readonly Dictionary<string, IconPrefabBounds> IconPrefabBoundsCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Type? ImageConversionType = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
     private static readonly MethodInfo? LoadImageMethod = ImageConversionType?.GetMethod(
         "LoadImage",
@@ -375,104 +375,255 @@ internal static class ZoneBlueprintVisuals
             return entries;
         }
 
-        Vector3 viewToCamera = IconViewToCamera;
-        Vector3 screenRight = Vector3.Cross(Vector3.up, viewToCamera).normalized;
-        if (screenRight.sqrMagnitude < 0.001f)
-        {
-            screenRight = Vector3.right;
-        }
-
-        Vector3 screenUp = Vector3.Cross(viewToCamera, screenRight).normalized;
-        int stride = entries.Count > MaxIconProjectionSourceEntries
-            ? Mathf.CeilToInt(entries.Count / (float)MaxIconProjectionSourceEntries)
-            : 1;
-        int projectedCapacity = Mathf.CeilToInt(entries.Count / (float)stride);
-        List<ProjectedEntry> projected = new(projectedCapacity);
+        Quaternion inverseIconRotation = Quaternion.Inverse(RenderManager.IsometricRotation);
+        Vector3 viewToCamera = (inverseIconRotation * Vector3.forward).normalized;
+        Vector3 screenRight = (inverseIconRotation * Vector3.left).normalized;
+        Vector3 screenUp = (inverseIconRotation * Vector3.up).normalized;
+        List<ProjectedIconEntry> projected = new(entries.Count);
         float minU = float.PositiveInfinity;
         float maxU = float.NegativeInfinity;
         float minV = float.PositiveInfinity;
         float maxV = float.NegativeInfinity;
 
-        for (int i = 0; i < entries.Count; i += stride)
+        foreach (ZoneBlueprintEntry entry in entries)
         {
-            ZoneBlueprintEntry entry = entries[i];
-            Vector3 position = FromVector(entry.LocalPos);
-            float u = Vector3.Dot(position, screenRight);
-            float v = Vector3.Dot(position, screenUp);
-            float depth = Vector3.Dot(position, viewToCamera);
-            projected.Add(new ProjectedEntry(entry, u, v, depth));
-            minU = Mathf.Min(minU, u);
-            maxU = Mathf.Max(maxU, u);
-            minV = Mathf.Min(minV, v);
-            maxV = Mathf.Max(maxV, v);
+            if (!TryProjectIconEntry(entry, screenRight, screenUp, viewToCamera, out ProjectedIconEntry projectedEntry))
+            {
+                continue;
+            }
+
+            projected.Add(projectedEntry);
+            minU = Mathf.Min(minU, projectedEntry.MinU);
+            maxU = Mathf.Max(maxU, projectedEntry.MaxU);
+            minV = Mathf.Min(minV, projectedEntry.MinV);
+            maxV = Mathf.Max(maxV, projectedEntry.MaxV);
+        }
+
+        if (projected.Count == 0)
+        {
+            return entries;
         }
 
         float uRange = Mathf.Max(0.001f, maxU - minU);
         float vRange = Mathf.Max(0.001f, maxV - minV);
-        Dictionary<int, ProjectedEntry> visibleCells = [];
-        foreach (ProjectedEntry item in projected)
+        Dictionary<int, List<ProjectedIconEntry>> visibleCells = [];
+        foreach (ProjectedIconEntry item in projected)
         {
-            int x = Mathf.Clamp(Mathf.FloorToInt((item.U - minU) / uRange * IconProjectionGrid), 0, IconProjectionGrid - 1);
-            int y = Mathf.Clamp(Mathf.FloorToInt((item.V - minV) / vRange * IconProjectionGrid), 0, IconProjectionGrid - 1);
-            int key = x + y * IconProjectionGrid;
-            if (!visibleCells.TryGetValue(key, out ProjectedEntry existing) || item.Depth > existing.Depth)
+            int minX = ToIconGridIndex(item.MinU, minU, uRange);
+            int maxX = ToIconGridIndex(item.MaxU, minU, uRange);
+            int minY = ToIconGridIndex(item.MinV, minV, vRange);
+            int maxY = ToIconGridIndex(item.MaxV, minV, vRange);
+            for (int y = minY; y <= maxY; y++)
             {
-                visibleCells[key] = item;
+                for (int x = minX; x <= maxX; x++)
+                {
+                    int key = x + y * IconVisibilityGrid;
+                    AddIconCellCandidate(visibleCells, key, item);
+                }
             }
         }
 
-        HashSet<ZoneBlueprintEntry> selected = visibleCells.Values.Select(item => item.Entry).ToHashSet();
-        AddExtremes(projected, selected);
-
-        return selected
-            .Select(entry =>
+        HashSet<ZoneBlueprintEntry> selected = [];
+        foreach (List<ProjectedIconEntry> candidates in visibleCells.Values)
+        {
+            candidates.Sort((left, right) => right.FrontDepth.CompareTo(left.FrontDepth));
+            float frontDepth = candidates[0].FrontDepth;
+            for (int i = 0; i < candidates.Count; i++)
             {
-                Vector3 position = FromVector(entry.LocalPos);
-                return new ProjectedEntry(entry, Vector3.Dot(position, screenRight), Vector3.Dot(position, screenUp), Vector3.Dot(position, viewToCamera));
-            })
-            .OrderByDescending(item => item.Depth)
-            .ThenBy(item => item.V)
-            .ThenBy(item => item.U)
-            .Take(MaxOptimizedIconEntries)
+                ProjectedIconEntry candidate = candidates[i];
+                if (i >= IconVisibilityFrontLayerCount &&
+                    frontDepth - candidate.FrontDepth > IconVisibilityDepthTolerance)
+                {
+                    break;
+                }
+
+                selected.Add(candidate.Entry);
+            }
+        }
+
+        return projected
+            .Where(item => selected.Contains(item.Entry))
+            .OrderByDescending(item => item.CenterDepth)
+            .ThenBy(item => item.CenterV)
+            .ThenBy(item => item.CenterU)
             .Select(item => item.Entry)
             .ToList();
     }
 
-    private static void AddExtremes(List<ProjectedEntry> projected, HashSet<ZoneBlueprintEntry> selected)
+    private static void AddIconCellCandidate(
+        Dictionary<int, List<ProjectedIconEntry>> visibleCells,
+        int key,
+        ProjectedIconEntry item)
     {
-        if (projected.Count == 0)
+        if (!visibleCells.TryGetValue(key, out List<ProjectedIconEntry> candidates))
+        {
+            candidates = [];
+            visibleCells[key] = candidates;
+        }
+
+        candidates.Add(item);
+    }
+
+    private static int ToIconGridIndex(float value, float min, float range)
+    {
+        return Mathf.Clamp(Mathf.FloorToInt((value - min) / range * IconVisibilityGrid), 0, IconVisibilityGrid - 1);
+    }
+
+    private static bool TryProjectIconEntry(
+        ZoneBlueprintEntry entry,
+        Vector3 screenRight,
+        Vector3 screenUp,
+        Vector3 viewToCamera,
+        out ProjectedIconEntry projectedEntry)
+    {
+        projectedEntry = default;
+        GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
+        if (!prefab || !TryGetIconPrefabBounds(prefab, out Bounds prefabBounds))
+        {
+            return false;
+        }
+
+        Matrix4x4 matrix = Matrix4x4.TRS(FromVector(entry.LocalPos), FromQuaternion(entry.LocalRot), FromVector(entry.Scale));
+        ProjectTransformedBounds(prefabBounds, matrix, screenRight, screenUp, viewToCamera, out float minU, out float maxU, out float minV, out float maxV, out float frontDepth);
+        Vector3 center = matrix.MultiplyPoint3x4(prefabBounds.center);
+        projectedEntry = new ProjectedIconEntry(
+            entry,
+            minU,
+            maxU,
+            minV,
+            maxV,
+            frontDepth,
+            Vector3.Dot(center, screenRight),
+            Vector3.Dot(center, screenUp),
+            Vector3.Dot(center, viewToCamera));
+        return true;
+    }
+
+    private static bool TryGetIconPrefabBounds(GameObject prefab, out Bounds bounds)
+    {
+        string prefabName = Utils.GetPrefabName(prefab);
+        if (IconPrefabBoundsCache.TryGetValue(prefabName, out IconPrefabBounds cached))
+        {
+            bounds = cached.Bounds;
+            return cached.HasBounds;
+        }
+
+        bool hasBounds = false;
+        bounds = default;
+        CollectIconPrefabBounds(prefab.transform, prefab.transform, ref bounds, ref hasBounds);
+        IconPrefabBoundsCache[prefabName] = new IconPrefabBounds(hasBounds, bounds);
+        return hasBounds;
+    }
+
+    private static void CollectIconPrefabBounds(Transform root, Transform source, ref Bounds bounds, ref bool hasBounds)
+    {
+        if (!source.gameObject.activeSelf)
         {
             return;
         }
 
-        AddExtreme(projected, selected, item => item.U, maximize: false);
-        AddExtreme(projected, selected, item => item.U, maximize: true);
-        AddExtreme(projected, selected, item => item.V, maximize: false);
-        AddExtreme(projected, selected, item => item.V, maximize: true);
-        AddExtreme(projected, selected, item => FromVector(item.Entry.LocalPos).y, maximize: false);
-        AddExtreme(projected, selected, item => FromVector(item.Entry.LocalPos).y, maximize: true);
-    }
-
-    private static void AddExtreme(
-        IReadOnlyList<ProjectedEntry> projected,
-        HashSet<ZoneBlueprintEntry> selected,
-        Func<ProjectedEntry, float> getValue,
-        bool maximize)
-    {
-        ProjectedEntry best = projected[0];
-        float bestValue = getValue(best);
-        for (int i = 1; i < projected.Count; i++)
+        MeshFilter meshFilter = source.GetComponent<MeshFilter>();
+        MeshRenderer meshRenderer = source.GetComponent<MeshRenderer>();
+        if (meshFilter != null && meshFilter.sharedMesh != null && meshRenderer != null && meshRenderer.enabled)
         {
-            ProjectedEntry item = projected[i];
-            float value = getValue(item);
-            if (maximize ? value > bestValue : value < bestValue)
-            {
-                best = item;
-                bestValue = value;
-            }
+            EncapsulateTransformedBounds(meshFilter.sharedMesh.bounds, root.worldToLocalMatrix * source.localToWorldMatrix, ref bounds, ref hasBounds);
         }
 
-        selected.Add(best.Entry);
+        SkinnedMeshRenderer skinnedRenderer = source.GetComponent<SkinnedMeshRenderer>();
+        if (skinnedRenderer != null && skinnedRenderer.sharedMesh != null && skinnedRenderer.enabled)
+        {
+            EncapsulateTransformedBounds(skinnedRenderer.sharedMesh.bounds, root.worldToLocalMatrix * source.localToWorldMatrix, ref bounds, ref hasBounds);
+        }
+
+        foreach (Transform child in source)
+        {
+            CollectIconPrefabBounds(root, child, ref bounds, ref hasBounds);
+        }
+    }
+
+    private static void ProjectTransformedBounds(
+        Bounds bounds,
+        Matrix4x4 matrix,
+        Vector3 screenRight,
+        Vector3 screenUp,
+        Vector3 viewToCamera,
+        out float minU,
+        out float maxU,
+        out float minV,
+        out float maxV,
+        out float frontDepth)
+    {
+        minU = float.PositiveInfinity;
+        maxU = float.NegativeInfinity;
+        minV = float.PositiveInfinity;
+        maxV = float.NegativeInfinity;
+        frontDepth = float.NegativeInfinity;
+        IncludeProjectedBoundsCorner(bounds.min, bounds.max, matrix, screenRight, screenUp, viewToCamera, 0, ref minU, ref maxU, ref minV, ref maxV, ref frontDepth);
+        IncludeProjectedBoundsCorner(bounds.min, bounds.max, matrix, screenRight, screenUp, viewToCamera, 1, ref minU, ref maxU, ref minV, ref maxV, ref frontDepth);
+        IncludeProjectedBoundsCorner(bounds.min, bounds.max, matrix, screenRight, screenUp, viewToCamera, 2, ref minU, ref maxU, ref minV, ref maxV, ref frontDepth);
+        IncludeProjectedBoundsCorner(bounds.min, bounds.max, matrix, screenRight, screenUp, viewToCamera, 3, ref minU, ref maxU, ref minV, ref maxV, ref frontDepth);
+        IncludeProjectedBoundsCorner(bounds.min, bounds.max, matrix, screenRight, screenUp, viewToCamera, 4, ref minU, ref maxU, ref minV, ref maxV, ref frontDepth);
+        IncludeProjectedBoundsCorner(bounds.min, bounds.max, matrix, screenRight, screenUp, viewToCamera, 5, ref minU, ref maxU, ref minV, ref maxV, ref frontDepth);
+        IncludeProjectedBoundsCorner(bounds.min, bounds.max, matrix, screenRight, screenUp, viewToCamera, 6, ref minU, ref maxU, ref minV, ref maxV, ref frontDepth);
+        IncludeProjectedBoundsCorner(bounds.min, bounds.max, matrix, screenRight, screenUp, viewToCamera, 7, ref minU, ref maxU, ref minV, ref maxV, ref frontDepth);
+    }
+
+    private static void IncludeProjectedBoundsCorner(
+        Vector3 min,
+        Vector3 max,
+        Matrix4x4 matrix,
+        Vector3 screenRight,
+        Vector3 screenUp,
+        Vector3 viewToCamera,
+        int corner,
+        ref float minU,
+        ref float maxU,
+        ref float minV,
+        ref float maxV,
+        ref float frontDepth)
+    {
+        Vector3 local = new(
+            (corner & 1) == 0 ? min.x : max.x,
+            (corner & 2) == 0 ? min.y : max.y,
+            (corner & 4) == 0 ? min.z : max.z);
+        Vector3 point = matrix.MultiplyPoint3x4(local);
+        float u = Vector3.Dot(point, screenRight);
+        float v = Vector3.Dot(point, screenUp);
+        float depth = Vector3.Dot(point, viewToCamera);
+        minU = Mathf.Min(minU, u);
+        maxU = Mathf.Max(maxU, u);
+        minV = Mathf.Min(minV, v);
+        maxV = Mathf.Max(maxV, v);
+        frontDepth = Mathf.Max(frontDepth, depth);
+    }
+
+    private static void EncapsulateTransformedBounds(Bounds localBounds, Matrix4x4 matrix, ref Bounds bounds, ref bool hasBounds)
+    {
+        IncludeTransformedBoundsCorner(localBounds.min, localBounds.max, matrix, 0, ref bounds, ref hasBounds);
+        IncludeTransformedBoundsCorner(localBounds.min, localBounds.max, matrix, 1, ref bounds, ref hasBounds);
+        IncludeTransformedBoundsCorner(localBounds.min, localBounds.max, matrix, 2, ref bounds, ref hasBounds);
+        IncludeTransformedBoundsCorner(localBounds.min, localBounds.max, matrix, 3, ref bounds, ref hasBounds);
+        IncludeTransformedBoundsCorner(localBounds.min, localBounds.max, matrix, 4, ref bounds, ref hasBounds);
+        IncludeTransformedBoundsCorner(localBounds.min, localBounds.max, matrix, 5, ref bounds, ref hasBounds);
+        IncludeTransformedBoundsCorner(localBounds.min, localBounds.max, matrix, 6, ref bounds, ref hasBounds);
+        IncludeTransformedBoundsCorner(localBounds.min, localBounds.max, matrix, 7, ref bounds, ref hasBounds);
+    }
+
+    private static void IncludeTransformedBoundsCorner(Vector3 min, Vector3 max, Matrix4x4 matrix, int corner, ref Bounds bounds, ref bool hasBounds)
+    {
+        Vector3 local = new(
+            (corner & 1) == 0 ? min.x : max.x,
+            (corner & 2) == 0 ? min.y : max.y,
+            (corner & 4) == 0 ? min.z : max.z);
+        Vector3 point = matrix.MultiplyPoint3x4(local);
+        if (!hasBounds)
+        {
+            bounds = new Bounds(point, Vector3.zero);
+            hasBounds = true;
+            return;
+        }
+
+        bounds.Encapsulate(point);
     }
 
     private static Vector3 FromVector(float[] value)
@@ -485,19 +636,50 @@ internal static class ZoneBlueprintVisuals
         return new Quaternion(value[0], value[1], value[2], value[3]);
     }
 
-    private readonly struct ProjectedEntry
+    private readonly struct IconPrefabBounds
     {
-        public ProjectedEntry(ZoneBlueprintEntry entry, float u, float v, float depth)
+        public IconPrefabBounds(bool hasBounds, Bounds bounds)
+        {
+            HasBounds = hasBounds;
+            Bounds = bounds;
+        }
+
+        public bool HasBounds { get; }
+        public Bounds Bounds { get; }
+    }
+
+    private readonly struct ProjectedIconEntry
+    {
+        public ProjectedIconEntry(
+            ZoneBlueprintEntry entry,
+            float minU,
+            float maxU,
+            float minV,
+            float maxV,
+            float frontDepth,
+            float centerU,
+            float centerV,
+            float centerDepth)
         {
             Entry = entry;
-            U = u;
-            V = v;
-            Depth = depth;
+            MinU = minU;
+            MaxU = maxU;
+            MinV = minV;
+            MaxV = maxV;
+            FrontDepth = frontDepth;
+            CenterU = centerU;
+            CenterV = centerV;
+            CenterDepth = centerDepth;
         }
 
         public ZoneBlueprintEntry Entry { get; }
-        public float U { get; }
-        public float V { get; }
-        public float Depth { get; }
+        public float MinU { get; }
+        public float MaxU { get; }
+        public float MinV { get; }
+        public float MaxV { get; }
+        public float FrontDepth { get; }
+        public float CenterU { get; }
+        public float CenterV { get; }
+        public float CenterDepth { get; }
     }
 }

@@ -261,6 +261,7 @@
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </Content>
         <Content Include="README.md"/>
+        <Content Include="Thunderstore\BepInEx\**\*"/>
         <Content Include="Thunderstore\CHANGELOG.md"/>
         <Content Include="Thunderstore\icon.png"/>
         <Content Include="Thunderstore\manifest.json"/>
@@ -338,9 +339,11 @@
             <PackageFiles Include="$(ThunderstorePackageRoot)\CHANGELOG.md" Condition="Exists('$(ThunderstorePackageRoot)\CHANGELOG.md')"/>
             <PackageFiles Include="$(ThunderstorePackageRoot)\manifest.json" Condition="Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
             <PackageFiles Include="$(ThunderstorePackageRoot)\icon.png" Condition="Exists('$(ThunderstorePackageRoot)\icon.png')"/>
+            <ThunderstoreBepInExFiles Include="$(ThunderstorePackageRoot)\BepInEx\**\*" Condition="Exists('$(ThunderstorePackageRoot)\BepInEx')"/>
         </ItemGroup>
         <MakeDir Directories="$(PackageDir)"/>
         <Copy SourceFiles="@(PackageFiles)" DestinationFolder="$(PackageDir)"/>
+        <Copy SourceFiles="@(ThunderstoreBepInExFiles)" DestinationFiles="@(ThunderstoreBepInExFiles->'$(PackageDir)\BepInEx\%(RecursiveDir)%(Filename)%(Extension)')"/>
         <Copy SourceFiles="$(ProjectDir)translations\English.yml" DestinationFiles="$(PackageDir)\$(AssemblyName).English.yml"/>
         <ZipDirectory SourceDirectory="$(PackageDir)" DestinationFile="$(ThunderstorePackageRoot)\$(PackageName).zip" Overwrite="true"/>
         <RemoveDir Directories="$(PackageDir)"/>

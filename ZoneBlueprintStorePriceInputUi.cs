@@ -37,7 +37,7 @@ internal static class ZoneBlueprintStorePriceInputUi
         _listing = listing;
         _mode = Mode.Offer;
         EnsurePanel();
-        ClearRows(setStatus: false);
+        LoadRows(listing.PriceItems);
         Show(
             HomesteadLocalization.Text("hs_store_make_offer"),
             HomesteadLocalization.Format("hs_store_offer_for", listing.Name),

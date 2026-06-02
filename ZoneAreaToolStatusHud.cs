@@ -483,7 +483,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private static string FormatMeters(float value)
     {
-        return $"{Mathf.RoundToInt(value)}m";
+        return $"{value.ToString("0.#", CultureInfo.InvariantCulture)}m";
     }
 
     private static string FormatDefaultPlacementLine(Vector3 horizontalOffset, float heightOffset, float yaw, float xAxisRotation, float zAxisRotation)
