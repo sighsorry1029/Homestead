@@ -162,6 +162,7 @@
         <Compile Include="ZoneAreaCameraZoomGuard.cs"/>
         <Compile Include="ZoneAreaToolController.cs"/>
         <Compile Include="ZoneAreaDismantleTool.cs"/>
+        <Compile Include="ZoneAreaRepair.cs"/>
         <Compile Include="ZoneAreaSelection.cs"/>
         <Compile Include="ZoneAreaToolShared.cs"/>
         <Compile Include="ZoneAreaToolStatusHud.cs"/>

@@ -13,8 +13,45 @@ internal static class GeneralConfig
 
     public static void Bind(HomesteadPlugin plugin)
     {
-        _serverConfigLocked = plugin.config("01 - General", "Lock Configuration", HomesteadPlugin.Toggle.On, "If on, the server controls synced settings.");
+        _serverConfigLocked = plugin.config(
+            "01 - General",
+            "Lock Configuration",
+            HomesteadPlugin.Toggle.On,
+            new ConfigDescription(
+                "If on, the server controls synced settings.",
+                null,
+                new ConfigurationManagerAttributes { Order = 1000 }));
         _ = HomesteadPlugin.ConfigSync.AddLockingConfigEntry(_serverConfigLocked);
+    }
+}
+
+internal static class AreaRepairConfig
+{
+    private static ConfigEntry<float> _baseRadius = null!;
+    private static ConfigEntry<float> _comfortRadiusScale = null!;
+
+    public static float BaseRadius => Mathf.Clamp(_baseRadius.Value, 0f, 10f);
+    public static float ComfortRadiusScale => Mathf.Clamp(_comfortRadiusScale.Value, 0f, 10f);
+    public static bool Enabled => BaseRadius > 0f || ComfortRadiusScale > 0f;
+
+    public static void Bind(HomesteadPlugin plugin)
+    {
+        _baseRadius = plugin.config(
+            "01 - General",
+            "Area Repair Base Radius",
+            0f,
+            new ConfigDescription(
+                "Base radius in meters for Homestead area repair. This part does not require cozy comfort. Set both area repair radius values to 0 to disable area repair.",
+                new AcceptableValueRange<float>(0f, 10f),
+                new ConfigurationManagerAttributes { Order = 990 }));
+        _comfortRadiusScale = plugin.config(
+            "01 - General",
+            "Area Repair Comfort Radius Scale",
+            4f,
+            new ConfigDescription(
+                "Extra area repair radius scale in meters multiplied by the cube root of your current comfort level while you are cozy. Set both area repair radius values to 0 to disable area repair.",
+                new AcceptableValueRange<float>(0f, 10f),
+                new ConfigurationManagerAttributes { Order = 980 }));
     }
 }
 

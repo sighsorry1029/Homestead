@@ -22,6 +22,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneBlueprintChestMapPins.Initialize(logger);
         ZoneBlueprintChestCommands.Initialize(logger);
         ZoneBlueprintStore.Initialize(logger);
+        ZoneAreaRepair.Initialize(logger);
         ZoneBuildCamera.Initialize(logger);
         ZoneGridSnap.Initialize(logger);
         ZonePlacementAdjust.Initialize(logger);

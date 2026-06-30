@@ -11,6 +11,7 @@ public partial class HomesteadPlugin
     private void BindSharedConfiguration()
     {
         GeneralConfig.Bind(this);
+        AreaRepairConfig.Bind(this);
         ClientConfig.Bind(this);
     }
 
