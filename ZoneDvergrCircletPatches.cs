@@ -193,6 +193,11 @@ internal static partial class ZoneDvergrCirclet
             }
 
             PatchItemData(item, initializeDurability: true);
+            if (!NeedsDvergrCircletRepair(item))
+            {
+                __result = false;
+                return false;
+            }
 
             Player player = Player.m_localPlayer;
             if (!player || !item.m_shared.m_canBeReparied)
@@ -210,6 +215,68 @@ internal static partial class ZoneDvergrCirclet
             CraftingStation station = player.GetCurrentCraftingStation();
             __result = MatchesRepairStation(station);
             return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.RepairOneItem))]
+    private static class InventoryGuiRepairOneItemPatch
+    {
+        private static bool Prefix(InventoryGui __instance)
+        {
+            if (!Active || Player.m_localPlayer == null)
+            {
+                return true;
+            }
+
+            Player player = Player.m_localPlayer;
+            CraftingStation station = player.GetCurrentCraftingStation();
+            if ((!station && !player.NoCostCheat()) ||
+                station && !station.CheckUsable(player, showMessage: false))
+            {
+                return false;
+            }
+
+            __instance.m_tempWornItems.Clear();
+            player.GetInventory().GetWornItems(__instance.m_tempWornItems);
+            bool hasDvergrCirclet = false;
+
+            foreach (ItemDrop.ItemData wornItem in __instance.m_tempWornItems)
+            {
+                if (IsDvergrCircletItem(wornItem))
+                {
+                    hasDvergrCirclet = true;
+                    continue;
+                }
+
+                if (__instance.CanRepair(wornItem))
+                {
+                    RepairInventoryItem(player, station, wornItem);
+                    return false;
+                }
+            }
+
+            foreach (ItemDrop.ItemData wornItem in __instance.m_tempWornItems)
+            {
+                if (!IsDvergrCircletItem(wornItem))
+                {
+                    continue;
+                }
+
+                hasDvergrCirclet = true;
+                if (__instance.CanRepair(wornItem))
+                {
+                    RepairInventoryItem(player, station, wornItem);
+                    return false;
+                }
+            }
+
+            if (hasDvergrCirclet)
+            {
+                player.Message(MessageHud.MessageType.Center, "No more item to repair");
+                return false;
+            }
+
+            return true;
         }
     }
 

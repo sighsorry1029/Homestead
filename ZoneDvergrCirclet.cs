@@ -13,6 +13,7 @@ internal static partial class ZoneDvergrCirclet
 {
     private const string PrefabName = "HelmetDverger";
     private const string CircletExtendedGuid = "shudnal.CircletExtended";
+    private const float RepairThresholdRatio = 0.95f;
     private const string InitKey = HomesteadPlugin.ModGUID + ".dvergr_circlet_initialized";
     private const string StateKey = HomesteadPlugin.ModGUID + ".dvergr_circlet_state";
     private static readonly int RemoteItemKey = StringExtensionMethods.GetStableHashCode(HomesteadPlugin.ModGUID + ".dvergr_circlet_item");
@@ -338,6 +339,30 @@ internal static partial class ZoneDvergrCirclet
         return NormalizeStationName(station.m_name) == wanted ||
                NormalizeStationName(station.gameObject.name) == wanted ||
                NormalizeStationName(Utils.GetPrefabName(station.gameObject.name)) == wanted;
+    }
+
+    private static bool NeedsDvergrCircletRepair(ItemDrop.ItemData item)
+    {
+        float maxDurability = item.GetMaxDurability();
+        return maxDurability > 0f &&
+               item.m_durability < maxDurability &&
+               item.m_durability / maxDurability <= RepairThresholdRatio;
+    }
+
+    private static void RepairInventoryItem(Player player, CraftingStation? station, ItemDrop.ItemData item)
+    {
+        float maxDurability = item.GetMaxDurability();
+        float missingRatio = maxDurability > 0f ? 1f - Mathf.Clamp01(item.m_durability / maxDurability) : 0f;
+        player.RaiseSkill(Skills.SkillType.Crafting, missingRatio);
+        item.m_durability = maxDurability;
+        if (station)
+        {
+            station.m_repairItemDoneEffects.Create(station.transform.position, Quaternion.identity);
+        }
+
+        player.Message(
+            MessageHud.MessageType.Center,
+            Localization.instance.Localize("$msg_repaired", item.m_shared.m_name));
     }
 
     private static string NormalizeStationName(string value)
