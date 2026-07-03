@@ -1780,20 +1780,6 @@ internal static class ZoneBlueprintSaveToolMenu
             }
         }
 
-        private static void Postfix(Hud __instance, Player player)
-        {
-            if (__instance == null || __instance.m_pieceDescription == null || player == null)
-            {
-                return;
-            }
-
-            Piece? selectedPiece = player.m_buildPieces != null ? player.m_buildPieces.GetSelectedPiece() : null;
-            if (selectedPiece != null &&
-                ZoneAreaRepair.TryBuildRepairPieceDescription(selectedPiece, out string repairDescription))
-            {
-                __instance.m_pieceDescription.text = repairDescription;
-            }
-        }
     }
 
     [HarmonyPatch(typeof(Player), nameof(Player.UpdateKnownRecipesList))]
@@ -1901,7 +1887,7 @@ internal static class ZoneBlueprintSaveToolMenu
     {
         private static void Postfix(Hud __instance, Piece piece)
         {
-            if (__instance == null || piece == null || __instance.m_hoveredPiece != piece)
+            if (__instance == null || piece == null)
             {
                 return;
             }
@@ -1910,6 +1896,11 @@ internal static class ZoneBlueprintSaveToolMenu
                 ZoneAreaRepair.TryBuildRepairPieceDescription(piece, out string repairDescription))
             {
                 __instance.m_pieceDescription.text = repairDescription;
+            }
+
+            if (__instance.m_hoveredPiece != piece)
+            {
+                return;
             }
 
             ZoneBlueprintSaveToolMarker? marker = GetMarker(piece);
