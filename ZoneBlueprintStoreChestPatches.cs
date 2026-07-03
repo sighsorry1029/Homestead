@@ -292,22 +292,46 @@ internal static class ZoneBlueprintStoreChestContainerPatch
 [HarmonyPatch(typeof(Container), nameof(Container.GetHoverText))]
 internal static class ZoneBlueprintStoreChestHoverPatch
 {
+    private const string MyLittleUiGuid = "shudnal.MyLittleUI";
+
     private static bool Prefix(Container __instance, ref string __result)
     {
-        if (ZoneBlueprintPlanAnchor.TryGetAnchor(__instance, out ZoneBlueprintPlanAnchor anchor))
-        {
-            __result = anchor.GetPlanHoverText();
-            return false;
-        }
-
-        ZoneBlueprintStoreChest chest = __instance.GetComponent<ZoneBlueprintStoreChest>();
-        if (chest == null)
+        if (!TryBuildHoverText(__instance, out string hoverText))
         {
             return true;
         }
 
-        __result = chest.GetHoverText();
+        __result = hoverText;
         return false;
+    }
+
+    [HarmonyAfter(new[] { MyLittleUiGuid })]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(Container __instance, ref string __result)
+    {
+        if (TryBuildHoverText(__instance, out string hoverText))
+        {
+            __result = hoverText;
+        }
+    }
+
+    private static bool TryBuildHoverText(Container container, out string hoverText)
+    {
+        hoverText = "";
+        if (ZoneBlueprintPlanAnchor.TryGetAnchor(container, out ZoneBlueprintPlanAnchor anchor))
+        {
+            hoverText = anchor.GetPlanHoverText();
+            return true;
+        }
+
+        ZoneBlueprintStoreChest chest = container.GetComponent<ZoneBlueprintStoreChest>();
+        if (chest == null)
+        {
+            return false;
+        }
+
+        hoverText = chest.GetHoverText();
+        return true;
     }
 }
 
