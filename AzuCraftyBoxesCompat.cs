@@ -447,9 +447,4 @@ internal static class AzuCraftyBoxesCompat
         }
     }
 
-    private static Exception Unwrap(Exception ex)
-    {
-        return ex is TargetInvocationException { InnerException: not null } ? ex.InnerException : ex;
-    }
-
 }

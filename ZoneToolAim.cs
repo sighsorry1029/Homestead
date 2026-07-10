@@ -21,24 +21,12 @@ internal static class ZoneToolAim
             if (Physics.Raycast(origin, direction, out RaycastHit hit, rayDistance, mask, QueryTriggerInteraction.Ignore))
             {
                 point = hit.point;
-                point.y = SampleGroundY(point.x, point.z, point.y);
+                point.y = HomesteadTerrainSupport.SampleGroundY(point.x, point.z, point.y);
                 return true;
             }
         }
 
         return false;
-    }
-
-    public static float SampleGroundY(float x, float z, float fallbackY)
-    {
-        if (ZoneSystem.instance == null)
-        {
-            return fallbackY;
-        }
-
-        Vector3 point = new(x, fallbackY, z);
-        ZoneSystem.instance.GetGroundData(ref point, out _, out _, out _, out _);
-        return point.y;
     }
 
     private static bool TryGetCameraRay(out Vector3 origin, out Vector3 direction)

@@ -56,12 +56,18 @@ internal static class ZoneBlueprintStore
     public static void ResetForWorldSession()
     {
         ZoneBlueprintStoreNotifications.ResetNotificationSession();
+        ZoneBlueprintStoreListAction.ResetForWorldSession();
+        ZoneBlueprintStoreMaintenance.ResetForWorldSession();
         _pendingListingRefreshAt = -1f;
         ZoneBlueprintStoreUi.ResetForWorldSession();
         ZoneBlueprintStoreOffersUi.ResetForWorldSession();
+        ZoneBlueprintStorePriceEditorUi.ResetForWorldSession();
+        ZoneBlueprintStorePriceInputUi.ResetForWorldSession();
+        ZoneBlueprintStoreNotificationsUi.ResetForWorldSession();
         ZoneBlueprintStorePreviewAction.ResetPreviewRestorePayloadCache();
         ZoneBlueprintStoreChest.ResetPreviewRestoreCacheForWorldSession();
-        ZoneBlueprintStorePreviewTool.DeactivateActive();
+        ZoneBlueprintStoreChestRegistry.ResetForWorldSession();
+        ZoneBlueprintStorePreviewTool.ResetForWorldSession();
         ZoneBlueprintStorePanelRuntime.ResetInputBlocks();
     }
 
@@ -78,50 +84,6 @@ internal static class ZoneBlueprintStore
     public static void OpenSellDialog(string blueprintName)
     {
         OpenPriceChestPreview(blueprintName, Player.m_localPlayer);
-    }
-
-    public static void OpenPriceChest(string blueprintName, Player? player)
-    {
-        if (player == null)
-        {
-            return;
-        }
-
-        blueprintName = (blueprintName ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(blueprintName))
-        {
-            ZoneBlueprintStoreVisuals.Message(HomesteadLocalization.Text("hs_store_blueprint_name_required"), MessageHud.MessageType.Center);
-            return;
-        }
-
-        string blueprintText;
-        try
-        {
-            blueprintText = ZoneBlueprintCommands.SerializeBlueprintForStore(blueprintName);
-        }
-        catch (Exception ex)
-        {
-            ZoneBlueprintStoreVisuals.Message(HomesteadLocalization.Format("hs_store_blueprint_load_failed", blueprintName, ex.Message), MessageHud.MessageType.Center);
-            return;
-        }
-
-        if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(blueprintText, enforceUploadLimit: true, out byte[] blueprintPayload, out string payloadReason))
-        {
-            ZoneBlueprintStoreVisuals.Message(payloadReason, MessageHud.MessageType.Center);
-            return;
-        }
-
-        ZoneBlueprintStoreTransformPayload? target = ZoneBlueprintStorePlacement.TryGetStoreChestPlacement(player, out Vector3 targetPosition, out Quaternion targetRotation)
-            ? ZoneTransformPayload.From(targetPosition, targetRotation)
-            : null;
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.PriceChest, new ZoneBlueprintStorePriceChestRequest
-        {
-            Name = blueprintName,
-            BlueprintEncoding = ZoneBlueprintNetworkPayload.GzipEncoding,
-            BlueprintPayload = blueprintPayload,
-            IconPngBase64 = ZoneBlueprintVisuals.GetIconPngBase64(blueprintName),
-            Target = target
-        }, player);
     }
 
     public static void OpenPriceChestPreview(string blueprintName, Player? player)
@@ -149,11 +111,6 @@ internal static class ZoneBlueprintStore
         {
             ZoneBlueprintStoreVisuals.Message(HomesteadLocalization.Format("hs_store_blueprint_load_failed", blueprintName, ex.Message), MessageHud.MessageType.Center);
         }
-    }
-
-    public static void OpenPriceChestAt(string blueprintName, Vector3 chestPosition, Quaternion chestRotation)
-    {
-        OpenPriceChestAt(blueprintName, chestPosition, chestRotation, chestPosition, chestRotation);
     }
 
     public static void OpenPriceChestAt(string blueprintName, Vector3 chestPosition, Quaternion chestRotation, Vector3 previewAnchor, Quaternion previewRotation)
@@ -225,7 +182,7 @@ internal static class ZoneBlueprintStore
         ZoneBlueprintStoreUi.RequestCurrentPage(iconListingIds);
     }
 
-    internal static void RequestListingIcons(IReadOnlyList<string> iconListingIds)
+    internal static void RequestListingIcons(IReadOnlyList<string> iconListingIds, int requestId)
     {
         List<string> ids = iconListingIds?
             .Where(id => !string.IsNullOrWhiteSpace(id))
@@ -238,6 +195,7 @@ internal static class ZoneBlueprintStore
 
         ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.List, new ZoneBlueprintStoreListRequest
         {
+            RequestId = requestId,
             IconsOnly = true,
             Limit = 0,
             IncludeNotifications = false,

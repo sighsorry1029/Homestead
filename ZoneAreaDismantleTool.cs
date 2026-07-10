@@ -590,7 +590,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
                 refunds[prefabName] = refund;
             }
 
-            refund.Amount += amount;
+            refund.Amount = ZoneMaterialEscrow.AddAmountsSaturating(refund.Amount, amount);
         }
     }
 

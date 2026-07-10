@@ -64,7 +64,7 @@ internal static class ZoneBlueprintStorePurchaseAction
         else
         {
             chestPosition = position + rotation * new Vector3(0f, 0f, 2.2f);
-            chestPosition.y = ZoneBlueprintStorePlacement.SampleGroundY(chestPosition.x, chestPosition.z, chestPosition.y);
+            chestPosition.y = HomesteadTerrainSupport.SampleGroundY(chestPosition.x, chestPosition.z, chestPosition.y);
         }
 
         if (!ZoneBlueprintStorePlacement.TryReadOptionalStorePreviewAnchor(request.PreviewAnchor, position, previewAnchor, previewRotation, out previewAnchor, out previewRotation, out reason))
@@ -158,6 +158,11 @@ internal static class ZoneBlueprintStorePurchaseAction
         ZoneBlueprintStoreCatalog rollbackCatalog = ZoneBlueprintStoreDraftRepository.CloneCatalog(catalog);
         ZoneBlueprintStoreEconomy.CreditSeller(catalog, listing, priceItems, incrementPurchaseCount: true);
         ZoneBlueprintStoreNotifications.AddPurchaseNotification(catalog, listing, buyerName, priceItems, offerId);
+        if (offer != null)
+        {
+            catalog.Offers.Remove(offer);
+        }
+
         if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
         {
             ZoneBlueprintStoreDraftRepository.SaveCatalog(rollbackCatalog);

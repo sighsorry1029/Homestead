@@ -105,7 +105,8 @@ internal static class ZoneBlueprintStoreOfferAction
                 .Where(offer =>
                     string.Equals(offer.ListingId, listing.ListingId, StringComparison.Ordinal) &&
                     !string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Deleted, StringComparison.Ordinal))
-                .OrderByDescending(offer => offer.UpdatedAt, StringComparer.Ordinal)
+                .OrderByDescending(offer => HomesteadTimestamp.ParseUtc(offer.UpdatedAt))
+                .ThenByDescending(offer => offer.OfferId, StringComparer.Ordinal)
                 .Select(offer => ZoneBlueprintStoreDtos.ToOfferDto(offer, canManage, playerId, platformId))
                 .ToList()
         });
@@ -171,9 +172,12 @@ internal static class ZoneBlueprintStoreOfferAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DeleteOffer, HomesteadLocalization.Text("hs_store_offer_delete_owner_only"));
         }
 
-        offer.Status = ZoneBlueprintStoreOfferStatus.Deleted;
-        offer.UpdatedAt = HomesteadTimestamp.Now();
-        ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
+        catalog.Offers.Remove(offer);
+        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DeleteOffer, saveReason);
+        }
+
         return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.DeleteOffer, true, HomesteadLocalization.Format("hs_store_offer_deleted_status", offer.BuyerName, listing.Name), catalog, listing, playerId, platformId);
     }
 

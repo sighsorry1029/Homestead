@@ -18,9 +18,4 @@ internal sealed class ZoneRpcRegistrar
         _registeredRoutedRpc = routedRpc;
         return true;
     }
-
-    public void Reset()
-    {
-        _registeredRoutedRpc = null;
-    }
 }

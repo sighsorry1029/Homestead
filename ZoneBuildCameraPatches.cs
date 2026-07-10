@@ -3,16 +3,6 @@ using UnityEngine;
 
 namespace Homestead;
 
-[HarmonyPatch(typeof(Player), nameof(Player.SetLocalPlayer))]
-internal static class ZoneBuildCameraPlayerSetLocalPlayerPatch
-{
-    private static void Postfix()
-    {
-        ZoneBuildCamera.DisableBuildMode();
-        HomesteadFeatureBootstrap.OnLocalPlayerSet();
-    }
-}
-
 [HarmonyPatch(typeof(CraftingStation), nameof(CraftingStation.HaveBuildStationInRange))]
 internal static class ZoneBuildCameraCraftingStationHaveBuildStationInRangePatch
 {

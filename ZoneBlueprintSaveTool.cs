@@ -110,9 +110,15 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         _instance?.DeactivateInternal();
     }
 
-    public static void ClearSelection()
+    public static void ResetForWorldSession()
     {
-        _instance?.ClearSelectionInternal();
+        if (_instance == null || !_instance)
+        {
+            return;
+        }
+
+        _instance.DeactivateInternal();
+        _instance.ClearIconRenderQueue();
     }
 
     public static void QueueMenuRefresh(string blueprintName)
@@ -761,6 +767,19 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         _iconRenderCoroutine = null;
     }
 
+    private void ClearIconRenderQueue()
+    {
+        if (_iconRenderCoroutine != null)
+        {
+            StopCoroutine(_iconRenderCoroutine);
+            _iconRenderCoroutine = null;
+        }
+
+        _iconRenderQueue.Clear();
+        _queuedIconRenders.Clear();
+        _queuedIconBlueprints.Clear();
+    }
+
     private static bool ShouldDelayIconRenderForPlacement()
     {
         Player player = Player.m_localPlayer;
@@ -871,7 +890,9 @@ internal static class ZoneBlueprintSaveToolMenu
 
     public static void ResetForWorldSession()
     {
+        ZoneBlueprintSaveTool.ResetForWorldSession();
         ClearBlueprintPiecesForWorldSession();
+        ZoneBlueprintVisuals.ResetForWorldSession();
         CachedBlueprintNames.Clear();
         PendingBlueprintPieceNames.Clear();
         PendingBlueprintPieceNameSet.Clear();
@@ -883,26 +904,6 @@ internal static class ZoneBlueprintSaveToolMenu
         _lastBlueprintPieceRegisterFrame = -1;
         _blueprintPiecesRegisteredThisFrame = 0;
         _forceHammerRefreshOnNextTableUpdate = true;
-    }
-
-    public static bool IsToolPiece(Piece? piece)
-    {
-        return piece != null && piece.GetComponent<ZoneBlueprintSaveToolMarker>() != null;
-    }
-
-    public static void InvalidateBlueprint(string name)
-    {
-        ZoneBlueprintVisuals.InvalidateIcon(name);
-        MarkBlueprintListDirty();
-        if (BlueprintPieces.TryGetValue(name, out Piece piece) && piece)
-        {
-            if (ZoneBlueprintCommands.TryLoadBlueprint(name, out ZoneBlueprintFile blueprint))
-            {
-                UpdateBlueprintPiece(piece, name, blueprint);
-            }
-        }
-
-        RefreshBlueprintPieces(forceScan: true);
     }
 
     public static void RefreshAfterBlueprintSaved(string name, ZoneBlueprintFile blueprint, bool iconReady)
@@ -940,11 +941,6 @@ internal static class ZoneBlueprintSaveToolMenu
         piece.m_icon = icon;
         // Background icon renders are picked up by the next normal hammer UI refresh.
         // Forcing a full HUD rebuild here scales with every hammer piece from every mod.
-    }
-
-    public static void ForceRefreshLocalHammerTable(string? highlightName = null)
-    {
-        RequestHammerTableRefresh(highlightName);
     }
 
     public static void RequestHammerTableRefresh(string? highlightName = null)
@@ -1062,12 +1058,6 @@ internal static class ZoneBlueprintSaveToolMenu
         timer.Stop();
         HomesteadPlugin.HomesteadLogger.LogDebug($"Homestead hammer table refresh completed in {timer.Elapsed.TotalMilliseconds:0.0} ms; blueprints={BlueprintPieces.Count}; tableChanged={tableChanged}; visibleSelectionChanged={visibleSelectionChanged}; availableListRefreshNeeded={availableListRefreshNeeded}.");
         return true;
-    }
-
-    public static bool IsToolSelected(Player player)
-    {
-        PieceTable table = player.m_buildPieces;
-        return table != null && IsToolPiece(table.GetSelectedPiece());
     }
 
     public static bool IsStoreToolSelected(Player? player)
@@ -1593,41 +1583,6 @@ internal static class ZoneBlueprintSaveToolMenu
                piece.gameObject;
     }
 
-    public static bool TrySelectTool(Player player)
-    {
-        PieceTable table = player.m_buildPieces;
-        if (table == null || !ZoneBlueprintHammerTable.LooksLike(table))
-        {
-            return false;
-        }
-
-        RefreshBlueprintPieces();
-        player.UpdateAvailablePiecesList();
-        if (_toolPiece == null)
-        {
-            return false;
-        }
-
-        EnsureBlueprintPiecesVisibleInHammerTable(table);
-        int categoryListIndex = table.m_categories.IndexOf(_toolPiece.m_category);
-        int availableIndex = (int)_toolPiece.m_category;
-        int pieceIndex = availableIndex >= 0 && availableIndex < table.m_availablePieces.Count
-            ? table.m_availablePieces[availableIndex].IndexOf(_toolPiece)
-            : -1;
-        if (categoryListIndex < 0 || pieceIndex < 0)
-        {
-            return false;
-        }
-
-        table.SetCategory(categoryListIndex);
-        table.SetSelected(new Vector2Int(pieceIndex % 15, pieceIndex / 15));
-        ZoneBlueprintSaveTool.Activate(player);
-        ZoneAreaDismantleTool.Deactivate();
-        ZoneBlueprintPlacementTool.Deactivate();
-        Hud.HidePieceSelection();
-        return true;
-    }
-
     private static void EnsureToolPiece()
     {
         if (_toolPiece != null && _toolPiece)
@@ -1845,6 +1800,35 @@ internal static class ZoneBlueprintSaveToolMenu
         ZoneBlueprintPlacementTool.Deactivate();
     }
 
+    private static void ActivateToolForMarker(Player player, ZoneBlueprintSaveToolMarker marker)
+    {
+        if (marker.Kind == ZoneBlueprintToolKind.AreaSave)
+        {
+            ZoneAreaDismantleTool.Deactivate();
+            ZoneBlueprintPlacementTool.Deactivate();
+            ZoneBlueprintSaveTool.Activate(player);
+        }
+        else if (marker.Kind == ZoneBlueprintToolKind.AreaDismantle)
+        {
+            ZoneBlueprintSaveTool.Deactivate();
+            ZoneBlueprintPlacementTool.Deactivate();
+            ZoneAreaDismantleTool.Activate(player);
+        }
+        else if (marker.Kind == ZoneBlueprintToolKind.Store)
+        {
+            ZoneBlueprintSaveTool.Deactivate();
+            ZoneAreaDismantleTool.Deactivate();
+            ZoneBlueprintPlacementTool.Deactivate();
+            ZoneBlueprintStore.Open(player);
+        }
+        else
+        {
+            ZoneBlueprintSaveTool.Deactivate();
+            ZoneAreaDismantleTool.Deactivate();
+            ZoneBlueprintPlacementTool.Activate(player, marker.BlueprintName);
+        }
+    }
+
     private static bool IsStoreListClickDown()
     {
         return BlueprintConfig.IsStoreListModifierHeld() && Input.GetMouseButtonDown(0);
@@ -1883,19 +1867,13 @@ internal static class ZoneBlueprintSaveToolMenu
     }
 
     [HarmonyPatch(typeof(Hud), nameof(Hud.SetupPieceInfo))]
-    private static class HudSetupPieceInfoPatch
+    private static class HudSetupBlueprintStoreInfoPatch
     {
         private static void Postfix(Hud __instance, Piece piece)
         {
             if (__instance == null || piece == null)
             {
                 return;
-            }
-
-            if (__instance.m_pieceDescription != null &&
-                ZoneAreaRepair.TryBuildRepairPieceDescription(piece, out string repairDescription))
-            {
-                __instance.m_pieceDescription.text = repairDescription;
             }
 
             if (__instance.m_hoveredPiece != piece)
@@ -1950,31 +1928,7 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintStorePreviewTool.DeactivateActive();
             table.SetSelected(p);
             __instance.m_placePressedTime = -9998f;
-            if (marker.Kind == ZoneBlueprintToolKind.AreaSave)
-            {
-                ZoneAreaDismantleTool.Deactivate();
-                ZoneBlueprintPlacementTool.Deactivate();
-                ZoneBlueprintSaveTool.Activate(__instance);
-            }
-            else if (marker.Kind == ZoneBlueprintToolKind.AreaDismantle)
-            {
-                ZoneBlueprintSaveTool.Deactivate();
-                ZoneBlueprintPlacementTool.Deactivate();
-                ZoneAreaDismantleTool.Activate(__instance);
-            }
-            else if (marker.Kind == ZoneBlueprintToolKind.Store)
-            {
-                ZoneBlueprintSaveTool.Deactivate();
-                ZoneAreaDismantleTool.Deactivate();
-                ZoneBlueprintPlacementTool.Deactivate();
-                ZoneBlueprintStore.Open(__instance);
-            }
-            else
-            {
-                ZoneBlueprintSaveTool.Deactivate();
-                ZoneAreaDismantleTool.Deactivate();
-                ZoneBlueprintPlacementTool.Activate(__instance, marker.BlueprintName);
-            }
+            ActivateToolForMarker(__instance, marker);
 
             Hud.HidePieceSelection();
             return false;
@@ -2014,31 +1968,7 @@ internal static class ZoneBlueprintSaveToolMenu
                 __instance.m_placementGhost = null;
             }
 
-            if (marker.Kind == ZoneBlueprintToolKind.AreaSave)
-            {
-                ZoneAreaDismantleTool.Deactivate();
-                ZoneBlueprintPlacementTool.Deactivate();
-                ZoneBlueprintSaveTool.Activate(__instance);
-            }
-            else if (marker.Kind == ZoneBlueprintToolKind.AreaDismantle)
-            {
-                ZoneBlueprintSaveTool.Deactivate();
-                ZoneBlueprintPlacementTool.Deactivate();
-                ZoneAreaDismantleTool.Activate(__instance);
-            }
-            else if (marker.Kind == ZoneBlueprintToolKind.Store)
-            {
-                ZoneBlueprintSaveTool.Deactivate();
-                ZoneAreaDismantleTool.Deactivate();
-                ZoneBlueprintPlacementTool.Deactivate();
-                ZoneBlueprintStore.Open(__instance);
-            }
-            else
-            {
-                ZoneBlueprintSaveTool.Deactivate();
-                ZoneAreaDismantleTool.Deactivate();
-                ZoneBlueprintPlacementTool.Activate(__instance, marker.BlueprintName);
-            }
+            ActivateToolForMarker(__instance, marker);
 
             return false;
         }

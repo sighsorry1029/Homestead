@@ -46,12 +46,13 @@ internal static class ZoneBuildCamera
         Log = logger;
     }
 
-    internal static void Shutdown()
+    internal static void ResetForWorldSession()
     {
         DisableBuildMode();
         RestoreAllMaxPlaceDistances();
         InBuildModeByPlayer.Clear();
         ZoneBuildCameraDvergerLight.CleanupAll();
+        _nextMessageTime = 0f;
     }
 
     internal static void Update()
@@ -279,13 +280,9 @@ internal static class ZoneBuildCamera
     internal static bool IsInputBlocked(bool blockPieceSelection)
     {
         return (Chat.instance && Chat.instance.HasFocus()) ||
-               global::Console.IsVisible() ||
-               HomesteadInputBlockers.IsTextInputVisible() ||
+               HomesteadInputBlockers.IsCommonGameplayInputBlocked() ||
                StoreGui.IsVisible() ||
-               InventoryGui.IsVisible() ||
-               Menu.IsVisible() ||
                (TextViewer.instance && TextViewer.instance.IsVisible()) ||
-               Minimap.IsOpen() ||
                Hud.InRadial() ||
                (blockPieceSelection && Hud.IsPieceSelectionVisible()) ||
                PlayerCustomizaton.BarberBlocksLook() ||

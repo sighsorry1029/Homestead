@@ -100,9 +100,4 @@ internal static class ZoneBlueprintStorePreviewPayload
 
         return preview;
     }
-
-    public static Material ApplyPreviewMaterial(GameObject root, Color color)
-    {
-        return ZoneBlueprintGhostOwner.ApplyMaterial(root, color);
-    }
 }

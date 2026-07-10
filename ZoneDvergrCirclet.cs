@@ -240,12 +240,7 @@ internal static partial class ZoneDvergrCirclet
 
     private static bool ShouldBlockInput()
     {
-        return Hud.IsPieceSelectionVisible() ||
-               global::Console.IsVisible() ||
-               HomesteadInputBlockers.IsTextInputVisible() ||
-               Menu.IsVisible() ||
-               InventoryGui.IsVisible() ||
-               Minimap.IsOpen();
+        return Hud.IsPieceSelectionVisible() || HomesteadInputBlockers.IsCommonGameplayInputBlocked();
     }
 
     private static bool PatchItemData(ItemDrop.ItemData? item, bool initializeDurability)

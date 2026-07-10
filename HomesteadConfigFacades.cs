@@ -167,7 +167,6 @@ internal static class BlueprintConfig
         ZoneBlueprintStoreChestPrefab.PayoutPrefabName
     };
 
-    public static bool TerrainSupportEnabled => _terrainSupport.Value == BlueprintTerrainSupportMode.On;
     public static KeyboardShortcut ChestConfirmHotkey => _chestConfirmHotkey.Value;
     public static bool AzuCraftyBoxesPullOnConfirm => _azuCraftyBoxesPullMode.Value != BlueprintAzuCraftyBoxesPullMode.Off;
     public static bool AzuCraftyBoxesPullOnOpen => _azuCraftyBoxesPullMode.Value == BlueprintAzuCraftyBoxesPullMode.OpenAndConfirm;
@@ -189,7 +188,6 @@ internal static class BlueprintConfig
     public static Vector2 StoreLargePanelOffset => new(Mathf.Clamp(_storeLargePanelX.Value, -2000f, 2000f), Mathf.Clamp(_storeLargePanelY.Value, -2000f, 2000f));
     public static float StoreFormPanelScale => FixedStorePanelScale;
     public static Vector2 StoreFormPanelOffset => new(Mathf.Clamp(_storeFormPanelX.Value, -2000f, 2000f), Mathf.Clamp(_storeFormPanelY.Value, -2000f, 2000f));
-    public static float StoreUiScale => StoreLargePanelScale;
     public static void SetStoreLargePanelOffset(Vector2 offset)
     {
         _storeLargePanelX.Value = Mathf.Clamp(offset.x, -2000f, 2000f);

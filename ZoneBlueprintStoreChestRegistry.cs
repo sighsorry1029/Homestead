@@ -10,6 +10,12 @@ internal static class ZoneBlueprintStoreChestRegistry
     private static readonly Dictionary<Key, HashSet<ZoneBlueprintStoreChest>> ByKey = new();
     private static readonly Dictionary<ZoneBlueprintStoreChest, Key> ChestKeys = new();
 
+    public static void ResetForWorldSession()
+    {
+        ByKey.Clear();
+        ChestKeys.Clear();
+    }
+
     public static void Refresh(ZoneBlueprintStoreChest chest)
     {
         Unregister(chest);
@@ -31,7 +37,7 @@ internal static class ZoneBlueprintStoreChestRegistry
 
     public static void Unregister(ZoneBlueprintStoreChest? chest)
     {
-        if (chest == null || !chest || !ChestKeys.TryGetValue(chest, out Key key))
+        if (ReferenceEquals(chest, null) || !ChestKeys.TryGetValue(chest, out Key key))
         {
             return;
         }

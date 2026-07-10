@@ -79,18 +79,15 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _instance?.Deactivate();
     }
 
-    public static void ForceDeactivateActive()
+    public static void ResetForWorldSession()
     {
-        _instance?.Deactivate();
-    }
-
-    public static void UnlockActivePlacement()
-    {
-        if (_instance != null && _instance)
+        if (_instance == null || !_instance)
         {
-            _instance._placementLocked = false;
-            _instance.RestoreUnlockedPreview();
+            return;
         }
+
+        _instance.Deactivate();
+        _instance.ClearLockedPreviews();
     }
 
     public static void NotifyStoreChestDestroyed(string mode, string listingId, string blueprintName)
@@ -201,11 +198,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         }
 
         return _instance.TryTransferPreviewToChestInternal(mode, listingId, blueprintName, owner, out root, out material);
-    }
-
-    internal static Material ApplyStorePreviewMaterial(GameObject root, Color color)
-    {
-        return ZoneBlueprintGhostOwner.ApplyMaterial(root, color);
     }
 
     private static void EnsureInstance()
@@ -646,26 +638,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         return $"price:{listingId}";
     }
 
-    private void RestoreUnlockedPreview()
-    {
-        if (!_lockedPreviewMaterialApplied || _blueprint == null)
-        {
-            return;
-        }
-
-        if (_previewRoot != null)
-        {
-            Object.Destroy(_previewRoot);
-        }
-
-        _previewRoot = ZoneBlueprintVisuals.CreateBlueprintVisualRoot(_blueprint, $"HomesteadStorePreview_{_name}");
-        _previewRoot.transform.SetParent(transform, false);
-        _previewRoot.transform.position = _currentAnchor;
-        _previewRoot.transform.rotation = _currentRotation;
-        _lockedPreviewMaterialApplied = false;
-        _lockedPreviewColorSignature = "";
-    }
-
     private void Deactivate()
     {
         _active = false;
@@ -728,10 +700,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             if (Physics.Raycast(ray, out RaycastHit hit, MaxPreviewDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
                 point = hit.point;
-                if (ZoneSystem.instance != null)
-                {
-                    ZoneSystem.instance.GetGroundData(ref point, out _, out _, out _, out _);
-                }
+                point.y = HomesteadTerrainSupport.SampleGroundY(point.x, point.z, point.y);
 
                 return true;
             }
@@ -760,12 +729,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         }
 
         return GetYawRotation(player.transform.rotation);
-    }
-
-    private void ResetOffsets()
-    {
-        _heightOffset = 0f;
-        _horizontalOffset = Vector3.zero;
     }
 
     private void UpdatePlaceInputGuard()

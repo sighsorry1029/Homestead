@@ -25,32 +25,16 @@ internal static class HomesteadTerrainSupport
         return Heightmap.GetHeight(new Vector3(x, 0f, z), out height);
     }
 
-    public static bool ApplyWorldSupportContacts(IEnumerable<Vector3> supportContacts)
+    public static float SampleGroundY(float x, float z, float fallbackY)
     {
-        List<TerrainSupportCell> supportCells = BuildSupportCells(supportContacts);
-        if (supportCells.Count == 0)
+        if (ZoneSystem.instance == null)
         {
-            return false;
+            return fallbackY;
         }
 
-        Dictionary<long, float> supportHeights = supportCells.ToDictionary(cell => PackCell(cell.X, cell.Z), cell => cell.Height);
-        List<Vector2i> zones = supportCells
-            .Select(cell => ZoneSystem.GetZone(new Vector3(cell.X, 0f, cell.Z)))
-            .Distinct()
-            .ToList();
-
-        bool changed = false;
-        foreach (Vector2i zone in zones)
-        {
-            if (!TryGetHeightmap(zone, out Heightmap heightmap))
-            {
-                throw new InvalidOperationException($"Target terrain zone ({zone.x},{zone.y}) is not loaded for blueprint support placement.");
-            }
-
-            changed |= ApplySupportCellsToHeightmap(heightmap, supportHeights, supportCells);
-        }
-
-        return changed;
+        Vector3 point = new(x, fallbackY, z);
+        ZoneSystem.instance.GetGroundData(ref point, out _, out _, out _, out _);
+        return point.y;
     }
 
     public static IEnumerator ApplyWorldSupportContactsAsync(IEnumerable<Vector3> supportContacts, Action<bool> onComplete)
@@ -223,58 +207,6 @@ internal static class HomesteadTerrainSupport
             .GroupBy(cell => PackCell(cell.X, cell.Z))
             .Select(group => group.OrderBy(cell => cell.Height).First())
             .ToList();
-    }
-
-    private static bool ApplySupportCellsToHeightmap(
-        Heightmap heightmap,
-        Dictionary<long, float> supportHeights,
-        List<TerrainSupportCell> supportCells)
-    {
-        int width = heightmap.m_width + 1;
-        float[] worldHeights = new float[width * width];
-        Color[] paints = new Color[width * width];
-        float featherWidth = BlueprintConfig.TerrainSupportFeatherWidth;
-        TerrainSupportCellIndex supportIndex = new(supportCells, featherWidth);
-        bool changed = false;
-
-        for (int z = 0; z < width; z++)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                int index = z * width + x;
-                Vector3 node = VertexToWorld(heightmap, x, z);
-                float current = GetWorldHeight(heightmap, x, z);
-                float baseHeight = TryGetTerrainBaseHeight(node.x, node.z, out float terrainBaseHeight) ? terrainBaseHeight : current;
-                float desired = baseHeight;
-                paints[index] = GetPaint(heightmap, x, z);
-
-                if (supportHeights.TryGetValue(PackCell(Mathf.RoundToInt(node.x), Mathf.RoundToInt(node.z)), out float targetHeight))
-                {
-                    desired = targetHeight;
-                }
-                else if (TryGetFeatheredSupportHeight(node, baseHeight, supportIndex, featherWidth, out float featheredHeight))
-                {
-                    desired = featheredHeight;
-                }
-
-                worldHeights[index] = desired;
-                if (Mathf.Abs(current - desired) > 0.01f)
-                {
-                    changed = true;
-                }
-            }
-        }
-
-        if (!changed)
-        {
-            return false;
-        }
-
-        TerrainComp compiler = heightmap.GetAndCreateTerrainCompiler();
-        PersistSupportFillBaseLayer(compiler, width, worldHeights, paints);
-        heightmap.Poke(delayed: false);
-        ClutterSystem.instance?.ResetGrass(heightmap.transform.position, SearchRadius);
-        return true;
     }
 
     private static IEnumerator ApplySupportCellsToHeightmapAsync(

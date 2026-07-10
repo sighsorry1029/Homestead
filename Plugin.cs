@@ -16,7 +16,7 @@ namespace Homestead;
 public partial class HomesteadPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Homestead";
-    internal const string ModVersion = "1.1.6";
+    internal const string ModVersion = "1.1.7";
     internal const string Author = "sighsorry";
     internal const string ModGUID = $"{Author}.{ModName}";
     internal const string DataStorageFolder = "Homestead";
@@ -112,6 +112,17 @@ public partial class HomesteadPlugin : BaseUnityPlugin
         Directory.CreateDirectory(BlueprintStorageFullPath);
         Directory.CreateDirectory(PlanGhostStorageFullPath);
         Directory.CreateDirectory(BlueprintStoreStorageFullPath);
+    }
+
+    private void BindConfiguration()
+    {
+        GeneralConfig.Bind(this);
+        AreaRepairConfig.Bind(this);
+        ClientConfig.Bind(this);
+        DvergrCircletConfig.Bind(this);
+        PlacementControlConfig.Bind(this);
+        BuildCameraConfig.Bind(this);
+        BlueprintConfig.Bind(this);
     }
 
     private void ReadConfigValues(object sender, FileSystemEventArgs e)
@@ -213,11 +224,6 @@ public static class ToggleExtensions
         public bool IsOn()
         {
             return value == HomesteadPlugin.Toggle.On;
-        }
-
-        public bool IsOff()
-        {
-            return value == HomesteadPlugin.Toggle.Off;
         }
     }
 }

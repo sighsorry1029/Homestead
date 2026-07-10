@@ -22,6 +22,11 @@ internal static class ZoneBlueprintStorePriceEditorUi
     private static ZoneBlueprintStoreChest? _chest;
     private static bool _inputBlocked;
 
+    public static void ResetForWorldSession()
+    {
+        Close(saveCurrentRows: false);
+    }
+
     public static void Open(ZoneBlueprintStoreChest chest)
     {
         if (chest == null || !chest || !chest.IsPriceChest())
@@ -180,7 +185,8 @@ internal static class ZoneBlueprintStorePriceEditorUi
 
     private static void Close(bool saveCurrentRows)
     {
-        if (saveCurrentRows && !SaveCurrentRows(requirePrice: false))
+        bool chestAvailable = _chest != null && _chest;
+        if (saveCurrentRows && chestAvailable && !SaveCurrentRows(requirePrice: false))
         {
             return;
         }

@@ -35,7 +35,17 @@ internal static class ZoneBlueprintStoreRpcTransport
         ZoneBlueprintStoreRpcEnvelope envelope = CreateEnvelope(type, request);
         if (ZNet.instance.IsServer())
         {
-            ZoneBlueprintStoreRpcEnvelope response = ZoneBlueprintStoreRequestDispatcher.Execute(envelope, player, sender: 0L);
+            ZoneBlueprintStoreRpcEnvelope response;
+            try
+            {
+                response = ZoneBlueprintStoreRequestDispatcher.Execute(envelope, player, sender: 0L);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Blueprint store local request failed: {ex}");
+                response = CreateError(ex.Message);
+            }
+
             HandleResponse(response);
             return;
         }

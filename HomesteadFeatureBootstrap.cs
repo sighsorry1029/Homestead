@@ -39,9 +39,13 @@ internal static class HomesteadFeatureBootstrap
     {
         ZoneSessionResetRegistry.Register("Blueprint RPC queue", ZoneBlueprintNetworkPayload.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint plan ghost cleanup", ZoneBlueprintCommands.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Area dismantle tool", ZoneAreaDismantleTool.Deactivate);
+        ZoneSessionResetRegistry.Register("Blueprint placement tool", ZoneBlueprintPlacementTool.Deactivate);
         ZoneSessionResetRegistry.Register("Blueprint menu", ZoneBlueprintSaveToolMenu.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Blueprint visual descriptors", ZoneBlueprintPreviewBuilder.ClearCache);
         ZoneSessionResetRegistry.Register("Blueprint plan RPC", ZoneBlueprintPlanRpc.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint store", ZoneBlueprintStore.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Build camera", ZoneBuildCamera.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("ContentsWithin preview", ZoneContentsWithinBlueprintChestPreview.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Dvergr circlet", ZoneDvergrCirclet.ResetForWorldSession);
     }
@@ -67,7 +71,6 @@ internal static class HomesteadFeatureBootstrap
 
     public static void Shutdown()
     {
-        ZoneBuildCamera.Shutdown();
         ZoneSessionResetRegistry.ResetForWorldSession("shutdown");
         ZoneBlueprintChestMapPins.Shutdown();
         ZoneBlueprintChestZdoRegistry.Shutdown();
@@ -76,6 +79,7 @@ internal static class HomesteadFeatureBootstrap
 
     public static void OnLocalPlayerSet()
     {
+        ZoneBuildCamera.DisableBuildMode();
         Player? player = Player.m_localPlayer;
         if (player == null || player == _lastLocalPlayer)
         {
@@ -84,5 +88,14 @@ internal static class HomesteadFeatureBootstrap
 
         _lastLocalPlayer = player;
         ZoneSessionResetRegistry.ResetForWorldSession("local player changed");
+    }
+}
+
+[HarmonyPatch(typeof(Player), nameof(Player.SetLocalPlayer))]
+internal static class HomesteadPlayerSetLocalPlayerPatch
+{
+    private static void Postfix()
+    {
+        HomesteadFeatureBootstrap.OnLocalPlayerSet();
     }
 }

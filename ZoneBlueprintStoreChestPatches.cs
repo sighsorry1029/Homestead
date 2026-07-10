@@ -75,12 +75,6 @@ internal static class ZoneBlueprintStoreChestPatchHelper
         return TryGetStoreChest(container, out chest) && chest.IsPurchaseChest();
     }
 
-    public static bool TryGetPayoutChest(Container? container, out ZoneBlueprintStoreChest chest)
-    {
-        chest = null!;
-        return TryGetStoreChest(container, out chest) && chest.IsPayoutChest();
-    }
-
     public static void MessagePayoutDepositBlocked()
     {
         Player.m_localPlayer?.Message(MessageHud.MessageType.TopLeft, HomesteadLocalization.Text("hs_store_payout_withdrawals_only"));

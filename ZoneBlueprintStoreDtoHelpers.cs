@@ -48,12 +48,6 @@ internal static class ZoneBlueprintStoreDtos
         return CreateEnvelope(type, response);
     }
 
-    public static ZoneBlueprintStoreListingSummaryDto ToSummaryDto(ZoneBlueprintStoreListing listing)
-    {
-        return ToSummaryDto(listing, 0L, "");
-    }
-
-
     public static bool IsOfferBuyer(ZoneBlueprintStoreOffer offer, long playerId, string platformId)
     {
         if (offer == null || playerId == 0L)
@@ -151,18 +145,6 @@ internal static class ZoneBlueprintStoreDtos
     public static string CreateOfferId()
     {
         return "offer_" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
-    }
-
-    public static ZoneBlueprintStoreListingSummaryDto ToSummaryDto(ZoneBlueprintStoreListing listing, long playerId, string platformId)
-    {
-        ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadCatalogSnapshot();
-        Dictionary<string, int> offerCounts = BuildOfferCounts(catalog);
-        return ToSummaryDto(
-            listing,
-            playerId,
-            platformId,
-            catalog,
-            offerCounts.TryGetValue(listing.ListingId, out int offerCount) ? offerCount : 0);
     }
 
     public static ZoneBlueprintStoreListingSummaryDto ToSummaryDto(

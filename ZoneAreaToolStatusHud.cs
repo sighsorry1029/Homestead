@@ -17,7 +17,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     private string _placementLine = "";
     private string _dvergrLine = "";
     private string _buildCameraLine = "";
-    private string _pickupLine = "";
     private string _lastAreaLine = "";
     private string _lastPlacementLine = "";
     private string _lastDvergrLine = "";
@@ -25,7 +24,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     private float _placementHideAfter = float.MinValue;
     private float _dvergrHideAfter = float.MinValue;
     private float _buildCameraHideAfter = float.MinValue;
-    private float _pickupHideAfter = float.MinValue;
 
     public static void Show(string title, string size, float yaw, Vector3 horizontalOffset, float heightOffset)
     {
@@ -35,12 +33,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     public static void ShowBlueprint(string title, float yaw, Vector3 horizontalOffset, float heightOffset)
     {
         ShowPlacementLine(horizontalOffset, heightOffset, yaw);
-    }
-
-    public static void ShowOffset(string title, Vector3 horizontalOffset, float heightOffset, float xAxisRotation = 0f, float zAxisRotation = 0f)
-    {
-        float degree = Mathf.Abs(xAxisRotation) >= 0.001f ? xAxisRotation : zAxisRotation;
-        ShowPlacementLine(horizontalOffset, heightOffset, degree);
     }
 
     public static void ShowDefaultPlacement(Vector3 horizontalOffset, float heightOffset, float yaw, float xAxisRotation, float zAxisRotation, bool keepVisible)
@@ -73,17 +65,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
                 rangeMultiplier * 100f,
                 intensityMultiplier * 100f),
             1f);
-    }
-
-    public static void ShowCameraPickupBlocked(string message)
-    {
-        if (Hud.instance == null)
-        {
-            return;
-        }
-
-        EnsureInstance();
-        _instance?.SetPickupLine(message, 0.35f);
     }
 
     public static void ShowBuildCameraDistance(
@@ -222,12 +203,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
             changed = true;
         }
 
-        if (!string.IsNullOrEmpty(_pickupLine) && Time.unscaledTime > _pickupHideAfter)
-        {
-            _pickupLine = "";
-            changed = true;
-        }
-
         if (changed)
         {
             RefreshText();
@@ -323,19 +298,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         }
     }
 
-    private void SetPickupLine(string line, float visibleSeconds)
-    {
-        EnsureElements();
-        if (!CanShow())
-        {
-            return;
-        }
-
-        _pickupLine = line;
-        _pickupHideAfter = Time.unscaledTime + visibleSeconds;
-        RefreshText();
-    }
-
     private void SetBuildCameraLine(string line)
     {
         EnsureElements();
@@ -362,7 +324,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         }
 
         PruneExpiredLines();
-        string[] lines = [_areaLine, _placementLine, _dvergrLine, _buildCameraLine, _pickupLine];
+        string[] lines = [_areaLine, _placementLine, _dvergrLine, _buildCameraLine];
         _text!.text = string.Join("\n", lines.Where(line => !string.IsNullOrEmpty(line)));
         _canvasGroup!.alpha = string.IsNullOrEmpty(_text.text) ? 0f : 1f;
         _text.transform.SetAsLastSibling();
@@ -525,10 +487,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
             _buildCameraLine = "";
         }
 
-        if (!string.IsNullOrEmpty(_pickupLine) && now > _pickupHideAfter)
-        {
-            _pickupLine = "";
-        }
     }
 
     private static bool HasNonZeroPlacementValue(Vector3 horizontalOffset, float heightOffset, float degree)

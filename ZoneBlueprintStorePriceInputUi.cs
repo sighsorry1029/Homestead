@@ -32,6 +32,11 @@ internal static class ZoneBlueprintStorePriceInputUi
         EditPrice
     }
 
+    public static void ResetForWorldSession()
+    {
+        Close();
+    }
+
     public static void OpenOffer(ZoneBlueprintStoreListingSummaryDto listing)
     {
         _listing = listing;

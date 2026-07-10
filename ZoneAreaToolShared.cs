@@ -58,13 +58,13 @@ internal static class ZoneAreaToolShared
             for (int i = 0; i < segmentsPerEdge; i++)
             {
                 Vector3 point = Vector3.Lerp(from, to, (float)i / segmentsPerEdge);
-                point.y = ZoneToolAim.SampleGroundY(point.x, point.z, center.y) + LineHeight + heightOffset;
+                point.y = HomesteadTerrainSupport.SampleGroundY(point.x, point.z, center.y) + LineHeight + heightOffset;
                 line.SetPosition(index++, point);
             }
         }
 
         Vector3 first = area.GetCorner(0);
-        first.y = ZoneToolAim.SampleGroundY(first.x, first.z, center.y) + LineHeight + heightOffset;
+        first.y = HomesteadTerrainSupport.SampleGroundY(first.x, first.z, center.y) + LineHeight + heightOffset;
         line.SetPosition(index, first);
     }
 
@@ -138,12 +138,7 @@ internal static class ZoneAreaToolShared
 
     public static bool ShouldBlockInput()
     {
-        if (Hud.IsPieceSelectionVisible() ||
-            global::Console.IsVisible() ||
-            HomesteadInputBlockers.IsTextInputVisible() ||
-            Menu.IsVisible() ||
-            InventoryGui.IsVisible() ||
-            Minimap.IsOpen())
+        if (Hud.IsPieceSelectionVisible() || HomesteadInputBlockers.IsCommonGameplayInputBlocked())
         {
             return true;
         }

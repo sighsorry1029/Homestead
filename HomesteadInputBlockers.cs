@@ -36,6 +36,15 @@ internal static class HomesteadInputBlockers
         return IsValheimTextInputVisible() || IsFocusedInputField();
     }
 
+    internal static bool IsCommonGameplayInputBlocked()
+    {
+        return global::Console.IsVisible() ||
+               IsTextInputVisible() ||
+               Menu.IsVisible() ||
+               InventoryGui.IsVisible() ||
+               Minimap.IsOpen();
+    }
+
     private static bool IsValheimTextInputVisible()
     {
         TextInput textInput = TextInput.instance;

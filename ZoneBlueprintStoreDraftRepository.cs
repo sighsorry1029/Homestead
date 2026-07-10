@@ -1,7 +1,13 @@
 using System;
+#if DEBUG
+using System.Collections;
+#endif
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+#if DEBUG
+using System.Reflection;
+#endif
 using BepInEx.Logging;
 
 namespace Homestead;
@@ -20,7 +26,9 @@ internal readonly struct ZoneBlueprintStoreDraftLease
 
 internal static class ZoneBlueprintStoreDraftRepository
 {
+    private const int CurrentCatalogVersion = 1;
     private const string CatalogFileName = "catalog.yml";
+    private const string CatalogBackupSuffix = ".bak";
     private const int MaxListingNameLength = 64;
     private static readonly TimeSpan CatalogFlushDelay = TimeSpan.FromSeconds(2.5);
 
@@ -33,10 +41,14 @@ internal static class ZoneBlueprintStoreDraftRepository
 
     public static string StoreDirectory => HomesteadPlugin.BlueprintStoreStorageFullPath;
     public static string CatalogPath => Path.Combine(StoreDirectory, CatalogFileName);
+    private static string CatalogBackupPath => CatalogPath + CatalogBackupSuffix;
 
     public static void Initialize(ManualLogSource logger)
     {
         _logger = logger;
+#if DEBUG
+        ValidateCatalogCloneMapping();
+#endif
     }
 
     public static void Update()
@@ -69,7 +81,7 @@ internal static class ZoneBlueprintStoreDraftRepository
     public static ZoneBlueprintStoreCatalog LoadActiveCatalog()
     {
         ZoneBlueprintStoreCatalog catalog = LoadCatalogSnapshot();
-        DeactivateExpiredListings(catalog);
+        RemoveInactiveAndExpiredListings(catalog);
         return catalog;
     }
 
@@ -81,14 +93,18 @@ internal static class ZoneBlueprintStoreDraftRepository
             return CloneCatalog(_cachedCatalog);
         }
 
-        if (!File.Exists(CatalogPath))
+        if (!File.Exists(CatalogPath) && !File.Exists(CatalogBackupPath))
         {
             ZoneBlueprintStoreCatalog empty = new();
-            SaveCatalog(empty, immediate: true);
+            if (!TrySaveCatalogImmediate(empty, out string reason))
+            {
+                throw new IOException(reason);
+            }
+
             return CloneCatalog(empty);
         }
 
-        DateTime writeUtc = File.GetLastWriteTimeUtc(CatalogPath);
+        DateTime writeUtc = File.Exists(CatalogPath) ? File.GetLastWriteTimeUtc(CatalogPath) : DateTime.MinValue;
         if (_catalogCacheLoaded && _cachedCatalog != null && writeUtc == _cachedCatalogWriteUtc)
         {
             return CloneCatalog(_cachedCatalog);
@@ -96,23 +112,39 @@ internal static class ZoneBlueprintStoreDraftRepository
 
         try
         {
-            ZoneBlueprintStoreCatalog catalog = HomesteadYaml.Deserialize<ZoneBlueprintStoreCatalog>(File.ReadAllText(CatalogPath));
-            NormalizeCatalog(catalog);
-            _cachedCatalog = CloneCatalog(catalog);
-            _cachedCatalogWriteUtc = writeUtc;
-            _catalogCacheLoaded = true;
-            return CloneCatalog(catalog);
+            return CacheLoadedCatalog(ReadCatalogFile(CatalogPath), writeUtc);
         }
-        catch (Exception ex)
+        catch (UnsupportedCatalogVersionException versionError)
         {
-            _logger?.LogWarning($"Failed to load blueprint store catalog: {ex.Message}");
-            return new ZoneBlueprintStoreCatalog();
+            _logger?.LogError($"Blueprint store catalog version is not supported. The catalog was left untouched: {versionError.Message}");
+            throw new InvalidDataException(
+                "Blueprint store catalog was created by an incompatible Homestead version. Existing data was left untouched.",
+                versionError);
+        }
+        catch (Exception primaryError)
+        {
+            if (TryReadCatalogFile(CatalogBackupPath, out ZoneBlueprintStoreCatalog backupCatalog, out Exception? backupError))
+            {
+                _logger?.LogWarning($"Blueprint store catalog could not be loaded; recovering from backup: {primaryError.Message}");
+                TryRestorePrimaryFromBackup();
+                DateTime recoveredWriteUtc = File.Exists(CatalogPath)
+                    ? File.GetLastWriteTimeUtc(CatalogPath)
+                    : File.GetLastWriteTimeUtc(CatalogBackupPath);
+                return CacheLoadedCatalog(backupCatalog, recoveredWriteUtc);
+            }
+
+            _logger?.LogError($"Blueprint store catalog and backup could not be loaded. Existing files were left untouched. " +
+                              $"Catalog: {primaryError.Message}; Backup: {backupError?.Message ?? "missing"}");
+            throw new InvalidDataException(
+                "Blueprint store catalog could not be loaded. Existing data was left untouched; check the server log.",
+                primaryError);
         }
     }
 
     public static void SaveCatalog(ZoneBlueprintStoreCatalog catalog, bool immediate = false)
     {
         Directory.CreateDirectory(StoreDirectory);
+        ValidateCatalogVersion(catalog);
         NormalizeCatalog(catalog);
         _cachedCatalog = CloneCatalog(catalog);
         _catalogCacheLoaded = true;
@@ -126,15 +158,26 @@ internal static class ZoneBlueprintStoreDraftRepository
 
     public static bool TrySaveCatalogImmediate(ZoneBlueprintStoreCatalog catalog, out string reason)
     {
-        SaveCatalog(catalog, immediate: true);
-        if (_catalogDirty)
+        try
         {
+            Directory.CreateDirectory(StoreDirectory);
+            ValidateCatalogVersion(catalog);
+            NormalizeCatalog(catalog);
+            ZoneBlueprintStoreCatalog snapshot = CloneCatalog(catalog);
+            WriteCatalogAtomic(snapshot);
+            _cachedCatalog = snapshot;
+            _cachedCatalogWriteUtc = File.GetLastWriteTimeUtc(CatalogPath);
+            _catalogCacheLoaded = true;
+            _catalogDirty = false;
+            reason = "";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning($"Failed to save blueprint store catalog immediately: {ex.Message}");
             reason = "Blueprint store catalog could not be saved. Try again shortly.";
             return false;
         }
-
-        reason = "";
-        return true;
     }
 
     public static void Flush(bool force)
@@ -166,21 +209,157 @@ internal static class ZoneBlueprintStoreDraftRepository
     private static void WriteCatalogAtomic(ZoneBlueprintStoreCatalog catalog)
     {
         string tempPath = CatalogPath + ".tmp";
-        File.WriteAllText(tempPath, HomesteadYaml.Serialize(catalog));
-        if (!File.Exists(CatalogPath))
+        try
         {
-            File.Move(tempPath, CatalogPath);
-            return;
+            File.WriteAllText(tempPath, HomesteadYaml.Serialize(catalog));
+            ReadCatalogFile(tempPath);
+            if (!File.Exists(CatalogPath))
+            {
+                File.Move(tempPath, CatalogPath);
+                EnsureCatalogBackup();
+                return;
+            }
+
+            if (!TryReadCatalogFile(CatalogPath, out _, out Exception? currentCatalogError))
+            {
+                throw new InvalidDataException(
+                    "The existing blueprint store catalog changed or became invalid; refusing to overwrite it.",
+                    currentCatalogError);
+            }
+
+            try
+            {
+                File.Replace(tempPath, CatalogPath, CatalogBackupPath);
+            }
+            catch
+            {
+                File.Copy(CatalogPath, CatalogBackupPath, overwrite: true);
+                File.Copy(tempPath, CatalogPath, overwrite: true);
+            }
+
+            EnsureCatalogBackup();
+        }
+        finally
+        {
+            TryDeleteTransientFile(tempPath);
+        }
+    }
+
+    private static ZoneBlueprintStoreCatalog ReadCatalogFile(string path)
+    {
+        ZoneBlueprintStoreCatalog catalog = HomesteadYaml.Deserialize<ZoneBlueprintStoreCatalog>(File.ReadAllText(path));
+        if (catalog == null)
+        {
+            throw new InvalidDataException("Blueprint store catalog is empty.");
+        }
+
+        ValidateCatalogVersion(catalog);
+        NormalizeCatalog(catalog);
+        return catalog;
+    }
+
+    private static bool TryReadCatalogFile(
+        string path,
+        out ZoneBlueprintStoreCatalog catalog,
+        out Exception? error)
+    {
+        catalog = null!;
+        error = null;
+        if (!File.Exists(path))
+        {
+            return false;
         }
 
         try
         {
-            File.Replace(tempPath, CatalogPath, null);
+            catalog = ReadCatalogFile(path);
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
-            File.Copy(tempPath, CatalogPath, overwrite: true);
-            File.Delete(tempPath);
+            error = ex;
+            return false;
+        }
+    }
+
+    private static ZoneBlueprintStoreCatalog CacheLoadedCatalog(ZoneBlueprintStoreCatalog catalog, DateTime writeUtc)
+    {
+        _cachedCatalog = CloneCatalog(catalog);
+        _cachedCatalogWriteUtc = writeUtc;
+        _catalogCacheLoaded = true;
+        _catalogDirty = false;
+        return CloneCatalog(catalog);
+    }
+
+    private static void ValidateCatalogVersion(ZoneBlueprintStoreCatalog catalog)
+    {
+        if (catalog.Version != CurrentCatalogVersion)
+        {
+            throw new UnsupportedCatalogVersionException(
+                $"Unsupported blueprint store catalog version {catalog.Version}; expected {CurrentCatalogVersion}.");
+        }
+    }
+
+    private static void EnsureCatalogBackup()
+    {
+        try
+        {
+            if (!File.Exists(CatalogBackupPath))
+            {
+                File.Copy(CatalogPath, CatalogBackupPath, overwrite: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning($"Blueprint store catalog was saved, but its backup could not be created: {ex.Message}");
+        }
+    }
+
+    private static void TryRestorePrimaryFromBackup()
+    {
+        string recoveryPath = CatalogPath + ".recovery.tmp";
+        try
+        {
+            File.Copy(CatalogBackupPath, recoveryPath, overwrite: true);
+            ReadCatalogFile(recoveryPath);
+            if (File.Exists(CatalogPath))
+            {
+                try
+                {
+                    File.Replace(recoveryPath, CatalogPath, null);
+                }
+                catch
+                {
+                    File.Copy(recoveryPath, CatalogPath, overwrite: true);
+                }
+            }
+            else
+            {
+                File.Move(recoveryPath, CatalogPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning($"Blueprint store backup was loaded, but the primary catalog could not be restored: {ex.Message}");
+        }
+        finally
+        {
+            TryDeleteTransientFile(recoveryPath);
+        }
+    }
+
+    private static void TryDeleteTransientFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug($"Failed to remove blueprint store temporary file '{Path.GetFileName(path)}': {ex.Message}");
         }
     }
 
@@ -285,31 +464,177 @@ internal static class ZoneBlueprintStoreDraftRepository
         }).ToList() ?? [];
     }
 
-    public static bool DeactivateExpiredListings(ZoneBlueprintStoreCatalog catalog)
+#if DEBUG
+    private static void ValidateCatalogCloneMapping()
+    {
+        int seed = 0;
+        ZoneBlueprintStoreCatalog source = (ZoneBlueprintStoreCatalog)CreateCloneProbe(typeof(ZoneBlueprintStoreCatalog), ref seed, 0);
+        ZoneBlueprintStoreCatalog clone = CloneCatalog(source);
+        if (!string.Equals(HomesteadYaml.Serialize(source), HomesteadYaml.Serialize(clone), StringComparison.Ordinal) ||
+            ReferenceEquals(source.Listings, clone.Listings) ||
+            ReferenceEquals(source.Offers, clone.Offers) ||
+            ReferenceEquals(source.Notifications, clone.Notifications) ||
+            ReferenceEquals(source.Balances, clone.Balances) ||
+            ReferenceEquals(source.Listings[0].PriceItems, clone.Listings[0].PriceItems) ||
+            ReferenceEquals(source.Offers[0].PriceItems, clone.Offers[0].PriceItems) ||
+            ReferenceEquals(source.Notifications[0].ReadByPlatformIds, clone.Notifications[0].ReadByPlatformIds) ||
+            ReferenceEquals(source.Notifications[0].ReadByPlayerIds, clone.Notifications[0].ReadByPlayerIds) ||
+            ReferenceEquals(source.Balances[0].Materials, clone.Balances[0].Materials))
+        {
+            throw new InvalidOperationException("Blueprint store catalog clone mapping is incomplete or shares mutable state.");
+        }
+    }
+
+    private static object CreateCloneProbe(Type type, ref int seed, int depth)
+    {
+        if (depth > 8)
+        {
+            throw new InvalidOperationException($"Clone probe exceeded the supported object depth at {type.FullName}.");
+        }
+
+        if (type == typeof(string))
+        {
+            return $"clone_probe_{++seed}";
+        }
+
+        if (type == typeof(int))
+        {
+            return ++seed;
+        }
+
+        if (type == typeof(long))
+        {
+            return (long)++seed;
+        }
+
+        if (type == typeof(bool))
+        {
+            return true;
+        }
+
+        Type? nullableType = Nullable.GetUnderlyingType(type);
+        if (nullableType != null)
+        {
+            return CreateCloneProbe(nullableType, ref seed, depth + 1);
+        }
+
+        if (type.IsEnum)
+        {
+            Array values = Enum.GetValues(type);
+            return values.GetValue(values.Length - 1)!;
+        }
+
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
+        {
+            IList list = (IList)Activator.CreateInstance(type)!;
+            list.Add(CreateCloneProbe(type.GetGenericArguments()[0], ref seed, depth + 1));
+            return list;
+        }
+
+        object instance = Activator.CreateInstance(type) ??
+                          throw new InvalidOperationException($"Cannot create clone probe for {type.FullName}.");
+        foreach (PropertyInfo property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        {
+            if (property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
+            {
+                property.SetValue(instance, CreateCloneProbe(property.PropertyType, ref seed, depth + 1));
+            }
+        }
+
+        return instance;
+    }
+#endif
+
+    public static bool TryRemoveListingsImmediate(
+        ZoneBlueprintStoreCatalog catalog,
+        IEnumerable<ZoneBlueprintStoreListing> listings,
+        out string reason)
+    {
+        HashSet<ZoneBlueprintStoreListing> listingsToRemove = listings
+            .Where(listing => listing != null)
+            .ToHashSet();
+        if (listingsToRemove.Count == 0)
+        {
+            reason = "";
+            return true;
+        }
+
+        HashSet<string> listingIds = listingsToRemove
+            .Select(listing => listing.ListingId)
+            .Where(listingId => !string.IsNullOrWhiteSpace(listingId))
+            .ToHashSet(StringComparer.Ordinal);
+
+        List<string> blueprintFiles = catalog.Listings
+            .Where(listing => listingsToRemove.Contains(listing) || listingIds.Contains(listing.ListingId))
+            .Select(listing => listing.BlueprintFile)
+            .Where(file => !string.IsNullOrWhiteSpace(file))
+            .ToList();
+        catalog.Listings.RemoveAll(listing => listingsToRemove.Contains(listing) || listingIds.Contains(listing.ListingId));
+        catalog.Offers.RemoveAll(offer => listingIds.Contains(offer.ListingId));
+        if (!TrySaveCatalogImmediate(catalog, out reason))
+        {
+            return false;
+        }
+
+        DeleteUnreferencedListingFiles(catalog, blueprintFiles);
+        return true;
+    }
+
+    private static void DeleteUnreferencedListingFiles(
+        ZoneBlueprintStoreCatalog catalog,
+        IEnumerable<string> blueprintFiles)
+    {
+        try
+        {
+            HashSet<string> referencedFiles = catalog.Listings
+                .Select(listing => Path.GetFileName(listing.BlueprintFile ?? ""))
+                .Where(file => !string.IsNullOrWhiteSpace(file))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (string blueprintFile in blueprintFiles.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!referencedFiles.Contains(Path.GetFileName(blueprintFile)))
+                {
+                    DeleteFile(blueprintFile);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning($"Blueprint store listing data was saved, but an unreferenced draft could not be cleaned up: {ex.Message}");
+        }
+    }
+
+    private static void RemoveInactiveAndExpiredListings(ZoneBlueprintStoreCatalog catalog)
     {
         DateTime utcNow = DateTime.UtcNow;
-        bool changed = false;
-        foreach (ZoneBlueprintStoreListing listing in catalog.Listings)
+        int autoDelistMaxPurchases = BlueprintConfig.StoreSettings.AutoDelistMaxPurchases;
+        List<ZoneBlueprintStoreListing> listingsToRemove = catalog.Listings
+            .Where(listing =>
+                !listing.Active ||
+                (!string.IsNullOrWhiteSpace(listing.ExpiresAt) &&
+                 listing.PurchaseCount <= autoDelistMaxPurchases &&
+                 HomesteadTimestamp.IsExpired(listing.ExpiresAt, utcNow)))
+            .ToList();
+        HashSet<string> retainedListingIds = catalog.Listings
+            .Except(listingsToRemove)
+            .Select(listing => listing.ListingId)
+            .Where(listingId => !string.IsNullOrWhiteSpace(listingId))
+            .ToHashSet(StringComparer.Ordinal);
+        int removedOfferCount = catalog.Offers.RemoveAll(offer =>
+            string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Deleted, StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrWhiteSpace(offer.ListingId) && !retainedListingIds.Contains(offer.ListingId)));
+        if (listingsToRemove.Count == 0 && removedOfferCount == 0)
         {
-            if (!listing.Active || string.IsNullOrWhiteSpace(listing.ExpiresAt))
-            {
-                continue;
-            }
-
-            if (listing.PurchaseCount <= BlueprintConfig.StoreSettings.AutoDelistMaxPurchases &&
-                HomesteadTimestamp.IsExpired(listing.ExpiresAt, utcNow))
-            {
-                listing.Active = false;
-                changed = true;
-            }
+            return;
         }
 
-        if (changed)
+        bool saved = listingsToRemove.Count > 0
+            ? TryRemoveListingsImmediate(catalog, listingsToRemove, out string reason)
+            : TrySaveCatalogImmediate(catalog, out reason);
+        if (!saved)
         {
-            SaveCatalog(catalog);
+            throw new IOException(reason);
         }
-
-        return changed;
     }
 
     public static bool TryLoadBlueprintFile(string blueprintFile, out ZoneBlueprintFile blueprint, out string reason)
@@ -473,5 +798,12 @@ internal static class ZoneBlueprintStoreDraftRepository
         safeName = string.IsNullOrWhiteSpace(safeName) ? "blueprint" : safeName.Trim('_');
         string id = $"{DateTime.UtcNow:yyyyMMddHHmmss}_{safeName}_{Guid.NewGuid():N}".ToLowerInvariant();
         return id.Length <= 64 ? id : id.Substring(0, 64);
+    }
+
+    private sealed class UnsupportedCatalogVersionException : Exception
+    {
+        public UnsupportedCatalogVersionException(string message) : base(message)
+        {
+        }
     }
 }

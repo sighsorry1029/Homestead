@@ -314,6 +314,19 @@ internal static class ZoneAreaRepair
         NoAccess
     }
 
+    [HarmonyPatch(typeof(Hud), nameof(Hud.SetupPieceInfo))]
+    private static class HudSetupRepairPieceInfoPatch
+    {
+        private static void Postfix(Hud __instance, Piece piece)
+        {
+            if (__instance?.m_pieceDescription != null &&
+                TryBuildRepairPieceDescription(piece, out string repairDescription))
+            {
+                __instance.m_pieceDescription.text = repairDescription;
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(Player), nameof(Player.Repair))]
     private static class PlayerRepairPatch
     {

@@ -315,7 +315,7 @@ internal static class ZoneBlueprintStoreNotifications
         }
 
         catalog.Notifications = catalog.Notifications
-            .OrderByDescending(notification => notification.CreatedAt, StringComparer.Ordinal)
+            .OrderByDescending(notification => HomesteadTimestamp.ParseUtc(notification.CreatedAt))
             .ThenByDescending(notification => notification.NotificationId, StringComparer.Ordinal)
             .Take(StoreNotificationRetainCount)
             .ToList();
@@ -338,7 +338,8 @@ internal static class ZoneBlueprintStoreNotifications
     {
         ZoneBlueprintStoreNotification? notification = catalog.Notifications?
             .Where(item => !item.Read)
-            .OrderByDescending(item => item.CreatedAt, StringComparer.Ordinal)
+            .OrderByDescending(item => HomesteadTimestamp.ParseUtc(item.CreatedAt))
+            .ThenByDescending(item => item.NotificationId, StringComparer.Ordinal)
             .FirstOrDefault();
         if (notification != null)
         {
@@ -417,7 +418,8 @@ internal static class ZoneBlueprintStoreNotifications
         catalog.Notifications ??= [];
         return catalog.Notifications
             .Where(notification => !IsNotificationRead(notification, playerId, platformId) && IsNotificationRecipient(notification, playerId, platformId))
-            .OrderByDescending(notification => notification.CreatedAt, StringComparer.Ordinal)
+            .OrderByDescending(notification => HomesteadTimestamp.ParseUtc(notification.CreatedAt))
+            .ThenByDescending(notification => notification.NotificationId, StringComparer.Ordinal)
             .Take(32)
             .Select(notification => ToNotificationDto(notification, playerId, platformId))
             .ToList();
@@ -433,7 +435,8 @@ internal static class ZoneBlueprintStoreNotifications
         int take = Mathf.Clamp(limit, 1, 64);
         return catalog.Notifications
             .Where(notification => IsNotificationRecipient(notification, playerId, platformId))
-            .OrderByDescending(notification => notification.CreatedAt, StringComparer.Ordinal)
+            .OrderByDescending(notification => HomesteadTimestamp.ParseUtc(notification.CreatedAt))
+            .ThenByDescending(notification => notification.NotificationId, StringComparer.Ordinal)
             .Take(take)
             .Select(notification => ToNotificationDto(notification, playerId, platformId))
             .ToList();
@@ -551,6 +554,9 @@ internal static class ZoneBlueprintStoreNotifications
 
 internal static class ZoneBlueprintStoreNotificationAction
 {
+    private const int MaxReadNotificationIds = 1024;
+    private const int MaxNotificationIdLength = 64;
+
     public static ZoneBlueprintStoreRpcEnvelope ExecuteGet(Player? player, long sender)
     {
         if (!ZoneBlueprintStoreAccess.TryResolveRequester(player, sender, out long playerId, out _, out _, out _, out string reason))
@@ -589,7 +595,10 @@ internal static class ZoneBlueprintStoreNotificationAction
         }
 
         string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
-        HashSet<string> ids = new(request.NotificationIds ?? [], StringComparer.Ordinal);
+        HashSet<string> ids = (request.NotificationIds ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id) && id.Length <= MaxNotificationIdLength)
+            .Take(MaxReadNotificationIds)
+            .ToHashSet(StringComparer.Ordinal);
         if (ids.Count == 0)
         {
             return ZoneBlueprintStoreDtos.Status(ZoneBlueprintStoreRpcType.ReadNotifications, true, "");

@@ -26,7 +26,7 @@ internal static class ZoneBlueprintStoreEconomy
         {
             if (incrementPurchaseCount)
             {
-                storedListing.PurchaseCount++;
+                storedListing.PurchaseCount = ZoneMaterialEscrow.AddAmountsSaturating(storedListing.PurchaseCount, 1);
             }
 
             listing = storedListing;
@@ -68,7 +68,7 @@ internal static class ZoneBlueprintStoreEconomy
 
             existing.PrefabName = string.IsNullOrWhiteSpace(existing.PrefabName) ? item.PrefabName : existing.PrefabName;
             existing.DisplayName = string.IsNullOrWhiteSpace(existing.DisplayName) ? item.DisplayName : existing.DisplayName;
-            existing.Amount += item.Amount;
+            existing.Amount = ZoneMaterialEscrow.AddAmountsSaturating(existing.Amount, item.Amount);
         }
 
         balance.Materials = ZoneBlueprintStorePrices.NormalizePriceItems(balance.Materials);

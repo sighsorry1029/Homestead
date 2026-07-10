@@ -467,9 +467,9 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         Inventory inventory = player.GetInventory();
         string readyBefore = CaptureReadySignature();
         int accepted = 0;
-        accepted += CreateMaterialSession().AcceptAllNeeded(
+        accepted = ZoneMaterialEscrow.AddAmountsSaturating(accepted, CreateMaterialSession().AcceptAllNeeded(
             inventory,
-            item => item.m_shared.m_questItem || player.IsItemEquiped(item));
+            item => item.m_shared.m_questItem || player.IsItemEquiped(item)));
 
         if (accepted > 0)
         {
@@ -727,7 +727,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
             Vector3 localOffset = Quaternion.Euler(0f, step * i, 0f) * new Vector3(0f, 0f, -radius);
             Vector3 position = chestPosition + chestRotation * localOffset;
-            position.y = SampleGroundY(position.x, position.z, chestPosition.y);
+            position.y = HomesteadTerrainSupport.SampleGroundY(position.x, position.z, chestPosition.y);
             GameObject visual = ZoneBlueprintVisuals.CreatePrefabVisualRoot(prefab, $"HomesteadStationGhost_{station.PrefabName}");
             visual.transform.SetParent(stationRoot.transform, true);
             visual.transform.position = position;
@@ -744,18 +744,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
 
         return ZNetScene.instance?.GetPrefab(prefabName) ?? PrefabManager.Instance.GetPrefab(prefabName) ?? ObjectDB.instance?.GetItemPrefab(prefabName);
-    }
-
-    private static float SampleGroundY(float x, float z, float fallbackY)
-    {
-        if (ZoneSystem.instance == null)
-        {
-            return fallbackY;
-        }
-
-        Vector3 point = new(x, fallbackY, z);
-        ZoneSystem.instance.GetGroundData(ref point, out _, out _, out _, out _);
-        return point.y;
     }
 
     private void ApplyPendingMaterial(GameObject root)
@@ -860,11 +848,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         return GetMissingRequirements().ToList();
     }
 
-    public bool IsComplete()
-    {
-        return GetDepositedTotal() >= GetRequiredTotal();
-    }
-
     private int GetRequiredTotal()
     {
         return _requirements.Sum(requirement => requirement.Amount);
@@ -938,7 +921,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             material.PrefabName = requirement.PrefabName;
         }
 
-        material.Amount += amount;
+        material.Amount = ZoneMaterialEscrow.AddAmountsSaturating(material.Amount, amount);
         WriteRefundMaterials(materials);
         LogRefundInfo($"Recorded refund material: {requirement.ItemName} prefab={material.PrefabName} added={amount} total={material.Amount}.");
     }

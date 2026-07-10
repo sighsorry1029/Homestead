@@ -401,7 +401,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         if ((trigger == "confirm" && BlueprintConfig.AzuCraftyBoxesPullOnConfirm) ||
             (trigger == "open" && BlueprintConfig.AzuCraftyBoxesPullOnOpen))
         {
-            containerAccepted = CreatePurchaseEscrow().PullNearbyContainers();
+            containerAccepted = PullNearbyPurchaseMaterials();
         }
 
         int total = playerAccepted + containerAccepted;
@@ -426,6 +426,15 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         }
 
         return CreatePurchaseEscrow().AcceptAllNeeded(sourceInventory, skip);
+    }
+
+    private int PullNearbyPurchaseMaterials()
+    {
+        ZoneMaterialEscrow.Session session = CreatePurchaseEscrow();
+        return AzuCraftyBoxesCompat.PullMissingMaterials(
+            this,
+            session.GetMissingRequirements(),
+            (requirement, amount) => session.AcceptPulled(requirement, amount));
     }
 
     public List<ZoneBlueprintStorePriceItem> ReadPriceItems()
@@ -1184,7 +1193,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         }
         else
         {
-            existing.Amount += amount;
+            existing.Amount = ZoneMaterialEscrow.AddAmountsSaturating(existing.Amount, amount);
             if (string.IsNullOrWhiteSpace(existing.PrefabName))
             {
                 existing.PrefabName = requirement.PrefabName;
@@ -1199,14 +1208,14 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         SetDepositedPriceItems(ZoneBlueprintStorePrices.NormalizePriceItems(deposits));
     }
 
-    private ZoneBlueprintStorePurchaseEscrow CreatePurchaseEscrow()
+    private ZoneMaterialEscrow.Session CreatePurchaseEscrow()
     {
         return CreatePurchaseEscrow(GetPriceRequirements());
     }
 
-    private ZoneBlueprintStorePurchaseEscrow CreatePurchaseEscrow(IEnumerable<ZoneBlueprintRequirement> requirements)
+    private ZoneMaterialEscrow.Session CreatePurchaseEscrow(IEnumerable<ZoneBlueprintRequirement> requirements)
     {
-        return new ZoneBlueprintStorePurchaseEscrow(this, () => requirements, GetPurchaseDeposited, AddPurchaseDeposit);
+        return new ZoneMaterialEscrow.Session(requirements, GetPurchaseDeposited, AddPurchaseDeposit);
     }
 
     private static ZoneMaterialEscrow.Session CreatePurchaseEscrow(ZDO? zdo, IEnumerable<ZoneBlueprintRequirement> requirements)

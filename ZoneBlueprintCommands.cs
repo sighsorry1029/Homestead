@@ -46,6 +46,8 @@ internal static class ZoneBlueprintCommands
     public static void ResetForWorldSession()
     {
         _nextPlanGhostCleanupAt = Time.realtimeSinceStartup + PlanGhostCleanupStartupDelaySeconds;
+        BuildRecipeCache.Clear();
+        _buildRecipeCacheObjectDbCount = -1;
         MissingPrefabWarnings.Clear();
     }
 
@@ -95,63 +97,6 @@ internal static class ZoneBlueprintCommands
         }
 
         return ZoneBlueprintPlanChestPrefab.PlacePlanChest(name, player, anchor, anchorRotation, chestPosition, chestRotation);
-    }
-
-    internal static HomesteadCommandResult FinalizeBlueprintPlan(
-        string name,
-        Player player,
-        Vector3 anchor,
-        Quaternion anchorRotation,
-        IReadOnlyDictionary<string, int> depositedMaterials)
-    {
-        ZoneBlueprintFile blueprint = LoadBlueprint(name);
-        BlueprintLoadPlan plan = CreateLoadPlan(blueprint, anchor, anchorRotation);
-        if (plan.Entries.Count == 0)
-        {
-            return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_blueprint_no_valid_entries", name));
-        }
-
-        if (!ZoneLimitCompat.CanAddWearNTears(plan.Positions, out string limitReason))
-        {
-            return HomesteadCommandResult.Fail(limitReason);
-        }
-
-        bool noCost = player.NoCostCheat();
-        if (!noCost)
-        {
-            string accessReason = ValidateBuildAccessWithoutInventory(player, plan.Entries);
-            if (!string.IsNullOrEmpty(accessReason))
-            {
-                return HomesteadCommandResult.Fail(accessReason);
-            }
-
-            foreach (ZoneBlueprintRequirement requirement in CollectRequirements(plan))
-            {
-                depositedMaterials.TryGetValue(requirement.ItemName, out int deposited);
-                if (deposited < requirement.Amount)
-                {
-                    return HomesteadCommandResult.Fail(HomesteadLocalization.Format(
-                        "hs_blueprint_missing_deposited",
-                        HomesteadLocalization.MaybeLocalize(requirement.DisplayName),
-                        deposited,
-                        requirement.Amount));
-                }
-            }
-        }
-
-        bool terrainApplied = false;
-        if (BlueprintConfig.ShouldApplyTerrainSupport(player) && plan.SupportContacts.Count > 0)
-        {
-            terrainApplied = BlueprintTerrainApplier.ApplySupportContacts(plan.SupportContacts);
-        }
-
-        int created = SpawnPlan(plan, player);
-        return HomesteadCommandResult.Ok(
-            HomesteadLocalization.Format(
-                "hs_blueprint_confirmed",
-                name,
-                created,
-                terrainApplied ? HomesteadLocalization.Text("hs_common_yes") : HomesteadLocalization.Text("hs_common_no")));
     }
 
     internal static IEnumerator FinalizeBlueprintPlanAsync(
@@ -230,7 +175,7 @@ internal static class ZoneBlueprintCommands
         bool terrainApplied = false;
         if (BlueprintConfig.ShouldApplyTerrainSupport(player) && plan.SupportContacts.Count > 0)
         {
-            yield return BlueprintTerrainApplier.ApplySupportContactsAsync(plan.SupportContacts, result => terrainApplied = result);
+            yield return HomesteadTerrainSupport.ApplyWorldSupportContactsAsync(plan.SupportContacts, result => terrainApplied = result);
         }
 
         int created = 0;
@@ -399,6 +344,14 @@ internal static class ZoneBlueprintCommands
             terrainContactSources.Add(new TerrainContactSource(prefab, position, rotation, scale));
         }
 
+        List<TerrainWorldContact> worldTerrainContacts = BlueprintTerrainContactSampler.CaptureWorldContacts(
+            terrainContactSources,
+            BlueprintConfig.TerrainSupportContactTolerance);
+        List<ZoneBlueprintTerrainContact> terrainContacts = BlueprintTerrainContactSampler.ToBlueprintContacts(
+            anchor,
+            inverseAnchorRotation,
+            worldTerrainContacts);
+
         return new ZoneBlueprintFile
         {
             Name = name,
@@ -412,7 +365,7 @@ internal static class ZoneBlueprintCommands
                 .ThenBy(entry => entry.LocalPos[2])
                 .ThenBy(entry => entry.LocalPos[1])
                 .ToList(),
-            TerrainContacts = BlueprintTerrainApplier.CaptureContacts(anchor, inverseAnchorRotation, terrainContactSources)
+            TerrainContacts = terrainContacts
         };
     }
 
@@ -564,7 +517,7 @@ internal static class ZoneBlueprintCommands
         float minZ = chestLocalPositions.Min(position => position.z);
         Vector3 local = new((minX + maxX) * 0.5f, 0f, minZ - 2.5f);
         Vector3 world = anchor + chestRotation * local;
-        world.y = SampleGroundY(world.x, world.z, anchor.y);
+        world.y = HomesteadTerrainSupport.SampleGroundY(world.x, world.z, anchor.y);
         return world;
     }
 
@@ -711,20 +664,6 @@ internal static class ZoneBlueprintCommands
         return anchor + anchorRotation * new Vector3(contact.LocalX, contact.LocalY, contact.LocalZ);
     }
 
-    private static int SpawnPlan(BlueprintLoadPlan plan, Player player)
-    {
-        long playerId = player.GetPlayerID();
-        string playerName = player.GetPlayerName();
-        int created = 0;
-
-        foreach (BlueprintLoadEntry item in plan.Entries)
-        {
-            created += TrySpawnPlanEntry(item, playerId, playerName) ? 1 : 0;
-        }
-
-        return created;
-    }
-
     private static IEnumerator SpawnPlanAsync(BlueprintLoadPlan plan, Player player, Action<int> onComplete)
     {
         long playerId = player.GetPlayerID();
@@ -855,34 +794,8 @@ internal static class ZoneBlueprintCommands
                 requirements[itemName] = aggregate;
             }
 
-            aggregate.Amount += requirement.GetAmount(0);
+            aggregate.Amount = ZoneMaterialEscrow.AddAmountsSaturating(aggregate.Amount, requirement.GetAmount(0));
         }
-    }
-
-    private static string ValidateBuildAccessWithoutInventory(Player player, IEnumerable<BlueprintLoadEntry> entries)
-    {
-        foreach (BlueprintLoadEntry entry in entries)
-        {
-            Piece piece = entry.Prefab.GetComponent<Piece>();
-            if (piece == null)
-            {
-                continue;
-            }
-
-            if (!player.HaveRequirements(piece, Player.RequirementMode.IsKnown))
-            {
-                return HomesteadLocalization.Format("hs_blueprint_missing_known_station_or_materials", entry.Entry.Prefab);
-            }
-
-            if (piece.m_craftingStation != null &&
-                !CraftingStation.HaveBuildStationInRange(piece.m_craftingStation.m_name, player.transform.position) &&
-                !ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoWorkbench))
-            {
-                return HomesteadLocalization.Format("hs_blueprint_missing_crafting_station", entry.Entry.Prefab);
-            }
-        }
-
-        return "";
     }
 
     private static IEnumerator ValidateBuildAccessWithoutInventoryAsync(Player player, IEnumerable<BlueprintLoadEntry> entries, Action<string> onComplete)
@@ -1309,18 +1222,6 @@ internal static class ZoneBlueprintCommands
     private static float Round(float value)
     {
         return Mathf.Round(value * 1000f) / 1000f;
-    }
-
-    private static float SampleGroundY(float x, float z, float fallbackY)
-    {
-        if (ZoneSystem.instance == null)
-        {
-            return fallbackY;
-        }
-
-        Vector3 point = new(x, fallbackY, z);
-        ZoneSystem.instance.GetGroundData(ref point, out _, out _, out _, out _);
-        return point.y;
     }
 
     internal sealed class BlueprintLoadPlan

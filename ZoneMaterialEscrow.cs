@@ -9,6 +9,12 @@ namespace Homestead;
 
 internal static class ZoneMaterialEscrow
 {
+    public static int AddAmountsSaturating(int left, int right)
+    {
+        long total = (long)Math.Max(0, left) + Math.Max(0, right);
+        return total >= int.MaxValue ? int.MaxValue : (int)total;
+    }
+
     public sealed class Session
     {
         private readonly List<ZoneBlueprintRequirement> _requirements;
@@ -59,7 +65,7 @@ internal static class ZoneMaterialEscrow
                     continue;
                 }
 
-                accepted += AcceptNeededOnly(sourceInventory, item, item.m_stack);
+                accepted = AddAmountsSaturating(accepted, AcceptNeededOnly(sourceInventory, item, item.m_stack));
             }
 
             return accepted;
@@ -252,7 +258,7 @@ internal static class ZoneMaterialEscrow
                 aggregate.DisplayName = item.DisplayName;
             }
 
-            aggregate.Amount += item.Amount;
+            aggregate.Amount = AddAmountsSaturating(aggregate.Amount, item.Amount);
         }
 
         return result.Values
@@ -310,15 +316,6 @@ internal static class ZoneMaterialEscrow
         }
 
         return ToPriceItems(items, maxTypes);
-    }
-
-    public static int CountItem(Inventory? inventory, string itemName)
-    {
-        return inventory == null
-            ? 0
-            : inventory.GetAllItems()
-                .Where(item => string.Equals(item.m_shared.m_name, itemName, StringComparison.Ordinal))
-                .Sum(item => item.m_stack);
     }
 
     public static int GetInventorySignatureHash(Inventory? inventory)
@@ -420,286 +417,6 @@ internal static class ZoneMaterialEscrow
         return take;
     }
 
-    public static int AcceptAllowedFromInventory(
-        Inventory sourceInventory,
-        ItemDrop.ItemData item,
-        int requestedAmount,
-        IEnumerable<ZoneBlueprintRequirement> requirements,
-        Func<string, int> getDeposited,
-        Action<ZoneBlueprintRequirement, int> acceptMaterial)
-    {
-        if (!TryGetAllowedRequirement(item, requestedAmount, requirements, getDeposited, out ZoneBlueprintRequirement requirement, out int allowed))
-        {
-            return 0;
-        }
-
-        int take = TakeAllowedAmount(sourceInventory, item, requestedAmount, allowed);
-        if (take <= 0)
-        {
-            return 0;
-        }
-
-        acceptMaterial(requirement, take);
-        return take;
-    }
-
-    public static int MoveAllowedToInventory(
-        Inventory sourceInventory,
-        ItemDrop.ItemData item,
-        int requestedAmount,
-        Inventory destinationInventory,
-        IEnumerable<ZoneBlueprintRequirement> requirements,
-        Func<string, int> getDeposited)
-    {
-        if (sourceInventory == null || destinationInventory == null ||
-            !TryGetAllowedRequirement(item, requestedAmount, requirements, getDeposited, out _, out int allowed))
-        {
-            return 0;
-        }
-
-        int take = GetDestinationCapacity(destinationInventory, item, Mathf.Min(requestedAmount, allowed, item.m_stack));
-        if (take <= 0 || !sourceInventory.RemoveItem(item, take))
-        {
-            return 0;
-        }
-
-        ItemDrop.ItemData moved = item.Clone();
-        moved.m_stack = take;
-        moved.m_dropPrefab ??= item.m_dropPrefab;
-        if (destinationInventory.AddItem(moved))
-        {
-            return take;
-        }
-
-        sourceInventory.AddItem(moved);
-        return 0;
-    }
-
-    public static int MoveAllAllowedToInventory(
-        Inventory sourceInventory,
-        Inventory destinationInventory,
-        IEnumerable<ZoneBlueprintRequirement> requirements,
-        Func<string, int> getDeposited,
-        Func<ItemDrop.ItemData, bool>? skip = null)
-    {
-        if (sourceInventory == null || destinationInventory == null)
-        {
-            return 0;
-        }
-
-        int accepted = 0;
-        foreach (ItemDrop.ItemData item in sourceInventory.GetAllItems().ToList())
-        {
-            if (skip?.Invoke(item) == true)
-            {
-                continue;
-            }
-
-            accepted += MoveAllowedToInventory(sourceInventory, item, item.m_stack, destinationInventory, requirements, getDeposited);
-        }
-
-        return accepted;
-    }
-
-    public static int AddRequirementToInventory(Inventory? inventory, ZoneBlueprintRequirement requirement, int amount, Vector3 dropPosition)
-    {
-        if (inventory == null || requirement == null || amount <= 0)
-        {
-            return 0;
-        }
-
-        GameObject? prefab = ZoneBlueprintStoreVisuals.FindItemPrefab(requirement.PrefabName);
-        ItemDrop? itemDrop = prefab ? prefab.GetComponent<ItemDrop>() : null;
-        if (itemDrop == null)
-        {
-            return 0;
-        }
-
-        int accepted = 0;
-        int maxStack = Mathf.Max(1, itemDrop.m_itemData.m_shared.m_maxStackSize);
-        int remaining = amount;
-        while (remaining > 0)
-        {
-            int stack = Mathf.Min(remaining, maxStack);
-            ItemDrop.ItemData item = itemDrop.m_itemData.Clone();
-            item.m_stack = stack;
-            item.m_dropPrefab = prefab;
-            if (inventory.CanAddItem(item, stack) && inventory.AddItem(item))
-            {
-                accepted += stack;
-            }
-            else
-            {
-                DropItem(item, stack, dropPosition);
-            }
-
-            remaining -= stack;
-        }
-
-        return accepted;
-    }
-
-    public static List<ZoneBlueprintRequirement> GetMissingRequirements(
-        IEnumerable<ZoneBlueprintRequirement> requirements,
-        Func<string, int> getDeposited)
-    {
-        List<ZoneBlueprintRequirement> missing = [];
-        foreach (ZoneBlueprintRequirement requirement in NormalizeRequirements(requirements))
-        {
-            int amount = requirement.Amount - Mathf.Max(0, getDeposited(requirement.ItemName));
-            if (amount <= 0)
-            {
-                continue;
-            }
-
-            missing.Add(new ZoneBlueprintRequirement
-            {
-                ItemName = requirement.ItemName,
-                PrefabName = requirement.PrefabName,
-                DisplayName = requirement.DisplayName,
-                Amount = amount
-            });
-        }
-
-        return missing;
-    }
-
-    public static bool TryTakeRequired(Inventory? inventory, IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
-    {
-        List<ZoneBlueprintRequirement> required = ToRequirements(priceItems);
-        deposited = FormatDeposited(inventory, required);
-        if (!CanTakeRequired(inventory, required))
-        {
-            return false;
-        }
-
-        foreach (ZoneBlueprintRequirement requirement in required)
-        {
-            RemoveItem(inventory!, requirement.ItemName, requirement.Amount);
-        }
-
-        return true;
-    }
-
-    public static bool CanTakeRequired(Inventory? inventory, IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
-    {
-        List<ZoneBlueprintRequirement> required = ToRequirements(priceItems);
-        deposited = FormatDeposited(inventory, required);
-        return CanTakeRequired(inventory, required);
-    }
-
-    private static bool CanTakeRequired(Inventory? inventory, List<ZoneBlueprintRequirement> required)
-    {
-        if (inventory == null || required.Count == 0)
-        {
-            return false;
-        }
-
-        foreach (ZoneBlueprintRequirement requirement in required)
-        {
-            if (CountItem(inventory, requirement.ItemName) < requirement.Amount)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool TryGetAllowedRequirement(
-        ItemDrop.ItemData item,
-        int requestedAmount,
-        IEnumerable<ZoneBlueprintRequirement> requirements,
-        Func<string, int> getDeposited,
-        out ZoneBlueprintRequirement requirement,
-        out int allowed)
-    {
-        requirement = null!;
-        allowed = 0;
-        if (item == null || requestedAmount <= 0)
-        {
-            return false;
-        }
-
-        requirement = NormalizeRequirements(requirements).FirstOrDefault(value => value.ItemName == item.m_shared.m_name)!;
-        if (requirement == null)
-        {
-            return false;
-        }
-
-        allowed = requirement.Amount - Mathf.Max(0, getDeposited(requirement.ItemName));
-        return allowed > 0;
-    }
-
-    private static int GetDestinationCapacity(Inventory destinationInventory, ItemDrop.ItemData item, int requestedAmount)
-    {
-        int amount = Mathf.Max(0, requestedAmount);
-        while (amount > 0)
-        {
-            ItemDrop.ItemData probe = item.Clone();
-            probe.m_stack = amount;
-            probe.m_dropPrefab ??= item.m_dropPrefab;
-            if (destinationInventory.CanAddItem(probe, amount))
-            {
-                return amount;
-            }
-
-            amount--;
-        }
-
-        return 0;
-    }
-
-    public static bool CleanInventoryToRequirements(Inventory? inventory, IEnumerable<ZoneBlueprintStorePriceItem> priceItems, Vector3 dropPosition)
-    {
-        if (inventory == null)
-        {
-            return false;
-        }
-
-        List<ZoneBlueprintRequirement> requirements = ToRequirements(priceItems);
-        bool changed = false;
-        Dictionary<string, int> totals = [];
-        foreach (ItemDrop.ItemData item in inventory.GetAllItems().ToList())
-        {
-            ZoneBlueprintRequirement? requirement = requirements.FirstOrDefault(value => value.ItemName == item.m_shared.m_name);
-            if (requirement == null)
-            {
-                int stack = item.m_stack;
-                inventory.RemoveItem(item, stack);
-                DropItem(item, stack, dropPosition);
-                changed = true;
-                continue;
-            }
-
-            totals.TryGetValue(requirement.ItemName, out int current);
-            int newTotal = current + item.m_stack;
-            totals[requirement.ItemName] = newTotal;
-            if (newTotal > requirement.Amount)
-            {
-                int remove = Mathf.Min(newTotal - requirement.Amount, item.m_stack);
-                inventory.RemoveItem(item, remove);
-                DropItem(item, remove, dropPosition);
-                totals[requirement.ItemName] -= remove;
-                changed = true;
-            }
-        }
-
-        return changed;
-    }
-
-    public static string FormatDeposited(Inventory? inventory, IEnumerable<ZoneBlueprintRequirement> requirements)
-    {
-        List<string> parts = [];
-        foreach (ZoneBlueprintRequirement item in NormalizeRequirements(requirements))
-        {
-            string displayName = Localization.instance != null ? Localization.instance.Localize(item.DisplayName) : item.DisplayName;
-            parts.Add($"{displayName}: {CountItem(inventory, item.ItemName)}/{item.Amount}");
-        }
-
-        return parts.Count == 0 ? "No price" : string.Join("\n", parts);
-    }
-
     public static bool TrySplitIntoStacks(IEnumerable<ZoneBlueprintStorePriceItem> payoutItems, out List<ZoneBlueprintStorePriceItem> stacks, out string reason)
     {
         stacks = [];
@@ -799,11 +516,6 @@ internal static class ZoneMaterialEscrow
         }
     }
 
-    public static void DropItemStack(ItemDrop.ItemData item, int amount, Vector3 dropPosition)
-    {
-        DropItem(item, amount, dropPosition);
-    }
-
     public static void GiveOrDropItem(ItemDrop.ItemData prototype, int amount, Vector3 dropPosition, bool preferInventory, GameObject? dropPrefab = null)
     {
         int maxStack = Mathf.Max(1, prototype.m_shared.m_maxStackSize);
@@ -830,31 +542,6 @@ internal static class ZoneMaterialEscrow
 
             remaining -= stack;
         }
-    }
-
-    private static int RemoveItem(Inventory inventory, string itemName, int amount)
-    {
-        int remaining = amount;
-        foreach (ItemDrop.ItemData item in inventory.GetAllItems().ToList())
-        {
-            if (remaining <= 0)
-            {
-                break;
-            }
-
-            if (!string.Equals(item.m_shared.m_name, itemName, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            int take = Mathf.Min(remaining, item.m_stack);
-            if (inventory.RemoveItem(item, take))
-            {
-                remaining -= take;
-            }
-        }
-
-        return amount - remaining;
     }
 
     private static void DropItem(ItemDrop.ItemData prototype, int amount, Vector3 dropPosition)

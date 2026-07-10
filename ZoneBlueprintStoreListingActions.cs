@@ -130,7 +130,7 @@ internal static class ZoneBlueprintStoreListingAction
         else
         {
             chestPosition = position + rotation * new Vector3(0f, 0f, 2.2f);
-            chestPosition.y = ZoneBlueprintStorePlacement.SampleGroundY(chestPosition.x, chestPosition.z, chestPosition.y);
+            chestPosition.y = HomesteadTerrainSupport.SampleGroundY(chestPosition.x, chestPosition.z, chestPosition.y);
         }
 
         if (!ZoneBlueprintStorePlacement.TryReadOptionalStorePreviewAnchor(request.PreviewAnchor, position, previewAnchor, previewRotation, out previewAnchor, out previewRotation, out reason))
@@ -379,8 +379,11 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Delist, HomesteadLocalization.Text("hs_store_only_seller_delist"));
         }
 
-        listing.Active = false;
-        ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
+        if (!ZoneBlueprintStoreDraftRepository.TryRemoveListingsImmediate(catalog, new[] { listing }, out string saveReason))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Delist, saveReason);
+        }
+
         return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.Delist, true, HomesteadLocalization.Format("hs_store_delisted", listing.Name), catalog, listing, playerId, platformId, removeListing: true);
     }
 

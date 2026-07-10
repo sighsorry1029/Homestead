@@ -17,6 +17,9 @@ internal static class ZoneBlueprintStoreUi
 {
     private const int MaxRows = ZoneBlueprintStore.StoreListingIconPageSize;
     private const int PriceSlots = 8;
+    private const int MaxListingIconCacheEntries = 64;
+    private const int MaxHiddenListingIds = 2048;
+    private const int MaxStoreIdLength = 64;
     private const float ScrollWheelThreshold = 0.05f;
     private const float WithdrawBlinkInterval = 0.55f;
 
@@ -29,7 +32,10 @@ internal static class ZoneBlueprintStoreUi
     private static readonly List<GameObject> Rows = [];
     private static readonly List<StoreRowWidgets> RowWidgets = [];
     private static readonly Dictionary<string, Sprite?> SnapshotCache = [];
+    private static readonly LinkedList<string> SnapshotCacheOrder = [];
+    private static readonly HashSet<string> OwnedSnapshotKeys = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, string> ListingIconBase64Cache = new(StringComparer.Ordinal);
+    private static readonly LinkedList<string> ListingIconCacheOrder = [];
     private static readonly Dictionary<string, Sprite> ItemIconCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> RequestedListingIconIds = new(StringComparer.Ordinal);
     private static readonly Queue<SnapshotDecodeRequest> PendingSnapshotDecodes = [];
@@ -85,7 +91,7 @@ internal static class ZoneBlueprintStoreUi
         _scrollOffset = 0;
         _totalListings = 0;
         _hiddenListingCount = 0;
-        _latestListRequestId = 0;
+        AdvanceListRequestId();
         _showHidden = false;
         _hasWithdrawableBalance = false;
         _withdrawBlinkOn = true;
@@ -100,6 +106,13 @@ internal static class ZoneBlueprintStoreUi
         {
             _panel.SetActive(false);
         }
+
+        ReleaseSnapshotCache();
+        ListingIconBase64Cache.Clear();
+        ListingIconCacheOrder.Clear();
+        ItemIconCache.Clear();
+        ReleaseOwnedSprite(ref _missingSnapshot);
+        ReleaseOwnedSprite(ref _missingPriceIcon);
 
         SetInputBlocked(false);
     }
@@ -164,6 +177,11 @@ internal static class ZoneBlueprintStoreUi
 
     public static void ApplyListingIcons(ZoneBlueprintStoreListResponse response)
     {
+        if (response.RequestId > 0 && response.RequestId != _latestListRequestId)
+        {
+            return;
+        }
+
         MergeListingIconCache(response.Icons ?? []);
         if (IsPanelVisible())
         {
@@ -212,6 +230,7 @@ internal static class ZoneBlueprintStoreUi
     {
         LoadHiddenState();
         SyncHiddenStateIfNeeded();
+        RequestedListingIconIds.Clear();
         ZoneBlueprintStore.RequestListingPage(NextListRequestId(), _scrollOffset, iconListingIds, _showHidden, includeNotifications);
     }
 
@@ -220,11 +239,17 @@ internal static class ZoneBlueprintStoreUi
         LoadHiddenState();
         SyncHiddenStateIfNeeded();
         _scrollOffset = Mathf.Max(0, offset);
+        RequestedListingIconIds.Clear();
         SetStatus(HomesteadLocalization.Text("hs_store_loading"));
         ZoneBlueprintStore.RequestListingPage(NextListRequestId(), _scrollOffset, iconListingIds, _showHidden, includeNotifications: false);
     }
 
     private static int NextListRequestId()
+    {
+        return AdvanceListRequestId();
+    }
+
+    private static int AdvanceListRequestId()
     {
         _latestListRequestId++;
         if (_latestListRequestId <= 0)
@@ -248,6 +273,7 @@ internal static class ZoneBlueprintStoreUi
 
     private static void MergeListingIconCache(IEnumerable<ZoneBlueprintStoreListingIconDto> icons)
     {
+        bool changed = false;
         foreach (ZoneBlueprintStoreListingIconDto icon in icons)
         {
             if (icon == null ||
@@ -257,7 +283,33 @@ internal static class ZoneBlueprintStoreUi
                 continue;
             }
 
+            if (ListingIconBase64Cache.TryGetValue(icon.ListingId, out string existingPayload) &&
+                string.Equals(existingPayload, icon.IconPngBase64, StringComparison.Ordinal))
+            {
+                ListingIconCacheOrder.Remove(icon.ListingId);
+                ListingIconCacheOrder.AddLast(icon.ListingId);
+                continue;
+            }
+
+            RemoveSnapshot(icon.ListingId);
             ListingIconBase64Cache[icon.ListingId] = icon.IconPngBase64;
+            ListingIconCacheOrder.Remove(icon.ListingId);
+            ListingIconCacheOrder.AddLast(icon.ListingId);
+            changed = true;
+        }
+
+        while (ListingIconBase64Cache.Count > MaxListingIconCacheEntries && ListingIconCacheOrder.First != null)
+        {
+            string listingId = ListingIconCacheOrder.First.Value;
+            ListingIconCacheOrder.RemoveFirst();
+            ListingIconBase64Cache.Remove(listingId);
+            RequestedListingIconIds.Remove(listingId);
+            RemoveSnapshot(listingId);
+        }
+
+        if (changed)
+        {
+            ClearSnapshotDecodeQueue();
         }
     }
 
@@ -573,13 +625,18 @@ internal static class ZoneBlueprintStoreUi
                 continue;
             }
 
+            if (RequestedListingIconIds.Count >= MaxListingIconCacheEntries)
+            {
+                RequestedListingIconIds.Clear();
+            }
+
             RequestedListingIconIds.Add(listing.ListingId);
             missingIds.Add(listing.ListingId);
         }
 
         if (missingIds.Count > 0)
         {
-            ZoneBlueprintStore.RequestListingIcons(missingIds);
+            ZoneBlueprintStore.RequestListingIcons(missingIds, _latestListRequestId);
         }
     }
 
@@ -594,6 +651,15 @@ internal static class ZoneBlueprintStoreUi
         string listingId = _visibleListings[listingIndex].ListingId;
         if (!HiddenListingIds.Remove(listingId))
         {
+            if (HiddenListingIds.Count >= MaxHiddenListingIds)
+            {
+                string? idToRemove = HiddenListingIds.FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(idToRemove))
+                {
+                    HiddenListingIds.Remove(idToRemove);
+                }
+            }
+
             HiddenListingIds.Add(listingId);
         }
 
@@ -712,12 +778,16 @@ internal static class ZoneBlueprintStoreUi
                 return;
             }
 
-            foreach (string line in File.ReadAllLines(path))
+            foreach (string line in File.ReadLines(path))
             {
                 string listingId = line.Trim();
-                if (!string.IsNullOrWhiteSpace(listingId))
+                if (!string.IsNullOrWhiteSpace(listingId) && listingId.Length <= MaxStoreIdLength)
                 {
                     HiddenListingIds.Add(listingId);
+                    if (HiddenListingIds.Count >= MaxHiddenListingIds)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -735,7 +805,12 @@ internal static class ZoneBlueprintStoreUi
         {
             string path = HiddenListingsPath;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllLines(path, HiddenListingIds.OrderBy(id => id, StringComparer.Ordinal));
+            File.WriteAllLines(
+                path,
+                HiddenListingIds
+                    .Where(id => !string.IsNullOrWhiteSpace(id) && id.Length <= MaxStoreIdLength)
+                    .OrderBy(id => id, StringComparer.Ordinal)
+                    .Take(MaxHiddenListingIds));
         }
         catch
         {
@@ -801,8 +876,7 @@ internal static class ZoneBlueprintStoreUi
 
     private static string SnapshotKey(ZoneBlueprintStoreListingSummaryDto listing)
     {
-        ListingIconBase64Cache.TryGetValue(listing.ListingId, out string iconPngBase64);
-        return listing.ListingId + ":" + (iconPngBase64 ?? "").GetHashCode();
+        return listing.ListingId;
     }
 
     private static void QueueSnapshotDecode(string key, ZoneBlueprintStoreListingSummaryDto listing)
@@ -833,14 +907,83 @@ internal static class ZoneBlueprintStoreUi
         }
 
         Sprite? sprite = ZoneBlueprintVisuals.CreateIconFromBase64(request.ListingId, request.IconPngBase64);
+        bool ownsSprite = sprite != null;
         if (sprite == null && ZoneBlueprintVisuals.TryGetIcon(request.Name, out Sprite? localIcon))
         {
             sprite = localIcon;
         }
 
         sprite ??= GetMissingSnapshotSprite();
-        SnapshotCache[request.Key] = sprite;
+        CacheSnapshot(request.Key, sprite, ownsSprite);
         ApplySnapshotSprite(request.Key, sprite);
+    }
+
+    private static void CacheSnapshot(string key, Sprite sprite, bool ownsSprite)
+    {
+        RemoveSnapshot(key);
+        SnapshotCache[key] = sprite;
+        SnapshotCacheOrder.AddLast(key);
+        if (ownsSprite)
+        {
+            OwnedSnapshotKeys.Add(key);
+        }
+
+        while (SnapshotCache.Count > MaxListingIconCacheEntries && SnapshotCacheOrder.First != null)
+        {
+            RemoveSnapshot(SnapshotCacheOrder.First.Value);
+        }
+    }
+
+    private static void RemoveSnapshot(string key)
+    {
+        SnapshotCacheOrder.Remove(key);
+        if (!SnapshotCache.TryGetValue(key, out Sprite? sprite))
+        {
+            OwnedSnapshotKeys.Remove(key);
+            return;
+        }
+
+        SnapshotCache.Remove(key);
+        if (OwnedSnapshotKeys.Remove(key))
+        {
+            DestroyOwnedSprite(sprite);
+        }
+    }
+
+    private static void ReleaseSnapshotCache()
+    {
+        foreach (string key in OwnedSnapshotKeys)
+        {
+            if (SnapshotCache.TryGetValue(key, out Sprite? sprite))
+            {
+                DestroyOwnedSprite(sprite);
+            }
+        }
+
+        SnapshotCache.Clear();
+        SnapshotCacheOrder.Clear();
+        OwnedSnapshotKeys.Clear();
+    }
+
+    private static void ReleaseOwnedSprite(ref Sprite? sprite)
+    {
+        DestroyOwnedSprite(sprite);
+        sprite = null;
+    }
+
+    private static void DestroyOwnedSprite(Sprite? sprite)
+    {
+        if (sprite == null)
+        {
+            return;
+        }
+
+        Texture2D texture = sprite.texture;
+        Object.Destroy(sprite);
+        if (texture != null)
+        {
+            Object.Destroy(texture);
+        }
     }
 
     private static void ApplySnapshotSprite(string key, Sprite sprite)

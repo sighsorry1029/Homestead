@@ -44,6 +44,13 @@ internal static class ZoneBlueprintStoreNotificationsUi
     private static Vector2 _panelDragStartOffset;
     private static bool _inputBlocked;
 
+    public static void ResetForWorldSession()
+    {
+        Notifications.Clear();
+        _scrollOffset = 0;
+        HideForWorldExit();
+    }
+
     public static void SetNotifications(IEnumerable<ZoneBlueprintStoreNotificationDto> notifications)
     {
         Merge(notifications);
@@ -168,7 +175,13 @@ internal static class ZoneBlueprintStoreNotificationsUi
             }
         }
 
-        Notifications.Sort((left, right) => string.Compare(right.CreatedAt, left.CreatedAt, StringComparison.Ordinal));
+        Notifications.Sort((left, right) =>
+        {
+            int timestampOrder = HomesteadTimestamp.ParseUtc(right.CreatedAt).CompareTo(HomesteadTimestamp.ParseUtc(left.CreatedAt));
+            return timestampOrder != 0
+                ? timestampOrder
+                : string.Compare(right.NotificationId, left.NotificationId, StringComparison.Ordinal);
+        });
         if (Notifications.Count > 64)
         {
             Notifications.RemoveRange(64, Notifications.Count - 64);

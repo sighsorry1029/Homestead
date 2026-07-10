@@ -17,6 +17,7 @@ internal static class ZoneBlueprintVisuals
     private const float IconVisibilityDepthTolerance = 1.25f;
     private static readonly Dictionary<string, Sprite?> IconCache = [];
     private static readonly Dictionary<string, IconPrefabBounds> IconPrefabBoundsCache = new(StringComparer.OrdinalIgnoreCase);
+    private static int _iconCacheGeneration;
     private static readonly Type? ImageConversionType = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
     private static readonly MethodInfo? LoadImageMethod = ImageConversionType?.GetMethod(
         "LoadImage",
@@ -33,7 +34,23 @@ internal static class ZoneBlueprintVisuals
 
     public static void InvalidateIcon(string name)
     {
-        IconCache.Remove(name);
+        if (IconCache.TryGetValue(name, out Sprite? icon))
+        {
+            DestroyIcon(icon);
+            IconCache.Remove(name);
+        }
+    }
+
+    public static void ResetForWorldSession()
+    {
+        _iconCacheGeneration++;
+        foreach (Sprite? icon in IconCache.Values.Where(icon => icon != null).Distinct())
+        {
+            DestroyIcon(icon);
+        }
+
+        IconCache.Clear();
+        IconPrefabBoundsCache.Clear();
     }
 
     public static bool TryGetIcon(string name, out Sprite? icon)
@@ -83,22 +100,31 @@ internal static class ZoneBlueprintVisuals
             return null;
         }
 
+        Texture2D? texture = null;
         try
         {
-            Texture2D texture = new(2, 2, TextureFormat.RGBA32, false)
+            texture = new Texture2D(2, 2, TextureFormat.RGBA32, false)
             {
                 name = $"HomesteadStoreIcon_{name}"
             };
             if (!TryLoadImage(texture, Convert.FromBase64String(payload)))
             {
                 Object.Destroy(texture);
+                texture = null;
                 return null;
             }
 
-            return Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height), new Vector2(0.5f, 0.5f));
+            Sprite icon = Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height), new Vector2(0.5f, 0.5f));
+            texture = null;
+            return icon;
         }
         catch
         {
+            if (texture != null)
+            {
+                Object.Destroy(texture);
+            }
+
             return null;
         }
     }
@@ -106,7 +132,7 @@ internal static class ZoneBlueprintVisuals
     public static Sprite? RenderAndCacheIcon(string name, ZoneBlueprintFile blueprint)
     {
         Sprite? rendered = RenderIcon(blueprint);
-        IconCache[name] = rendered;
+        SetCachedIcon(name, rendered);
         SaveIconToDisk(name, rendered);
         return rendered;
     }
@@ -114,11 +140,12 @@ internal static class ZoneBlueprintVisuals
     public static bool EnqueueRenderAndCacheIcon(string name, ZoneBlueprintFile blueprint, Action<Sprite?> callback)
     {
         IReadOnlyList<ZoneBlueprintEntry> entries = SelectIconEntries(blueprint);
+        int cacheGeneration = _iconCacheGeneration;
         GameObject root = CreateBlueprintVisualRoot(entries, "HomesteadBlueprintIconRender");
         if (root.transform.childCount == 0)
         {
             Object.Destroy(root);
-            IconCache[name] = null;
+            SetCachedIcon(name, null);
             callback(null);
             return false;
         }
@@ -134,9 +161,17 @@ internal static class ZoneBlueprintVisuals
             finished = true;
             try
             {
-                IconCache[name] = icon;
-                SaveIconToDisk(name, icon);
-                callback(icon);
+                if (cacheGeneration != _iconCacheGeneration)
+                {
+                    DestroyIcon(icon);
+                    callback(null);
+                }
+                else
+                {
+                    SetCachedIcon(name, icon);
+                    SaveIconToDisk(name, icon);
+                    callback(icon);
+                }
             }
             finally
             {
@@ -311,24 +346,62 @@ internal static class ZoneBlueprintVisuals
             return false;
         }
 
+        Texture2D? texture = null;
         try
         {
-            Texture2D texture = new(2, 2, TextureFormat.RGBA32, false);
+            texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             if (!TryLoadImage(texture, File.ReadAllBytes(path)))
             {
                 Object.Destroy(texture);
+                texture = null;
                 return false;
             }
 
             texture.name = $"HomesteadBlueprintIcon_{name}";
             icon = Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height), new Vector2(0.5f, 0.5f));
+            texture = null;
             return true;
         }
         catch (Exception ex)
         {
+            if (texture != null)
+            {
+                Object.Destroy(texture);
+            }
+
             HomesteadPlugin.HomesteadLogger.LogDebug($"Failed to load Homestead blueprint icon '{name}' from disk: {ex.Message}");
             icon = null;
             return false;
+        }
+    }
+
+    private static void SetCachedIcon(string name, Sprite? icon)
+    {
+        if (IconCache.TryGetValue(name, out Sprite? existing) && existing != icon)
+        {
+            DestroyIcon(existing);
+        }
+
+        IconCache[name] = icon;
+    }
+
+    private static void DestroyIcon(Sprite? icon)
+    {
+        if (icon == null)
+        {
+            return;
+        }
+
+        Texture2D texture = icon.texture;
+        if (texture == Texture2D.whiteTexture)
+        {
+            return;
+        }
+
+        Object.Destroy(icon);
+        if (texture != null)
+        {
+            Object.Destroy(texture);
         }
     }
 

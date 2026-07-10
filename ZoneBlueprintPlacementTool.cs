@@ -246,13 +246,13 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
             if (Physics.Raycast(ray, out RaycastHit hit, MaxPlacementDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
                 point = hit.point;
-                point.y = SampleGroundY(point.x, point.z, point.y);
+                point.y = HomesteadTerrainSupport.SampleGroundY(point.x, point.z, point.y);
                 return true;
             }
         }
 
         point = player.transform.position + player.transform.forward * 8f;
-        point.y = SampleGroundY(point.x, point.z, player.transform.position.y);
+        point.y = HomesteadTerrainSupport.SampleGroundY(point.x, point.z, player.transform.position.y);
         return true;
     }
 
@@ -265,18 +265,6 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
     {
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
-    }
-
-    private static float SampleGroundY(float x, float z, float fallbackY)
-    {
-        if (ZoneSystem.instance == null)
-        {
-            return fallbackY;
-        }
-
-        Vector3 point = new(x, fallbackY, z);
-        ZoneSystem.instance.GetGroundData(ref point, out _, out _, out _, out _);
-        return point.y;
     }
 
     private static Quaternion GetYawRotation(Quaternion rotation)

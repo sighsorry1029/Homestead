@@ -26,7 +26,7 @@ internal static class ZoneBlueprintStorePlacement
         }
 
         position = player.transform.position + rotation * new Vector3(0f, 0f, 2.2f);
-        position.y = SampleGroundY(position.x, position.z, player.transform.position.y);
+        position.y = HomesteadTerrainSupport.SampleGroundY(position.x, position.z, player.transform.position.y);
         return true;
     }
 
@@ -129,15 +129,4 @@ internal static class ZoneBlueprintStorePlacement
         return dx * dx + dz * dz <= maxDistance * maxDistance;
     }
 
-    public static float SampleGroundY(float x, float z, float fallbackY)
-    {
-        if (ZoneSystem.instance == null)
-        {
-            return fallbackY;
-        }
-
-        Vector3 point = new(x, fallbackY, z);
-        ZoneSystem.instance.GetGroundData(ref point, out _, out _, out _, out _);
-        return point.y;
-    }
 }

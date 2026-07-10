@@ -287,7 +287,7 @@ internal static class ZoneBlueprintStoreChestPrefab
                 }
                 else
                 {
-                    position.y = SampleGroundY(position.x, position.z, position.y);
+                    position.y = HomesteadTerrainSupport.SampleGroundY(position.x, position.z, position.y);
                 }
 
                 StoreChestPlacementRequest placement = new(
@@ -379,18 +379,6 @@ internal static class ZoneBlueprintStoreChestPrefab
     private static GameObject? GetPrefab(ChestPrefabDefinition definition)
     {
         return PrefabManager.Instance.GetPrefab(definition.PrefabName) ?? ZNetScene.instance?.GetPrefab(definition.PrefabName);
-    }
-
-    private static float SampleGroundY(float x, float z, float fallbackY)
-    {
-        if (ZoneSystem.instance == null)
-        {
-            return fallbackY;
-        }
-
-        Vector3 point = new(x, fallbackY, z);
-        ZoneSystem.instance.GetGroundData(ref point, out _, out _, out _, out _);
-        return point.y;
     }
 
     private static void RegisterPrefab()

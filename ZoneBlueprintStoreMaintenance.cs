@@ -9,6 +9,11 @@ internal static class ZoneBlueprintStoreMaintenance
     private const float OrphanDraftSweepInterval = 300f;
     private static float _nextOrphanDraftSweep;
 
+    public static void ResetForWorldSession()
+    {
+        _nextOrphanDraftSweep = 0f;
+    }
+
     public static void RunOrphanDraftSweepIfDue()
     {
         if (ZNet.instance == null || !ZNet.instance.IsServer() || ZDOMan.instance == null)

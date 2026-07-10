@@ -7,7 +7,15 @@ namespace Homestead;
 
 internal static class ZoneBlueprintStoreListAction
 {
+    private const int MaxHiddenListingIdsPerRequester = 2048;
+    private const int MaxHiddenStateRequesters = 1024;
+    private const int MaxStoreIdLength = 64;
     private static readonly Dictionary<string, HashSet<string>> HiddenListingIdsByRequester = new(StringComparer.Ordinal);
+
+    public static void ResetForWorldSession()
+    {
+        HiddenListingIdsByRequester.Clear();
+    }
 
     public static ZoneBlueprintStoreRpcEnvelope Execute(ZoneBlueprintStoreListRequest request, Player? player, long sender)
     {
@@ -28,7 +36,8 @@ internal static class ZoneBlueprintStoreListAction
         HashSet<string> hiddenListingIds = GetHiddenListingIds(playerId, platformId);
         List<ZoneBlueprintStoreListing> allActiveListings = catalog.Listings
             .Where(listing => listing.Active)
-            .OrderByDescending(listing => listing.CreatedAt, StringComparer.Ordinal)
+            .OrderByDescending(listing => HomesteadTimestamp.ParseUtc(listing.CreatedAt))
+            .ThenByDescending(listing => listing.ListingId, StringComparer.Ordinal)
             .ToList();
         int hiddenListings = allActiveListings.Count(listing => hiddenListingIds.Contains(listing.ListingId));
         List<ZoneBlueprintStoreListing> activeListings = request.ShowHidden
@@ -125,7 +134,7 @@ internal static class ZoneBlueprintStoreListAction
 
         foreach (string id in listingIds)
         {
-            if (!string.IsNullOrWhiteSpace(id))
+            if (!string.IsNullOrWhiteSpace(id) && id.Length <= MaxStoreIdLength)
             {
                 ids.Add(id);
                 if (ids.Count >= maxCount)
@@ -160,7 +169,12 @@ internal static class ZoneBlueprintStoreListAction
         }
 
         string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
-        SetHiddenListingIds(playerId, platformId, request.HiddenListingIds);
+        ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
+        HashSet<string> activeListingIds = catalog.Listings
+            .Where(listing => listing.Active && !string.IsNullOrWhiteSpace(listing.ListingId))
+            .Select(listing => listing.ListingId)
+            .ToHashSet(StringComparer.Ordinal);
+        SetHiddenListingIds(playerId, platformId, request.HiddenListingIds, activeListingIds);
         return ZoneBlueprintStoreDtos.Status(ZoneBlueprintStoreRpcType.SyncHidden, true, "");
     }
 
@@ -172,7 +186,11 @@ internal static class ZoneBlueprintStoreListAction
             : [];
     }
 
-    private static void SetHiddenListingIds(long playerId, string platformId, IEnumerable<string>? listingIds)
+    private static void SetHiddenListingIds(
+        long playerId,
+        string platformId,
+        IEnumerable<string>? listingIds,
+        ISet<string> activeListingIds)
     {
         string key = HiddenStateKey(playerId, platformId);
         if (string.IsNullOrWhiteSpace(key))
@@ -180,9 +198,36 @@ internal static class ZoneBlueprintStoreListAction
             return;
         }
 
-        HashSet<string> ids = listingIds?
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .ToHashSet(StringComparer.Ordinal) ?? [];
+        HashSet<string> ids = new(StringComparer.Ordinal);
+        if (listingIds != null)
+        {
+            foreach (string id in listingIds)
+            {
+                if (string.IsNullOrWhiteSpace(id) ||
+                    id.Length > MaxStoreIdLength ||
+                    !activeListingIds.Contains(id))
+                {
+                    continue;
+                }
+
+                ids.Add(id);
+                if (ids.Count >= MaxHiddenListingIdsPerRequester)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (!HiddenListingIdsByRequester.ContainsKey(key) &&
+            HiddenListingIdsByRequester.Count >= MaxHiddenStateRequesters)
+        {
+            string? keyToRemove = HiddenListingIdsByRequester.Keys.FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(keyToRemove))
+            {
+                HiddenListingIdsByRequester.Remove(keyToRemove);
+            }
+        }
+
         HiddenListingIdsByRequester[key] = ids;
     }
 
