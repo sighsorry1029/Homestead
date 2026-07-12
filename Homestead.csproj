@@ -171,6 +171,7 @@
         <Compile Include="ZoneBuildCameraPatches.cs"/>
         <Compile Include="ZoneBuildCameraWardCompat.cs"/>
         <Compile Include="ZoneContentsWithinCompat.cs"/>
+        <Compile Include="ZoneInventorySlotsContainerPreviewCompat.cs"/>
         <Compile Include="ZoneBlueprintCommands.cs"/>
         <Compile Include="ZoneBlueprintFileFormat.cs"/>
         <Compile Include="ZoneBlueprintHammerTable.cs"/>

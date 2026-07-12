@@ -95,6 +95,17 @@ internal static class ZoneContentsWithinBlueprintChestPreview
         return TryCreateVirtualRequirementInventory(container, out preview);
     }
 
+    public static bool ShouldBlockContainerPreview(Container? container)
+    {
+        return container != null && IsBlockedPriceChest(container);
+    }
+
+    public static bool TryCreateContainerPreviewInventory(Container? container, out Inventory preview)
+    {
+        preview = null!;
+        return container != null && TryCreateVirtualRequirementInventory(container, out preview);
+    }
+
     public static void GreyOutRequirementGrid(InventoryGrid? grid)
     {
         if (grid == null || !IsVirtualRequirementInventory(grid.GetInventory()))
