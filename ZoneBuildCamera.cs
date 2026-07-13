@@ -37,6 +37,7 @@ internal static class ZoneBuildCamera
     private static ManualLogSource Log = null!;
     private static BuildCameraView _viewDirection;
     private static bool _externalBuildCameraWarningLogged;
+    private static int _placementNoiseSuppressionDepth;
     private static float _nextMessageTime;
     private static Transform? _lookAtTarget;
     private static Vector3 _lookAtTargetOffset = Vector3.zero;
@@ -52,6 +53,7 @@ internal static class ZoneBuildCamera
         RestoreAllMaxPlaceDistances();
         InBuildModeByPlayer.Clear();
         ZoneBuildCameraDvergerLight.CleanupAll();
+        _placementNoiseSuppressionDepth = 0;
         _nextMessageTime = 0f;
     }
 
@@ -139,6 +141,33 @@ internal static class ZoneBuildCamera
     internal static bool ShouldDeactivateBuildMode(Player player)
     {
         return !ToolIsEquipped(player) || (ShouldRestrictCameraEntry() && !MeetsComfortGate());
+    }
+
+    internal static bool BeginPlacementNoiseSuppression(Player player)
+    {
+        if (!IsLocalPlayer(player) || !InBuildMode())
+        {
+            return false;
+        }
+
+        _placementNoiseSuppressionDepth++;
+        return true;
+    }
+
+    internal static void EndPlacementNoiseSuppression(bool active)
+    {
+        if (active && _placementNoiseSuppressionDepth > 0)
+        {
+            _placementNoiseSuppressionDepth--;
+        }
+    }
+
+    internal static bool ShouldSuppressPlacementNoise(Character character, float range)
+    {
+        return _placementNoiseSuppressionDepth > 0 &&
+               character is Player player &&
+               IsLocalPlayer(player) &&
+               Mathf.Approximately(range, 50f);
     }
 
     internal static void ApplyMaxPlaceDistanceOverride(Player player)

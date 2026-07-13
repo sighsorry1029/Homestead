@@ -1,3 +1,4 @@
+using System;
 using HarmonyLib;
 using UnityEngine;
 
@@ -68,6 +69,30 @@ internal static class ZoneBuildCameraPlayerRemovePiecePatch
     private static void Postfix(Player __instance, ZoneBuildCamera.EyeOriginOverrideState __state)
     {
         ZoneBuildCamera.EndEyeOriginOverride(__instance, __state);
+    }
+}
+
+[HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
+internal static class ZoneBuildCameraPlayerPlacePieceNoisePatch
+{
+    private static void Prefix(Player __instance, out bool __state)
+    {
+        __state = ZoneBuildCamera.BeginPlacementNoiseSuppression(__instance);
+    }
+
+    private static Exception? Finalizer(Exception? __exception, bool __state)
+    {
+        ZoneBuildCamera.EndPlacementNoiseSuppression(__state);
+        return __exception;
+    }
+}
+
+[HarmonyPatch(typeof(Character), nameof(Character.AddNoise))]
+internal static class ZoneBuildCameraCharacterAddNoisePatch
+{
+    private static bool Prefix(Character __instance, float range)
+    {
+        return !ZoneBuildCamera.ShouldSuppressPlacementNoise(__instance, range);
     }
 }
 
