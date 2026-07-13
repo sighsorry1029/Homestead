@@ -72,17 +72,17 @@ internal static class ZoneBuildCameraPlayerRemovePiecePatch
     }
 }
 
-[HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
-internal static class ZoneBuildCameraPlayerPlacePieceNoisePatch
+[HarmonyPatch(typeof(Player), nameof(Player.UpdatePlacement))]
+internal static class ZoneBuildCameraPlayerUpdatePlacementNoisePatch
 {
     private static void Prefix(Player __instance, out bool __state)
     {
-        __state = ZoneBuildCamera.BeginPlacementNoiseSuppression(__instance);
+        __state = ZoneBuildCamera.BeginBuildActionNoiseSuppression(__instance);
     }
 
     private static Exception? Finalizer(Exception? __exception, bool __state)
     {
-        ZoneBuildCamera.EndPlacementNoiseSuppression(__state);
+        ZoneBuildCamera.EndBuildActionNoiseSuppression(__state);
         return __exception;
     }
 }
@@ -92,7 +92,7 @@ internal static class ZoneBuildCameraCharacterAddNoisePatch
 {
     private static bool Prefix(Character __instance, float range)
     {
-        return !ZoneBuildCamera.ShouldSuppressPlacementNoise(__instance, range);
+        return !ZoneBuildCamera.ShouldSuppressBuildActionNoise(__instance, range);
     }
 }
 

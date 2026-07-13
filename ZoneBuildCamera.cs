@@ -37,7 +37,7 @@ internal static class ZoneBuildCamera
     private static ManualLogSource Log = null!;
     private static BuildCameraView _viewDirection;
     private static bool _externalBuildCameraWarningLogged;
-    private static int _placementNoiseSuppressionDepth;
+    private static int _buildActionNoiseSuppressionDepth;
     private static float _nextMessageTime;
     private static Transform? _lookAtTarget;
     private static Vector3 _lookAtTargetOffset = Vector3.zero;
@@ -53,7 +53,7 @@ internal static class ZoneBuildCamera
         RestoreAllMaxPlaceDistances();
         InBuildModeByPlayer.Clear();
         ZoneBuildCameraDvergerLight.CleanupAll();
-        _placementNoiseSuppressionDepth = 0;
+        _buildActionNoiseSuppressionDepth = 0;
         _nextMessageTime = 0f;
     }
 
@@ -143,28 +143,28 @@ internal static class ZoneBuildCamera
         return !ToolIsEquipped(player) || (ShouldRestrictCameraEntry() && !MeetsComfortGate());
     }
 
-    internal static bool BeginPlacementNoiseSuppression(Player player)
+    internal static bool BeginBuildActionNoiseSuppression(Player player)
     {
         if (!IsLocalPlayer(player) || !InBuildMode())
         {
             return false;
         }
 
-        _placementNoiseSuppressionDepth++;
+        _buildActionNoiseSuppressionDepth++;
         return true;
     }
 
-    internal static void EndPlacementNoiseSuppression(bool active)
+    internal static void EndBuildActionNoiseSuppression(bool active)
     {
-        if (active && _placementNoiseSuppressionDepth > 0)
+        if (active && _buildActionNoiseSuppressionDepth > 0)
         {
-            _placementNoiseSuppressionDepth--;
+            _buildActionNoiseSuppressionDepth--;
         }
     }
 
-    internal static bool ShouldSuppressPlacementNoise(Character character, float range)
+    internal static bool ShouldSuppressBuildActionNoise(Character character, float range)
     {
-        return _placementNoiseSuppressionDepth > 0 &&
+        return _buildActionNoiseSuppressionDepth > 0 &&
                character is Player player &&
                IsLocalPlayer(player) &&
                Mathf.Approximately(range, 50f);
