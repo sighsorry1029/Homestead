@@ -45,6 +45,12 @@ internal static class ZoneBlueprintStoreBlueprints
             return HomesteadLocalization.Text("hs_store_blueprint_no_entries");
         }
 
+        string transformError = ZoneBlueprintCommands.ValidateBlueprintTransforms(blueprint);
+        if (!string.IsNullOrWhiteSpace(transformError))
+        {
+            return transformError;
+        }
+
         if (ZNetScene.instance == null)
         {
             return HomesteadLocalization.Text("hs_common_world_not_ready");

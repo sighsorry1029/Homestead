@@ -308,12 +308,14 @@ internal sealed class ZoneBlueprintStoreStatusResponse
 
 internal sealed class ZoneBlueprintStorePreviewRequest
 {
+    public int RequestId { get; set; }
     public string ListingId { get; set; } = "";
     public string OfferId { get; set; } = "";
 }
 
 internal sealed class ZoneBlueprintStorePreviewResponse : IZoneBlueprintPayloadCarrier
 {
+    public int RequestId { get; set; }
     public bool Success { get; set; }
     public string Message { get; set; } = "";
     public string ListingId { get; set; } = "";
@@ -365,6 +367,8 @@ internal sealed class ZoneBlueprintStoreConfirmPurchaseRequest
 {
     public string ListingId { get; set; } = "";
     public string OfferId { get; set; } = "";
+    public long ChestUserId { get; set; }
+    public uint ChestObjectId { get; set; }
 }
 
 internal sealed class ZoneBlueprintStoreConfirmListingRequest
@@ -400,6 +404,7 @@ internal sealed class ZoneBlueprintStoreCreateOfferRequest
 internal sealed class ZoneBlueprintStoreListOffersRequest
 {
     public string ListingId { get; set; } = "";
+    public int RequestId { get; set; }
 }
 
 internal sealed class ZoneBlueprintStoreListOffersResponse
@@ -408,6 +413,7 @@ internal sealed class ZoneBlueprintStoreListOffersResponse
     public string Message { get; set; } = "";
     public string ListingId { get; set; } = "";
     public string ListingName { get; set; } = "";
+    public int RequestId { get; set; }
     public bool CanManage { get; set; }
     public List<ZoneBlueprintStoreOfferDto> Offers { get; set; } = [];
 }
@@ -502,11 +508,13 @@ internal sealed class ZoneBlueprintPlanPlaceResponse : IZoneBlueprintPayloadCarr
 
 internal sealed class ZoneBlueprintPlanPreviewRequest
 {
+    public int RequestId { get; set; }
     public string Name { get; set; } = "";
 }
 
 internal sealed class ZoneBlueprintPlanPreviewResponse : IZoneBlueprintPayloadCarrier
 {
+    public int RequestId { get; set; }
     public bool Success { get; set; }
     public string Message { get; set; } = "";
     public string Name { get; set; } = "";

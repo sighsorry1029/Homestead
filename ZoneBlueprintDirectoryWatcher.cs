@@ -10,18 +10,21 @@ internal static class ZoneBlueprintDirectoryWatcher
     private const float MissingDirectoryRetrySeconds = 2f;
     private const float WatcherRetrySeconds = 5f;
     private static readonly object ChangeLock = new();
+    private static readonly HashSet<string> PendingBlueprintChanges = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> PendingIconInvalidations = new(StringComparer.OrdinalIgnoreCase);
     private static FileSystemWatcher? _watcher;
     private static string _watcherPath = "";
     private static float _nextRetryAt;
     private static volatile bool _changePending;
+    private static volatile bool _watcherFaulted;
+    private static bool _rescanAfterWatcherReconnect;
 
-    public static void Update(Action<IReadOnlyList<string>> applyChanges)
+    public static void Update(Action<IReadOnlyList<string>, IReadOnlyList<string>> applyChanges)
     {
         Ensure();
-        if (TryConsumeChanges(out List<string> iconInvalidations))
+        if (TryConsumeChanges(out List<string> blueprintChanges, out List<string> iconInvalidations))
         {
-            applyChanges(iconInvalidations);
+            applyChanges(blueprintChanges, iconInvalidations);
         }
     }
 
@@ -29,17 +32,32 @@ internal static class ZoneBlueprintDirectoryWatcher
     {
         lock (ChangeLock)
         {
+            PendingBlueprintChanges.Clear();
             PendingIconInvalidations.Clear();
             _changePending = false;
         }
 
         DisposeWatcher();
         _nextRetryAt = 0f;
+        _watcherFaulted = false;
+        _rescanAfterWatcherReconnect = false;
     }
 
     private static void Ensure()
     {
-        if (Time.realtimeSinceStartup < _nextRetryAt)
+        float now = Time.realtimeSinceStartup;
+        if (_watcherFaulted)
+        {
+            _watcherFaulted = false;
+            DisposeWatcher();
+            _rescanAfterWatcherReconnect = true;
+            QueueFullRescan();
+            _nextRetryAt = now + WatcherRetrySeconds;
+            HomesteadPlugin.HomesteadLogger.LogDebug("Homestead blueprint directory watcher stopped unexpectedly; scheduled a full rescan and watcher restart.");
+            return;
+        }
+
+        if (now < _nextRetryAt)
         {
             return;
         }
@@ -47,7 +65,14 @@ internal static class ZoneBlueprintDirectoryWatcher
         string directory = HomesteadPlugin.BlueprintStorageFullPath;
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
         {
-            _nextRetryAt = Time.realtimeSinceStartup + MissingDirectoryRetrySeconds;
+            if (_watcher != null)
+            {
+                DisposeWatcher();
+                _rescanAfterWatcherReconnect = true;
+                QueueFullRescan();
+            }
+
+            _nextRetryAt = now + MissingDirectoryRetrySeconds;
             return;
         }
 
@@ -69,19 +94,30 @@ internal static class ZoneBlueprintDirectoryWatcher
             watcher.Changed += OnDirectoryChanged;
             watcher.Deleted += OnDirectoryChanged;
             watcher.Renamed += OnDirectoryRenamed;
-            watcher.EnableRaisingEvents = true;
+            watcher.Error += OnWatcherError;
             _watcher = watcher;
             _watcherPath = directory;
+            watcher.EnableRaisingEvents = true;
+            _nextRetryAt = 0f;
+            if (_rescanAfterWatcherReconnect)
+            {
+                _rescanAfterWatcherReconnect = false;
+                QueueFullRescan();
+            }
         }
         catch (Exception ex)
         {
-            _nextRetryAt = Time.realtimeSinceStartup + WatcherRetrySeconds;
+            DisposeWatcher();
+            _rescanAfterWatcherReconnect = true;
+            QueueFullRescan();
+            _nextRetryAt = now + WatcherRetrySeconds;
             HomesteadPlugin.HomesteadLogger.LogDebug($"Could not watch Homestead blueprint directory yet: {ex.Message}");
         }
     }
 
-    private static bool TryConsumeChanges(out List<string> iconInvalidations)
+    private static bool TryConsumeChanges(out List<string> blueprintChanges, out List<string> iconInvalidations)
     {
+        blueprintChanges = [];
         iconInvalidations = [];
         lock (ChangeLock)
         {
@@ -91,11 +127,21 @@ internal static class ZoneBlueprintDirectoryWatcher
             }
 
             _changePending = false;
+            blueprintChanges.AddRange(PendingBlueprintChanges);
             iconInvalidations.AddRange(PendingIconInvalidations);
+            PendingBlueprintChanges.Clear();
             PendingIconInvalidations.Clear();
         }
 
         return true;
+    }
+
+    private static void QueueFullRescan()
+    {
+        lock (ChangeLock)
+        {
+            _changePending = true;
+        }
     }
 
     private static void OnDirectoryChanged(object sender, FileSystemEventArgs args)
@@ -114,31 +160,44 @@ internal static class ZoneBlueprintDirectoryWatcher
         }
     }
 
+    private static void OnWatcherError(object sender, ErrorEventArgs args)
+    {
+        _watcherFaulted = true;
+    }
+
     private static void QueueChange(string path, string? oldPath)
     {
         lock (ChangeLock)
         {
             _changePending = true;
-            AddPendingIconInvalidation(path);
+            AddPendingChange(path);
             if (!string.IsNullOrWhiteSpace(oldPath))
             {
-                AddPendingIconInvalidation(oldPath!);
+                AddPendingChange(oldPath!);
             }
         }
     }
 
-    private static void AddPendingIconInvalidation(string path)
+    private static void AddPendingChange(string path)
     {
-        if (!IsBlueprintPng(path))
+        string file = Path.GetFileName(path);
+        if (file.EndsWith(ZoneBlueprintFileFormat.BlueprintExtension, StringComparison.OrdinalIgnoreCase))
         {
+            AddNameWithoutSuffix(PendingBlueprintChanges, file, ZoneBlueprintFileFormat.BlueprintExtension);
             return;
         }
 
-        string file = Path.GetFileName(path);
-        const string suffix = ZoneBlueprintFileFormat.IconExtension;
+        if (file.EndsWith(ZoneBlueprintFileFormat.IconExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            AddNameWithoutSuffix(PendingIconInvalidations, file, ZoneBlueprintFileFormat.IconExtension);
+        }
+    }
+
+    private static void AddNameWithoutSuffix(HashSet<string> target, string file, string suffix)
+    {
         if (file.Length > suffix.Length)
         {
-            PendingIconInvalidations.Add(file.Substring(0, file.Length - suffix.Length));
+            target.Add(file.Substring(0, file.Length - suffix.Length));
         }
     }
 
@@ -149,11 +208,6 @@ internal static class ZoneBlueprintDirectoryWatcher
                file.EndsWith(ZoneBlueprintFileFormat.IconExtension, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsBlueprintPng(string path)
-    {
-        return Path.GetFileName(path).EndsWith(ZoneBlueprintFileFormat.IconExtension, StringComparison.OrdinalIgnoreCase);
-    }
-
     private static void DisposeWatcher()
     {
         if (_watcher == null)
@@ -161,13 +215,30 @@ internal static class ZoneBlueprintDirectoryWatcher
             return;
         }
 
-        _watcher.EnableRaisingEvents = false;
-        _watcher.Created -= OnDirectoryChanged;
-        _watcher.Changed -= OnDirectoryChanged;
-        _watcher.Deleted -= OnDirectoryChanged;
-        _watcher.Renamed -= OnDirectoryRenamed;
-        _watcher.Dispose();
+        FileSystemWatcher watcher = _watcher;
         _watcher = null;
         _watcherPath = "";
+        watcher.Created -= OnDirectoryChanged;
+        watcher.Changed -= OnDirectoryChanged;
+        watcher.Deleted -= OnDirectoryChanged;
+        watcher.Renamed -= OnDirectoryRenamed;
+        watcher.Error -= OnWatcherError;
+        try
+        {
+            watcher.EnableRaisingEvents = false;
+        }
+        catch
+        {
+            // A faulted watcher may already have released its native handle.
+        }
+
+        try
+        {
+            watcher.Dispose();
+        }
+        catch
+        {
+            // Recovery continues by creating a fresh watcher on the main thread.
+        }
     }
 }

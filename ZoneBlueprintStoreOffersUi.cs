@@ -17,6 +17,7 @@ internal static class ZoneBlueprintStoreOffersUi
 {
     private const int MaxRows = 6;
     private const int PriceSlots = ZoneBlueprintStoreChest.MaxPriceItemTypes;
+    private const float RequestTimeoutSeconds = 10f;
 
     private static GameObject? _panel;
     private static Text? _titleText;
@@ -28,6 +29,9 @@ internal static class ZoneBlueprintStoreOffersUi
     private static string _listingId = "";
     private static string _listingName = "";
     private static int _scrollOffset;
+    private static int _nextRequestId;
+    private static int _activeRequestId;
+    private static float _activeRequestExpiresAt;
     private static bool _inputBlocked;
 
     public static void Open(string listingId, string listingName)
@@ -44,15 +48,19 @@ internal static class ZoneBlueprintStoreOffersUi
             RefreshRows();
             SetStatus(HomesteadLocalization.Text("hs_store_loading_offers"));
             SetInputBlocked(true);
+            RefreshCurrent();
         }
     }
 
     public static void ResetForWorldSession()
     {
+        ZoneBlueprintStorePanelLayout.CaptureAndFlush(_panel, ZoneBlueprintStorePanelKind.Large);
         _listingId = "";
         _listingName = "";
         _offers = [];
         _scrollOffset = 0;
+        _activeRequestId = 0;
+        _activeRequestExpiresAt = 0f;
         if (_panel != null && _panel)
         {
             _panel.SetActive(false);
@@ -63,26 +71,29 @@ internal static class ZoneBlueprintStoreOffersUi
 
     public static void SetOffers(ZoneBlueprintStoreListOffersResponse response)
     {
-        EnsurePanel();
-        _listingId = response.ListingId;
+        if (!ZoneBlueprintStorePanelRuntime.IsVisible(_panel) ||
+            !string.Equals(response.ListingId, _listingId, StringComparison.Ordinal) ||
+            response.RequestId != _activeRequestId)
+        {
+            return;
+        }
+
+        _activeRequestId = 0;
+        _activeRequestExpiresAt = 0f;
         _listingName = response.ListingName;
         _offers = response.Offers ?? [];
-        _scrollOffset = 0;
         UpdateBackButtonLabel();
         RefreshRows();
         SetStatus(response.Success ? BuildStatus() : response.Message);
-        if (_panel != null && _panel)
-        {
-            _panel.SetActive(true);
-            SetInputBlocked(true);
-        }
     }
 
     public static void RefreshCurrent()
     {
         if (!string.IsNullOrWhiteSpace(_listingId))
         {
-            ZoneBlueprintStore.RequestOfferList(_listingId);
+            _activeRequestId = NextRequestId();
+            _activeRequestExpiresAt = Time.realtimeSinceStartup + RequestTimeoutSeconds;
+            ZoneBlueprintStore.RequestOfferList(_listingId, _activeRequestId);
         }
     }
 
@@ -91,6 +102,13 @@ internal static class ZoneBlueprintStoreOffersUi
         if (!ZoneBlueprintStorePanelRuntime.BeginUpdate(_panel, ZoneBlueprintStorePanelKind.Large, _inputBlocked, SetInputBlocked))
         {
             return;
+        }
+
+        if (_activeRequestId != 0 && Time.realtimeSinceStartup >= _activeRequestExpiresAt)
+        {
+            _activeRequestId = 0;
+            _activeRequestExpiresAt = 0f;
+            SetStatus(HomesteadLocalization.Text("hs_store_offers_request_timeout"));
         }
 
         if (ZoneBlueprintStorePanelRuntime.ConsumeEscape(Close))
@@ -258,7 +276,7 @@ internal static class ZoneBlueprintStoreOffersUi
     private static void BackToStore()
     {
         Close();
-        ZoneBlueprintStore.Open(Player.m_localPlayer);
+        ZoneBlueprintStore.Open();
     }
 
     private static void UpdateBackButtonLabel()
@@ -296,12 +314,21 @@ internal static class ZoneBlueprintStoreOffersUi
 
     private static void Close()
     {
+        _activeRequestId = 0;
+        _activeRequestExpiresAt = 0f;
+        ZoneBlueprintStorePanelLayout.CaptureAndFlush(_panel, ZoneBlueprintStorePanelKind.Large);
         if (_panel != null && _panel)
         {
             _panel.SetActive(false);
         }
 
         SetInputBlocked(false);
+    }
+
+    private static int NextRequestId()
+    {
+        _nextRequestId = _nextRequestId == int.MaxValue ? 1 : _nextRequestId + 1;
+        return _nextRequestId;
     }
 
     private static void SetInputBlocked(bool blocked)

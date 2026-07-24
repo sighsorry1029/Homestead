@@ -43,7 +43,34 @@ internal static class ZoneBlueprintFileFormat
 
     public static void WriteFile(string path, ZoneBlueprintFile blueprint)
     {
-        File.WriteAllText(path, Serialize(blueprint));
+        string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(tempPath, Serialize(blueprint));
+            ReadFile(tempPath);
+
+            if (!File.Exists(path))
+            {
+                File.Move(tempPath, path);
+                return;
+            }
+
+            File.Replace(tempPath, path, null);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch
+            {
+                // A stale temporary file is safer than masking the original write result.
+            }
+        }
     }
 
     public static string Serialize(ZoneBlueprintFile blueprint)

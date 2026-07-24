@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
@@ -10,7 +11,6 @@ namespace Homestead;
 
 internal static class HomesteadTerrainSupport
 {
-    private const float SearchRadius = 48f;
     private const float SupportFillClearance = 0.05f;
     private const int TerrainApplyNodeBatchSize = 1024;
     private static readonly int SupportFillBaseLayerHash = StringExtensionMethods.GetStableHashCode(HomesteadPlugin.ModGUID + ".terrain_base_v1");
@@ -37,12 +37,15 @@ internal static class HomesteadTerrainSupport
         return point.y;
     }
 
-    public static IEnumerator ApplyWorldSupportContactsAsync(IEnumerable<Vector3> supportContacts, Action<bool> onComplete)
+    public static IEnumerator ApplyWorldSupportContactsAsync(
+        IEnumerable<Vector3> supportContacts,
+        Func<bool> canContinue,
+        Action<bool, bool, Func<int>?> onComplete)
     {
         List<TerrainSupportCell> supportCells = BuildSupportCells(supportContacts);
         if (supportCells.Count == 0)
         {
-            onComplete(false);
+            onComplete(false, false, null);
             yield break;
         }
 
@@ -52,22 +55,113 @@ internal static class HomesteadTerrainSupport
             .Distinct()
             .ToList();
 
-        bool changed = false;
+        List<TerrainSupportTarget> targets = [];
         foreach (Vector2i zone in zones)
         {
-            if (!TryGetHeightmap(zone, out Heightmap heightmap))
+            if (!canContinue())
             {
-                onComplete(false);
+                int cleanupFailures = CleanupPreparedTerrainTargets(targets);
+                onComplete(false, cleanupFailures > 0, null);
                 yield break;
             }
 
+            if (!TryPrepareTerrainTarget(zone, out TerrainSupportTarget target, out string reason, out bool prepareCleanupFailed))
+            {
+                int cleanupFailures = CleanupPreparedTerrainTargets(targets);
+                if (prepareCleanupFailed)
+                {
+                    cleanupFailures++;
+                }
+
+                HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to prepare Homestead terrain support: {reason}");
+                onComplete(false, cleanupFailures > 0, null);
+                yield break;
+            }
+
+            targets.Add(target);
+        }
+
+        List<TerrainSupportTarget> changedTargets = [];
+        foreach (TerrainSupportTarget target in targets)
+        {
+            bool staged = false;
             bool zoneChanged = false;
-            yield return ApplySupportCellsToHeightmapAsync(heightmap, supportHeights, supportCells, result => zoneChanged = result);
-            changed |= zoneChanged;
+            yield return StageSupportCellsAsync(
+                target,
+                supportHeights,
+                supportCells,
+                canContinue,
+                (success, changed) =>
+                {
+                    staged = success;
+                    zoneChanged = changed;
+                });
+            if (!staged)
+            {
+                int cleanupFailures = CleanupPreparedTerrainTargets(targets);
+                onComplete(false, cleanupFailures > 0, null);
+                yield break;
+            }
+
+            if (zoneChanged)
+            {
+                changedTargets.Add(target);
+            }
+
             yield return null;
         }
 
-        onComplete(changed);
+        if (!canContinue() || changedTargets.Any(target => !target.Snapshot.IsCurrent()))
+        {
+            int cleanupFailures = CleanupPreparedTerrainTargets(targets);
+            onComplete(false, cleanupFailures > 0, null);
+            yield break;
+        }
+
+        List<TerrainSupportTarget> committedTargets = [];
+        try
+        {
+            foreach (TerrainSupportTarget target in changedTargets)
+            {
+                if (!canContinue() || !target.Snapshot.IsCurrent())
+                {
+                    throw new InvalidOperationException("Terrain changed while blueprint support was being prepared.");
+                }
+
+                committedTargets.Add(target);
+                try
+                {
+                    PersistSupportFillBaseLayer(target.Compiler, target.Width, target.WorldHeights, target.Paints);
+                }
+                finally
+                {
+                    target.Snapshot.MarkCommitted();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to apply Homestead terrain support: {ex.Message}");
+            int rollbackFailures = RollbackTerrainSupport(committedTargets);
+            rollbackFailures += CleanupPreparedTerrainTargets(targets);
+            onComplete(false, rollbackFailures > 0, null);
+            yield break;
+        }
+
+        int finalCleanupFailures = CleanupPreparedTerrainTargets(targets);
+        if (finalCleanupFailures > 0)
+        {
+            finalCleanupFailures += RollbackTerrainSupport(committedTargets);
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Blueprint terrain support was rolled back after {finalCleanupFailures} cleanup or rollback failures.");
+            onComplete(false, true, null);
+            yield break;
+        }
+
+        Func<int>? rollback = committedTargets.Count == 0
+            ? null
+            : () => RollbackTerrainSupport(committedTargets);
+        onComplete(true, committedTargets.Count > 0, rollback);
     }
 
     public static void ApplyBaseLayer(Heightmap heightmap)
@@ -187,7 +281,7 @@ internal static class HomesteadTerrainSupport
                 compiler.m_nview.GetZDO().Set(SupportFillBaseLayerHash, SerializeBaseLayer(compiler.m_hmap, width, worldHeights, paints));
             }
 
-            PersistCompiler(compiler);
+            PersistCompiler(compiler, position, radius);
             changedCompilers++;
         }
 
@@ -209,15 +303,208 @@ internal static class HomesteadTerrainSupport
             .ToList();
     }
 
-    private static IEnumerator ApplySupportCellsToHeightmapAsync(
+    private static bool TryPrepareTerrainTarget(
+        Vector2i zone,
+        out TerrainSupportTarget target,
+        out string reason,
+        out bool cleanupFailed)
+    {
+        target = null!;
+        reason = "";
+        cleanupFailed = false;
+        if (!TryGetHeightmap(zone, out Heightmap heightmap))
+        {
+            reason = $"Heightmap zone {zone} is not loaded.";
+            return false;
+        }
+
+        TerrainComp? compiler = null;
+        bool createdCompiler = false;
+        try
+        {
+            compiler = TerrainComp.FindTerrainCompiler(heightmap.transform.position);
+            if (!compiler)
+            {
+                compiler = heightmap.GetAndCreateTerrainCompiler();
+                createdCompiler = true;
+            }
+
+            if (!IsCompilerReady(compiler))
+            {
+                throw new InvalidOperationException($"Terrain compiler for zone {zone} is not network ready.");
+            }
+
+            compiler.CheckLoad();
+            if (!IsCompilerReady(compiler) || HasCompilerEdits(compiler))
+            {
+                throw new InvalidOperationException($"Terrain compiler for zone {zone} contains existing player edits.");
+            }
+
+            int width = heightmap.m_width + 1;
+            ZDO zdo = compiler.m_nview.GetZDO();
+            byte[] existingPayload = zdo.GetByteArray(SupportFillBaseLayerHash);
+            float[] worldHeights;
+            Color[] paints;
+            if (existingPayload != null && existingPayload.Length > 0)
+            {
+                if (!TryDeserializeBaseLayer(existingPayload, heightmap, out int storedWidth, out worldHeights, out paints) ||
+                    storedWidth != width ||
+                    worldHeights.Length != width * width ||
+                    (paints.Length != 0 && paints.Length != worldHeights.Length))
+                {
+                    throw new InvalidDataException($"Stored Homestead terrain support for zone {zone} is invalid.");
+                }
+
+                if (paints.Length == 0 && !TryGetBuilderBaseLayer(heightmap, width, out _, out paints))
+                {
+                    throw new InvalidOperationException($"Native terrain paint data for zone {zone} is unavailable.");
+                }
+            }
+            else if (!TryGetBuilderBaseLayer(heightmap, width, out worldHeights, out paints))
+            {
+                throw new InvalidOperationException($"Native terrain data for zone {zone} is unavailable.");
+            }
+
+            target = new TerrainSupportTarget(
+                heightmap,
+                compiler,
+                width,
+                worldHeights,
+                paints,
+                new TerrainCompilerSnapshot(compiler, existingPayload, createdCompiler));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (createdCompiler && compiler)
+            {
+                cleanupFailed = !DestroyPreparedTerrainCompiler(compiler);
+            }
+
+            reason = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryGetBuilderBaseLayer(
         Heightmap heightmap,
+        int width,
+        out float[] worldHeights,
+        out Color[] paints)
+    {
+        worldHeights = [];
+        paints = [];
+        if (HeightmapBuilder.instance == null || WorldGenerator.instance == null)
+        {
+            return false;
+        }
+
+        HeightmapBuilder.HMBuildData data = HeightmapBuilder.instance.RequestTerrainSync(
+            heightmap.transform.position,
+            heightmap.m_width,
+            heightmap.m_scale,
+            heightmap.IsDistantLod,
+            WorldGenerator.instance);
+        int length = width * width;
+        if (data.m_baseHeights == null ||
+            data.m_baseHeights.Count != length ||
+            data.m_baseMask == null ||
+            data.m_baseMask.Length != length)
+        {
+            return false;
+        }
+
+        float heightmapY = heightmap.transform.position.y;
+        worldHeights = new float[length];
+        for (int index = 0; index < length; index++)
+        {
+            worldHeights[index] = data.m_baseHeights[index] + heightmapY;
+        }
+
+        paints = data.m_baseMask.ToArray();
+        return true;
+    }
+
+    private static bool HasCompilerEdits(TerrainComp compiler)
+    {
+        return compiler.m_modifiedHeight == null ||
+               compiler.m_levelDelta == null ||
+               compiler.m_smoothDelta == null ||
+               compiler.m_modifiedPaint == null ||
+               compiler.m_paintMask == null ||
+               compiler.m_modifiedHeight.Any(modified => modified) ||
+               compiler.m_modifiedPaint.Any(modified => modified) ||
+               compiler.m_levelDelta.Any(delta => Mathf.Abs(delta) > 0.0001f) ||
+               compiler.m_smoothDelta.Any(delta => Mathf.Abs(delta) > 0.0001f);
+    }
+
+    private static int RollbackTerrainSupport(IReadOnlyList<TerrainSupportTarget> targets)
+    {
+        int failures = 0;
+        for (int index = targets.Count - 1; index >= 0; index--)
+        {
+            if (!targets[index].Snapshot.TryRestore())
+            {
+                failures++;
+            }
+        }
+
+        return failures;
+    }
+
+    private static int CleanupPreparedTerrainTargets(IEnumerable<TerrainSupportTarget> targets)
+    {
+        int failures = 0;
+        foreach (TerrainSupportTarget target in targets)
+        {
+            if (!target.Snapshot.TryDiscardUncommittedCompiler())
+            {
+                failures++;
+            }
+        }
+
+        return failures;
+    }
+
+    private static bool DestroyPreparedTerrainCompiler(TerrainComp compiler)
+    {
+        try
+        {
+            if (compiler.m_nview != null && compiler.m_nview.IsValid())
+            {
+                if (!compiler.m_nview.IsOwner())
+                {
+                    compiler.m_nview.ClaimOwnership();
+                }
+
+                if (!compiler.m_nview.IsOwner())
+                {
+                    throw new InvalidOperationException("Terrain compiler ownership could not be acquired.");
+                }
+
+                compiler.m_nview.Destroy();
+                return true;
+            }
+
+            UnityEngine.Object.Destroy(compiler.gameObject);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to remove an unused terrain compiler: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static IEnumerator StageSupportCellsAsync(
+        TerrainSupportTarget target,
         Dictionary<long, float> supportHeights,
         List<TerrainSupportCell> supportCells,
-        Action<bool> onComplete)
+        Func<bool> canContinue,
+        Action<bool, bool> onComplete)
     {
-        int width = heightmap.m_width + 1;
-        float[] worldHeights = new float[width * width];
-        Color[] paints = new Color[width * width];
+        Heightmap heightmap = target.Heightmap;
+        int width = target.Width;
         float featherWidth = BlueprintConfig.TerrainSupportFeatherWidth;
         TerrainSupportCellIndex supportIndex = new(supportCells, featherWidth);
         bool changed = false;
@@ -229,10 +516,8 @@ internal static class HomesteadTerrainSupport
             {
                 int index = z * width + x;
                 Vector3 node = VertexToWorld(heightmap, x, z);
-                float current = GetWorldHeight(heightmap, x, z);
-                float baseHeight = TryGetTerrainBaseHeight(node.x, node.z, out float terrainBaseHeight) ? terrainBaseHeight : current;
+                float baseHeight = target.WorldHeights[index];
                 float desired = baseHeight;
-                paints[index] = GetPaint(heightmap, x, z);
 
                 if (supportHeights.TryGetValue(PackCell(Mathf.RoundToInt(node.x), Mathf.RoundToInt(node.z)), out float targetHeight))
                 {
@@ -243,9 +528,9 @@ internal static class HomesteadTerrainSupport
                     desired = featheredHeight;
                 }
 
-                worldHeights[index] = desired;
-                if (Mathf.Abs(current - desired) > 0.01f)
+                if (Mathf.Abs(baseHeight - desired) > 0.01f)
                 {
+                    target.WorldHeights[index] = desired;
                     changed = true;
                 }
 
@@ -253,22 +538,24 @@ internal static class HomesteadTerrainSupport
                 if (processed >= TerrainApplyNodeBatchSize)
                 {
                     processed = 0;
+                    if (!canContinue())
+                    {
+                        onComplete(false, false);
+                        yield break;
+                    }
+
                     yield return null;
                 }
             }
         }
 
-        if (!changed)
+        if (!canContinue())
         {
-            onComplete(false);
+            onComplete(false, false);
             yield break;
         }
 
-        TerrainComp compiler = heightmap.GetAndCreateTerrainCompiler();
-        PersistSupportFillBaseLayer(compiler, width, worldHeights, paints);
-        heightmap.Poke(delayed: false);
-        ClutterSystem.instance?.ResetGrass(heightmap.transform.position, SearchRadius);
-        onComplete(true);
+        onComplete(true, changed);
     }
 
     private static bool TryGetFeatheredSupportHeight(Vector3 node, float baseHeight, TerrainSupportCellIndex supportIndex, float featherWidth, out float height)
@@ -524,17 +811,22 @@ internal static class HomesteadTerrainSupport
             compiler.m_nview.ClaimOwnership();
         }
 
-        Array.Clear(compiler.m_modifiedHeight, 0, compiler.m_modifiedHeight.Length);
-        Array.Clear(compiler.m_levelDelta, 0, compiler.m_levelDelta.Length);
-        Array.Clear(compiler.m_smoothDelta, 0, compiler.m_smoothDelta.Length);
-        Array.Clear(compiler.m_modifiedPaint, 0, compiler.m_modifiedPaint.Length);
-        Array.Clear(compiler.m_paintMask, 0, compiler.m_paintMask.Length);
+        if (!compiler.m_nview.IsOwner())
+        {
+            throw new InvalidOperationException("Target terrain compiler ownership could not be acquired.");
+        }
 
         compiler.m_nview.GetZDO().Set(SupportFillBaseLayerHash, SerializeBaseLayer(compiler.m_hmap, width, worldHeights, paints));
-        PersistCompiler(compiler);
+        PersistCompiler(
+            compiler,
+            compiler.m_hmap.transform.position,
+            GetHeightmapResetRadius(compiler.m_hmap));
+        ClutterSystem.instance?.ResetGrass(
+            compiler.m_hmap.transform.position,
+            GetHeightmapResetRadius(compiler.m_hmap));
     }
 
-    private static void PersistCompiler(TerrainComp compiler)
+    private static void PersistCompiler(TerrainComp compiler, Vector3 operationPoint, float operationRadius)
     {
         if (compiler.m_nview != null && compiler.m_nview.IsValid() && !compiler.m_nview.IsOwner())
         {
@@ -542,10 +834,16 @@ internal static class HomesteadTerrainSupport
         }
 
         compiler.m_operations++;
-        compiler.m_lastOpPoint = Vector3.zero;
-        compiler.m_lastOpRadius = 0f;
+        compiler.m_lastOpPoint = operationPoint;
+        compiler.m_lastOpRadius = operationRadius;
         compiler.Save();
         compiler.m_hmap.Poke(delayed: false);
+    }
+
+    private static float GetHeightmapResetRadius(Heightmap heightmap)
+    {
+        float halfSide = heightmap.m_width * heightmap.m_scale * 0.5f;
+        return halfSide * 1.414214f;
     }
 
     private static bool ShouldSerializePaints(Heightmap heightmap, int width, Color[] paints)
@@ -803,6 +1101,188 @@ internal static class HomesteadTerrainSupport
             package.ReadSingle(),
             package.ReadSingle(),
             package.ReadSingle());
+    }
+
+    private sealed class TerrainSupportTarget
+    {
+        public TerrainSupportTarget(
+            Heightmap heightmap,
+            TerrainComp compiler,
+            int width,
+            float[] worldHeights,
+            Color[] paints,
+            TerrainCompilerSnapshot snapshot)
+        {
+            Heightmap = heightmap;
+            Compiler = compiler;
+            Width = width;
+            WorldHeights = worldHeights;
+            Paints = paints;
+            Snapshot = snapshot;
+        }
+
+        public Heightmap Heightmap { get; }
+        public TerrainComp Compiler { get; }
+        public int Width { get; }
+        public float[] WorldHeights { get; }
+        public Color[] Paints { get; }
+        public TerrainCompilerSnapshot Snapshot { get; }
+    }
+
+    private sealed class TerrainCompilerSnapshot
+    {
+        private readonly TerrainComp _compiler;
+        private readonly byte[] _supportPayload;
+        private readonly bool _createdCompiler;
+        private readonly uint _dataRevision;
+        private readonly uint _lastDataRevision;
+        private readonly long _owner;
+        private readonly ushort _ownerRevision;
+        private readonly int _operations;
+        private readonly Vector3 _lastOpPoint;
+        private readonly float _lastOpRadius;
+        private readonly bool[] _modifiedHeight;
+        private readonly float[] _levelDelta;
+        private readonly float[] _smoothDelta;
+        private readonly bool[] _modifiedPaint;
+        private readonly Color[] _paintMask;
+        private bool _committed;
+        private uint _committedRevision;
+        private ushort _committedOwnerRevision;
+
+        public TerrainCompilerSnapshot(TerrainComp compiler, byte[]? supportPayload, bool createdCompiler)
+        {
+            _compiler = compiler;
+            _supportPayload = supportPayload?.ToArray() ?? [];
+            _createdCompiler = createdCompiler;
+            ZDO zdo = compiler.m_nview.GetZDO();
+            _dataRevision = zdo.DataRevision;
+            _lastDataRevision = compiler.m_lastDataRevision;
+            _owner = zdo.GetOwner();
+            _ownerRevision = zdo.OwnerRevision;
+            _operations = compiler.m_operations;
+            _lastOpPoint = compiler.m_lastOpPoint;
+            _lastOpRadius = compiler.m_lastOpRadius;
+            _modifiedHeight = compiler.m_modifiedHeight.ToArray();
+            _levelDelta = compiler.m_levelDelta.ToArray();
+            _smoothDelta = compiler.m_smoothDelta.ToArray();
+            _modifiedPaint = compiler.m_modifiedPaint.ToArray();
+            _paintMask = compiler.m_paintMask.ToArray();
+        }
+
+        public bool IsCurrent()
+        {
+            if (!IsCompilerReady(_compiler))
+            {
+                return false;
+            }
+
+            ZDO zdo = _compiler.m_nview.GetZDO();
+            return zdo != null &&
+                   zdo.DataRevision == _dataRevision &&
+                   zdo.GetOwner() == _owner &&
+                   zdo.OwnerRevision == _ownerRevision &&
+                   _compiler.m_lastDataRevision == _lastDataRevision &&
+                   _compiler.m_operations == _operations &&
+                   _compiler.m_lastOpPoint == _lastOpPoint &&
+                   Mathf.Approximately(_compiler.m_lastOpRadius, _lastOpRadius) &&
+                   _compiler.m_modifiedHeight.SequenceEqual(_modifiedHeight) &&
+                   _compiler.m_levelDelta.SequenceEqual(_levelDelta) &&
+                   _compiler.m_smoothDelta.SequenceEqual(_smoothDelta) &&
+                   _compiler.m_modifiedPaint.SequenceEqual(_modifiedPaint) &&
+                   _compiler.m_paintMask.SequenceEqual(_paintMask);
+        }
+
+        public void MarkCommitted()
+        {
+            _committed = true;
+            _committedRevision = IsCompilerReady(_compiler)
+                ? _compiler.m_nview.GetZDO().DataRevision
+                : uint.MaxValue;
+            _committedOwnerRevision = IsCompilerReady(_compiler)
+                ? _compiler.m_nview.GetZDO().OwnerRevision
+                : ushort.MaxValue;
+        }
+
+        public bool TryDiscardUncommittedCompiler()
+        {
+            if (!_createdCompiler || _committed)
+            {
+                return true;
+            }
+
+            if (!IsCurrent())
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    "An unused terrain compiler was retained because its state changed while blueprint support was being prepared.");
+                return false;
+            }
+
+            return DestroyPreparedTerrainCompiler(_compiler);
+        }
+
+        public bool TryRestore()
+        {
+            if (!_committed)
+            {
+                return true;
+            }
+
+            if (!IsCompilerReady(_compiler))
+            {
+                HomesteadPlugin.HomesteadLogger.LogError("Could not roll back Homestead terrain support because its compiler is no longer available.");
+                return false;
+            }
+
+            ZDO zdo = _compiler.m_nview.GetZDO();
+            if (zdo == null ||
+                zdo.DataRevision != _committedRevision ||
+                zdo.OwnerRevision != _committedOwnerRevision)
+            {
+                HomesteadPlugin.HomesteadLogger.LogError("Could not roll back Homestead terrain support because the terrain changed after the blueprint operation.");
+                return false;
+            }
+
+            if (_createdCompiler)
+            {
+                return DestroyPreparedTerrainCompiler(_compiler);
+            }
+
+            try
+            {
+                if (!_compiler.m_nview.IsOwner())
+                {
+                    _compiler.m_nview.ClaimOwnership();
+                }
+
+                if (!_compiler.m_nview.IsOwner())
+                {
+                    throw new InvalidOperationException("Terrain compiler ownership could not be acquired.");
+                }
+
+                _modifiedHeight.CopyTo(_compiler.m_modifiedHeight, 0);
+                _levelDelta.CopyTo(_compiler.m_levelDelta, 0);
+                _smoothDelta.CopyTo(_compiler.m_smoothDelta, 0);
+                _modifiedPaint.CopyTo(_compiler.m_modifiedPaint, 0);
+                _paintMask.CopyTo(_compiler.m_paintMask, 0);
+                _compiler.m_operations = _operations;
+                _compiler.m_lastOpPoint = _lastOpPoint;
+                _compiler.m_lastOpRadius = _lastOpRadius;
+                zdo.Set(SupportFillBaseLayerHash, _supportPayload.ToArray());
+                _compiler.Save();
+                _compiler.m_hmap.Poke(delayed: false);
+                ClutterSystem.instance?.ResetGrass(
+                    _compiler.m_hmap.transform.position,
+                    GetHeightmapResetRadius(_compiler.m_hmap));
+                zdo.SetOwner(_owner);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogError($"Failed to roll back Homestead terrain support: {ex}");
+                return false;
+            }
+        }
     }
 
     private readonly struct TerrainSupportCell

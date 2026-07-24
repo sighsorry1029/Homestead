@@ -36,9 +36,10 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     internal const string DraftOwnedByChestKey = "hs_store_draft_owned_by_chest";
     private const float CleanupCheckInterval = 30f;
     private const int PreviewRestoreBlueprintCacheLimit = 32;
+    private const float PreviewRestoreRequestTimeoutSeconds = 10f;
     private static readonly Dictionary<string, ZoneBlueprintFile> PreviewRestoreBlueprintCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Queue<string> PreviewRestoreBlueprintCacheOrder = [];
-    private static readonly HashSet<string> PendingPreviewRestoreFiles = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, float> PendingPreviewRestoreFiles = new(StringComparer.OrdinalIgnoreCase);
 
     private ZNetView? _nview;
     private Container? _container;
@@ -48,7 +49,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     private string _cachedListingId = "";
     private string _cachedBlueprintName = "";
     private readonly ZoneBlueprintGhostOwner _ownedPreview = new();
-    private bool _previewRestoreRequested;
     private float _nextCleanupCheck;
 
     internal static void ResetPreviewRestoreCacheForWorldSession()
@@ -258,7 +258,13 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return true;
         }
 
-        ZoneBlueprintStore.RequestConfirmPurchase(listingId, GetOfferId());
+        if (!TryGetZdoId(out ZDOID chestId))
+        {
+            player.Message(MessageHud.MessageType.Center, HomesteadLocalization.Text("hs_store_purchase_chest_missing_nearby"));
+            return true;
+        }
+
+        ZoneBlueprintStore.RequestConfirmPurchase(listingId, GetOfferId(), chestId);
         player.Message(MessageHud.MessageType.TopLeft, HomesteadLocalization.Text("hs_store_purchase_request_sent"));
         return true;
     }
@@ -304,15 +310,58 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return false;
         }
 
-        SetDepositedPriceItems([]);
-        _container?.Save();
-        Touch();
+        try
+        {
+            SetDepositedPriceItems([]);
+        }
+        catch (Exception ex)
+        {
+            if (GetDepositedPriceItems().Count > 0)
+            {
+                HomesteadPlugin.HomesteadLogger.LogError(
+                    $"Failed to clear blueprint store purchase escrow: {ex}");
+                return false;
+            }
+
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Blueprint store purchase escrow was cleared despite a write exception: {ex.Message}");
+        }
+
+        try
+        {
+            _container?.Save();
+            Touch();
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Blueprint store purchase payment was committed, but chest bookkeeping failed: {ex.Message}");
+        }
+
         return true;
     }
 
     public string GetOfferId()
     {
         return _nview?.GetZDO()?.GetString(OfferIdKey, "") ?? "";
+    }
+
+    internal bool TryGetZdo(out ZDO? zdo)
+    {
+        zdo = _nview != null && _nview.IsValid() ? _nview.GetZDO() : null;
+        return zdo != null && zdo.IsValid();
+    }
+
+    private bool TryGetZdoId(out ZDOID id)
+    {
+        if (TryGetZdo(out ZDO? zdo))
+        {
+            id = zdo!.m_uid;
+            return true;
+        }
+
+        id = ZDOID.None;
+        return false;
     }
 
     public bool CanTakePriceItems(IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
@@ -332,9 +381,49 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return false;
         }
 
-        SetDepositedPriceItems(zdo, []);
-        ZoneBlueprintChestZdoRegistry.Refresh(zdo);
+        try
+        {
+            SetDepositedPriceItems(zdo, []);
+        }
+        catch (Exception ex)
+        {
+            if (GetDepositedPriceItems(zdo).Count > 0)
+            {
+                HomesteadPlugin.HomesteadLogger.LogError(
+                    $"Failed to clear unloaded blueprint store purchase escrow: {ex}");
+                return false;
+            }
+
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Unloaded blueprint store purchase escrow was cleared despite a write exception: {ex.Message}");
+        }
+
+        try
+        {
+            ZoneBlueprintChestZdoRegistry.Refresh(zdo);
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Blueprint store purchase payment was committed, but its registry refresh failed: {ex.Message}");
+        }
+
         return true;
+    }
+
+    internal static bool HasExpectedPurchasePrice(ZDO? zdo, IEnumerable<ZoneBlueprintStorePriceItem> priceItems)
+    {
+        if (zdo == null || !zdo.IsValid())
+        {
+            return false;
+        }
+
+        string storedPrice = zdo.GetString(PricePayloadKey, "");
+        return !string.IsNullOrWhiteSpace(storedPrice) &&
+               string.Equals(
+                   storedPrice,
+                   ZoneBlueprintStorePrices.SerializePriceItems(priceItems),
+                   StringComparison.Ordinal);
     }
 
     public bool TryAcceptPurchaseMaterialFromInventory(Inventory sourceInventory, ItemDrop.ItemData item, int requestedAmount, bool message)
@@ -515,10 +604,42 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         }
 
         string blueprintFile = zdo.GetString(BlueprintFileKey, "");
+        if (IsReferencedByActiveListing(blueprintFile))
+        {
+            zdo.Set(DraftOwnedByChestKey, false);
+            ZoneBlueprintChestZdoRegistry.Refresh(zdo);
+            return;
+        }
+
         ZoneBlueprintStoreDraftRepository.DeleteFile(blueprintFile);
         zdo.Set(DraftOwnedByChestKey, false);
         ZoneBlueprintChestZdoRegistry.Refresh(zdo);
         HomesteadPlugin.HomesteadLogger.LogInfo($"Blueprint store draft cleanup ({source}): {Path.GetFileName(blueprintFile)}");
+    }
+
+    private static bool IsReferencedByActiveListing(string blueprintFile)
+    {
+        string fileName = Path.GetFileName(blueprintFile);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        try
+        {
+            return ZoneBlueprintStoreDraftRepository.LoadActiveCatalog().Listings.Any(listing =>
+                listing.Active &&
+                string.Equals(
+                    Path.GetFileName(listing.BlueprintFile),
+                    fileName,
+                    StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Refusing to delete blueprint store draft '{fileName}' because active listing references could not be checked: {ex.Message}");
+            return true;
+        }
     }
 
     public void PlayCompletionVfx()
@@ -540,6 +661,64 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
         ZoneMaterialEscrow.DropAllContents(_container?.m_inventory, transform.position);
         _container?.Save();
+    }
+
+    internal void RefundPurchaseDepositsBeforeDestroy(string source)
+    {
+        if (!IsPurchaseMode() ||
+            _nview == null ||
+            !_nview.IsValid() ||
+            !_nview.IsOwner())
+        {
+            return;
+        }
+
+        List<ZoneBlueprintStorePriceItem> deposited = GetDepositedPriceItems();
+        if (deposited.Count == 0)
+        {
+            return;
+        }
+
+        // Clear the replicated escrow before spawning drops so duplicate destroy
+        // callbacks cannot refund the same deposit twice.
+        try
+        {
+            SetDepositedPriceItems([]);
+        }
+        catch (Exception ex)
+        {
+            if (GetDepositedPriceItems().Count > 0)
+            {
+                HomesteadPlugin.HomesteadLogger.LogError(
+                    $"Failed to clear blueprint store purchase escrow before chest destruction ({source}): {ex}");
+                return;
+            }
+
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Blueprint store purchase escrow was cleared despite a write exception before chest destruction ({source}): {ex.Message}");
+        }
+
+        try
+        {
+            ZoneBlueprintChestZdoRegistry.Refresh(_nview.GetZDO());
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Failed to refresh blueprint chest registry after clearing purchase escrow ({source}): {ex.Message}");
+        }
+
+        try
+        {
+            ZoneMaterialEscrow.DropPriceItems(deposited, transform.position);
+            HomesteadPlugin.HomesteadLogger.LogInfo(
+                $"Refunded blueprint store purchase escrow before chest destruction ({source}).");
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogError(
+                $"Failed to refund blueprint store purchase escrow before chest destruction ({source}): {ex}");
+        }
     }
 
     public bool PreparePayoutInventory(IReadOnlyList<ZoneBlueprintStorePriceItem> stacks)
@@ -897,7 +1076,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
                 _cachedMode,
                 _cachedListingId,
                 _cachedBlueprintName,
-                transform,
                 out GameObject? root,
                 out Material? material))
         {
@@ -912,7 +1090,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         }
 
         _ownedPreview.Adopt(root, material);
-        _previewRestoreRequested = false;
         return;
     }
 
@@ -944,12 +1121,11 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return;
         }
 
-        if (_previewRestoreRequested || IsPreviewRestorePending(descriptor.BlueprintFile))
+        if (IsPreviewRestorePending(descriptor.BlueprintFile))
         {
             return;
         }
 
-        _previewRestoreRequested = true;
         MarkPreviewRestorePending(descriptor.BlueprintFile);
         ZoneBlueprintStore.RequestPreviewRestore(_cachedMode, _cachedListingId, _cachedBlueprintName, descriptor.BlueprintFile);
     }
@@ -964,12 +1140,19 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             ? BlueprintConfig.StorePurchasePreviewColor
             : BlueprintConfig.StoreListingPreviewColor;
         _ownedPreview.ApplyMaterial(color);
-        _previewRestoreRequested = false;
     }
 
     internal static void HandlePreviewRestoreResponse(ZoneBlueprintStorePreviewRestoreResponse response)
     {
-        ClearPreviewRestorePending(response.BlueprintFile);
+        if (response.Success)
+        {
+            ClearPreviewRestorePending(response.BlueprintFile);
+        }
+        else
+        {
+            MarkPreviewRestorePending(response.BlueprintFile);
+        }
+
         foreach (ZoneBlueprintStoreChest chest in Object.FindObjectsByType<ZoneBlueprintStoreChest>(FindObjectsSortMode.None))
         {
             chest.TryApplyPreviewRestoreResponse(response);
@@ -1005,7 +1188,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return;
         }
 
-        _previewRestoreRequested = false;
         if (!response.Success)
         {
             return;
@@ -1020,11 +1202,13 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             }
             else
             {
+                MarkPreviewRestorePending(response.BlueprintFile);
                 HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to restore blueprint store chest preview: {reason}");
             }
         }
         catch (Exception ex)
         {
+            MarkPreviewRestorePending(response.BlueprintFile);
             HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to restore blueprint store chest preview: {ex.Message}");
         }
     }
@@ -1054,7 +1238,20 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     private static bool IsPreviewRestorePending(string blueprintFile)
     {
-        return PendingPreviewRestoreFiles.Contains(CreatePreviewRestoreCacheKey(blueprintFile));
+        string cacheKey = CreatePreviewRestoreCacheKey(blueprintFile);
+        if (string.IsNullOrWhiteSpace(cacheKey) ||
+            !PendingPreviewRestoreFiles.TryGetValue(cacheKey, out float expiresAt))
+        {
+            return false;
+        }
+
+        if (Time.realtimeSinceStartup < expiresAt)
+        {
+            return true;
+        }
+
+        PendingPreviewRestoreFiles.Remove(cacheKey);
+        return false;
     }
 
     private static void MarkPreviewRestorePending(string blueprintFile)
@@ -1062,7 +1259,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         string cacheKey = CreatePreviewRestoreCacheKey(blueprintFile);
         if (!string.IsNullOrWhiteSpace(cacheKey))
         {
-            PendingPreviewRestoreFiles.Add(cacheKey);
+            PendingPreviewRestoreFiles[cacheKey] = Time.realtimeSinceStartup + PreviewRestoreRequestTimeoutSeconds;
         }
     }
 

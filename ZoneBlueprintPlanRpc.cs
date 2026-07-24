@@ -10,12 +10,19 @@ internal static class ZoneBlueprintPlanRpc
     private const string RequestRpcName = HomesteadPlugin.ModGUID + "_BlueprintPlanRequest";
     private const string ResponseRpcName = HomesteadPlugin.ModGUID + "_BlueprintPlanResponse";
     private const float MaxRequestedChestDistanceFromAnchor = 512f;
+    private const float MaxRequestedChestVerticalDeltaFromAnchor = 512f;
+    private const float MaxRequestedAnchorDistanceFromRequester = 512f;
+    private const float MaxRequestedAnchorVerticalDeltaFromRequester = 512f;
+    private const float PreviewRequestTimeoutSeconds = 10f;
+    private const int MaxCachedPreviews = 64;
 
     private static ManualLogSource _logger = null!;
     private static bool _initialized;
+    private static int _nextPreviewRequestId;
     private static readonly ZoneRpcRegistrar RpcRegistrar = new();
     private static readonly Dictionary<string, ZoneBlueprintFile> PreviewCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> PendingPreviewRequests = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, (int RequestId, float ExpiresAt)> PendingPreviewRequests =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public static void Initialize(ManualLogSource logger)
     {
@@ -32,6 +39,7 @@ internal static class ZoneBlueprintPlanRpc
     public static void Update()
     {
         RegisterRpcs();
+        ExpirePreviewRequests();
     }
 
     public static void ResetForWorldSession()
@@ -83,9 +91,19 @@ internal static class ZoneBlueprintPlanRpc
         });
     }
 
-    public static void RequestPreview(string name)
+    public static void RequestPreview(string name, bool refreshCached = false)
     {
-        if (string.IsNullOrWhiteSpace(name) || PreviewCache.ContainsKey(name) || PendingPreviewRequests.Contains(name))
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        if (refreshCached)
+        {
+            PreviewCache.Remove(name);
+        }
+
+        if (PreviewCache.ContainsKey(name) || IsPreviewPending(name))
         {
             return;
         }
@@ -95,8 +113,15 @@ internal static class ZoneBlueprintPlanRpc
             return;
         }
 
-        PendingPreviewRequests.Add(name);
-        SendRequest(ZoneBlueprintPlanRpcType.Preview, new ZoneBlueprintPlanPreviewRequest { Name = name });
+        int requestId = NextPreviewRequestId();
+        PendingPreviewRequests[name] =
+            (requestId, Time.realtimeSinceStartup + PreviewRequestTimeoutSeconds);
+        if (!SendRequest(
+                ZoneBlueprintPlanRpcType.Preview,
+                new ZoneBlueprintPlanPreviewRequest { RequestId = requestId, Name = name }))
+        {
+            PendingPreviewRequests.Remove(name);
+        }
     }
 
     public static bool TryGetCachedPreview(string name, out ZoneBlueprintFile blueprint)
@@ -106,7 +131,19 @@ internal static class ZoneBlueprintPlanRpc
 
     public static bool IsPreviewPending(string name)
     {
-        return !string.IsNullOrWhiteSpace(name) && PendingPreviewRequests.Contains(name);
+        if (string.IsNullOrWhiteSpace(name) ||
+            !PendingPreviewRequests.TryGetValue(name, out var pending))
+        {
+            return false;
+        }
+
+        if (Time.realtimeSinceStartup < pending.ExpiresAt)
+        {
+            return true;
+        }
+
+        PendingPreviewRequests.Remove(name);
+        return false;
     }
 
     private static void CachePreview(string name, ZoneBlueprintFile blueprint)
@@ -117,8 +154,23 @@ internal static class ZoneBlueprintPlanRpc
         }
 
         blueprint.Name = name;
+        if (!PreviewCache.ContainsKey(name) && PreviewCache.Count >= MaxCachedPreviews)
+        {
+            string? keyToRemove = null;
+            foreach (string cachedName in PreviewCache.Keys)
+            {
+                keyToRemove = cachedName;
+                break;
+            }
+
+            if (keyToRemove != null)
+            {
+                PreviewCache.Remove(keyToRemove);
+            }
+        }
+
         PreviewCache[name] = blueprint;
-        PendingPreviewRequests.Remove(name);
+        ZoneBlueprintPlanAnchor.RefreshCachedPlan(name);
     }
 
     private static void RegisterRpcs()
@@ -130,16 +182,57 @@ internal static class ZoneBlueprintPlanRpc
         });
     }
 
-    private static void SendRequest<TPayload>(string type, TPayload payload)
+    private static bool SendRequest<TPayload>(string type, TPayload payload)
     {
         RegisterRpcs();
         if (ZRoutedRpc.instance == null)
         {
-            return;
+            return false;
         }
 
         ZoneBlueprintPlanRpcEnvelope envelope = CreateEnvelope(type, payload);
         ZoneBlueprintRpcTransport.SendToServer(RequestRpcName, envelope);
+        return true;
+    }
+
+    private static int NextPreviewRequestId()
+    {
+        unchecked
+        {
+            _nextPreviewRequestId++;
+            if (_nextPreviewRequestId <= 0)
+            {
+                _nextPreviewRequestId = 1;
+            }
+
+            return _nextPreviewRequestId;
+        }
+    }
+
+    private static void ExpirePreviewRequests()
+    {
+        float now = Time.realtimeSinceStartup;
+        List<string>? expired = null;
+        foreach (KeyValuePair<string, (int RequestId, float ExpiresAt)> pending in PendingPreviewRequests)
+        {
+            if (now < pending.Value.ExpiresAt)
+            {
+                continue;
+            }
+
+            expired ??= [];
+            expired.Add(pending.Key);
+        }
+
+        if (expired == null)
+        {
+            return;
+        }
+
+        foreach (string name in expired)
+        {
+            PendingPreviewRequests.Remove(name);
+        }
     }
 
     private static void RPC_HandleRequest(long sender, ZPackage package)
@@ -156,7 +249,7 @@ internal static class ZoneBlueprintPlanRpc
 
     private static void RPC_HandleResponse(long sender, ZPackage package)
     {
-        ZoneBlueprintRpcTransport.HandleClientResponse<ZoneBlueprintPlanRpcEnvelope>(package, _logger, "blueprint plan", HandleResponse);
+        ZoneBlueprintRpcTransport.HandleClientResponse<ZoneBlueprintPlanRpcEnvelope>(sender, package, _logger, "blueprint plan", HandleResponse);
     }
 
     private static ZoneBlueprintPlanRpcEnvelope ExecuteRequest(ZoneBlueprintPlanRpcEnvelope request, long sender)
@@ -166,19 +259,29 @@ internal static class ZoneBlueprintPlanRpc
             return ExecutePreview(ReadPayload<ZoneBlueprintPlanPreviewRequest>(request));
         }
 
-        if (!TryResolveRequester(sender, out long playerId, out string reason))
+        if (!TryResolveRequester(sender, out long playerId, out Vector3 requesterPosition, out string reason))
         {
             return CreateEnvelope(request.Type, new ZoneBlueprintPlanPlaceResponse { Success = false, Message = reason });
         }
 
         return request.Type switch
         {
-            ZoneBlueprintPlanRpcType.Place => ExecutePlace(ReadPayload<ZoneBlueprintPlanPlaceRequest>(request), sender, playerId, HomesteadPlayerIdentity.ResolvePlatformId(null, sender, playerId)),
+            ZoneBlueprintPlanRpcType.Place => ExecutePlace(
+                ReadPayload<ZoneBlueprintPlanPlaceRequest>(request),
+                sender,
+                playerId,
+                HomesteadPlayerIdentity.ResolvePlatformId(null, sender, playerId),
+                requesterPosition),
             _ => CreateEnvelope(request.Type, new ZoneBlueprintPlanPlaceResponse { Success = false, Message = HomesteadLocalization.Format("hs_blueprint_plan_unknown_action", request.Type) })
         };
     }
 
-    private static ZoneBlueprintPlanRpcEnvelope ExecutePlace(ZoneBlueprintPlanPlaceRequest request, long sender, long playerId, string ownerPlatformId)
+    private static ZoneBlueprintPlanRpcEnvelope ExecutePlace(
+        ZoneBlueprintPlanPlaceRequest request,
+        long sender,
+        long playerId,
+        string ownerPlatformId,
+        Vector3? requesterPosition = null)
     {
         ZoneBlueprintPlanPlaceResponse Fail(string message)
         {
@@ -199,9 +302,60 @@ internal static class ZoneBlueprintPlanRpc
             return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(HomesteadLocalization.Text("hs_blueprint_place_payload_missing_transform")));
         }
 
+        anchorRotation = ZoneTransformPayload.SanitizeYawRotation(anchorRotation, Quaternion.identity);
+        chestRotation = ZoneTransformPayload.SanitizeYawRotation(chestRotation, anchorRotation);
+
+        if (requesterPosition.HasValue &&
+            (!IsWithinHorizontalDistance(requesterPosition.Value, anchor, MaxRequestedAnchorDistanceFromRequester) ||
+             Mathf.Abs(requesterPosition.Value.y - anchor.y) > MaxRequestedAnchorVerticalDeltaFromRequester))
+        {
+            return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(HomesteadLocalization.Text("hs_blueprint_plan_anchor_too_far")));
+        }
+
         if (!ZoneBlueprintNetworkPayload.TryDeserializeBlueprintUpload(request.BlueprintPayload, request.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string uploadReason))
         {
             return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(uploadReason));
+        }
+
+        string transformError = ZoneBlueprintCommands.ValidateBlueprintTransforms(blueprint);
+        if (!string.IsNullOrWhiteSpace(transformError))
+        {
+            return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(transformError));
+        }
+
+        try
+        {
+            ZoneBlueprintCommands.BlueprintLoadPlan placementPlan =
+                ZoneBlueprintCommands.CreateLoadPlanForBlueprint(blueprint, anchor, anchorRotation);
+            if (placementPlan.Entries.Count == 0)
+            {
+                return CreateEnvelope(
+                    ZoneBlueprintPlanRpcType.Place,
+                    Fail(HomesteadLocalization.Format("hs_blueprint_no_valid_entries", request.Name)));
+            }
+        }
+        catch (Exception ex)
+        {
+            return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(ex.Message));
+        }
+
+        Vector3 chestPosition = ResolvePlanChestPosition(blueprint, anchor, anchorRotation, requestedChestPosition, chestRotation);
+        if (!ZoneTransformPayload.IsFinite(chestPosition) ||
+            !IsWithinHorizontalDistance(anchor, chestPosition, MaxRequestedChestDistanceFromAnchor) ||
+            Mathf.Abs(anchor.y - chestPosition.y) > MaxRequestedChestVerticalDeltaFromAnchor)
+        {
+            return CreateEnvelope(
+                ZoneBlueprintPlanRpcType.Place,
+                Fail(HomesteadLocalization.Text("hs_blueprint_plan_chest_too_far")));
+        }
+
+        if (requesterPosition.HasValue &&
+            (!IsWithinHorizontalDistance(requesterPosition.Value, chestPosition, MaxRequestedAnchorDistanceFromRequester) ||
+             Mathf.Abs(requesterPosition.Value.y - chestPosition.y) > MaxRequestedAnchorVerticalDeltaFromRequester))
+        {
+            return CreateEnvelope(
+                ZoneBlueprintPlanRpcType.Place,
+                Fail(HomesteadLocalization.Text("hs_blueprint_plan_chest_too_far")));
         }
 
         HomesteadCommandResult save = ZoneBlueprintCommands.SaveUploadedBlueprintForPlan(request.Name, blueprint, playerId, out string savedName);
@@ -213,18 +367,11 @@ internal static class ZoneBlueprintPlanRpc
         try
         {
             ZoneBlueprintFile serverBlueprint = ZoneBlueprintCommands.LoadBlueprintForPlan(savedName);
-            ZoneBlueprintCommands.BlueprintLoadPlan plan = ZoneBlueprintCommands.CreateLoadPlanForBlueprint(serverBlueprint, anchor, anchorRotation);
-            if (plan.Entries.Count == 0)
-            {
-                return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(HomesteadLocalization.Format("hs_blueprint_no_valid_entries", savedName)));
-            }
-
             if (!ZoneBlueprintNetworkPayload.TryCreateBlueprintPayload(ZoneBlueprintFileFormat.Serialize(serverBlueprint), enforceUploadLimit: false, out byte[] responsePayload, out string payloadReason))
             {
                 return CreateEnvelope(ZoneBlueprintPlanRpcType.Place, Fail(payloadReason));
             }
 
-            Vector3 chestPosition = ResolvePlanChestPosition(serverBlueprint, anchor, anchorRotation, requestedChestPosition, chestRotation);
             ownerPlatformId = string.IsNullOrWhiteSpace(ownerPlatformId)
                 ? HomesteadPlayerIdentity.ResolvePlatformId(null, sender, playerId)
                 : ownerPlatformId;
@@ -260,6 +407,7 @@ internal static class ZoneBlueprintPlanRpc
 
             return CreateEnvelope(ZoneBlueprintPlanRpcType.Preview, new ZoneBlueprintPlanPreviewResponse
             {
+                RequestId = request.RequestId,
                 Success = true,
                 Name = request.Name,
                 BlueprintEncoding = ZoneBlueprintNetworkPayload.GzipEncoding,
@@ -270,6 +418,7 @@ internal static class ZoneBlueprintPlanRpc
         {
             return CreateEnvelope(ZoneBlueprintPlanRpcType.Preview, new ZoneBlueprintPlanPreviewResponse
             {
+                RequestId = request.RequestId,
                 Success = false,
                 Name = request.Name,
                 Message = ex.Message
@@ -287,6 +436,12 @@ internal static class ZoneBlueprintPlanRpc
         if (response.Type == ZoneBlueprintPlanRpcType.Preview)
         {
             ZoneBlueprintPlanPreviewResponse payload = ReadPayload<ZoneBlueprintPlanPreviewResponse>(response);
+            if (!PendingPreviewRequests.TryGetValue(payload.Name, out var pending) ||
+                pending.RequestId != payload.RequestId)
+            {
+                return;
+            }
+
             PendingPreviewRequests.Remove(payload.Name);
             if (!payload.Success)
             {
@@ -322,20 +477,18 @@ internal static class ZoneBlueprintPlanRpc
         {
             try
             {
-                if (ZoneBlueprintNetworkPayload.TryDecodeBlueprintPayloadToText(place.BlueprintPayload, place.BlueprintEncoding, out string blueprintText, out string reason))
+                if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(place.BlueprintPayload, place.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
                 {
-                    ZoneBlueprintFile blueprint = ZoneBlueprintFileFormat.Deserialize(blueprintText, place.BlueprintName);
                     CachePreview(place.BlueprintName, blueprint);
-                    ZoneBlueprintCommands.EnsureLocalPlanBlueprintCopy(place.BlueprintName, blueprintText);
                 }
                 else
                 {
-                    _logger.LogWarning($"Failed to decode server blueprint copy '{place.BlueprintName}': {reason}");
+                    _logger.LogWarning($"Failed to cache server blueprint preview '{place.BlueprintName}': {reason}");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Failed to save server blueprint copy '{place.BlueprintName}' locally: {ex.Message}");
+                _logger.LogWarning($"Failed to cache server blueprint preview '{place.BlueprintName}': {ex.Message}");
             }
         }
 
@@ -362,9 +515,10 @@ internal static class ZoneBlueprintPlanRpc
         ZoneBlueprintPlanChestPrefab.PlayPlaceEffect(position, rotation);
     }
 
-    private static bool TryResolveRequester(long sender, out long playerId, out string reason)
+    private static bool TryResolveRequester(long sender, out long playerId, out Vector3 position, out string reason)
     {
         playerId = 0L;
+        position = Vector3.zero;
         reason = "";
         if (ZNet.instance == null || ZDOMan.instance == null)
         {
@@ -374,6 +528,13 @@ internal static class ZoneBlueprintPlanRpc
 
         ZNetPeer peer = ZNet.instance.GetPeer(sender);
         if (peer == null || !peer.IsReady())
+        {
+            reason = HomesteadLocalization.Text("hs_common_player_not_ready");
+            return false;
+        }
+
+        position = peer.m_refPos;
+        if (!ZoneTransformPayload.IsFinite(position))
         {
             reason = HomesteadLocalization.Text("hs_common_player_not_ready");
             return false;
@@ -430,7 +591,8 @@ internal static class ZoneBlueprintPlanRpc
     {
         if (!ZoneTransformPayload.IsFinite(requestedChestPosition) ||
             requestedChestPosition.sqrMagnitude < 0.0001f ||
-            !IsWithinHorizontalDistance(anchor, requestedChestPosition, MaxRequestedChestDistanceFromAnchor))
+            !IsWithinHorizontalDistance(anchor, requestedChestPosition, MaxRequestedChestDistanceFromAnchor) ||
+            Mathf.Abs(anchor.y - requestedChestPosition.y) > MaxRequestedChestVerticalDeltaFromAnchor)
         {
             return ZoneBlueprintCommands.GetPlanChestPosition(blueprint, anchor, anchorRotation, chestRotation);
         }

@@ -50,7 +50,7 @@ internal sealed class ZoneAreaToolController
 
     public string FormattedSize => ZoneAreaToolShared.FormatSize(_width, _depth);
 
-    public void Activate(Player player)
+    public void Activate()
     {
         if (!_active)
         {
@@ -84,7 +84,7 @@ internal sealed class ZoneAreaToolController
 
     public void Destroy()
     {
-        _targetOverlay?.Destroy();
+        _targetOverlay?.Clear();
         _targetOverlay = null;
         if (_material != null)
         {
@@ -260,7 +260,7 @@ internal sealed class ZoneAreaToolController
         _lastTargetOverlaySignature = signature;
         _hasTargetOverlaySignature = true;
         _lastTargetOverlayRefreshTime = now;
-        _targetOverlay ??= new ZoneAreaTargetOverlay(_owner.transform, _options.TargetOverlayName);
+        _targetOverlay ??= new ZoneAreaTargetOverlay();
         _targetOverlay.Draw(_options.FindCandidates(player, area), area);
     }
 
@@ -324,7 +324,6 @@ internal sealed class ZoneAreaToolController
         public Func<float> DefaultDepth { get; set; } = null!;
         public Func<Color> Color { get; set; } = null!;
         public string RangeLineName { get; set; } = "";
-        public string TargetOverlayName { get; set; } = "";
         public float TargetOverlayRefreshInterval { get; set; } = 0.12f;
         public float StableTargetOverlayRefreshInterval { get; set; } = 1f;
         public Func<float?> GetSavedYaw { get; set; } = () => null;

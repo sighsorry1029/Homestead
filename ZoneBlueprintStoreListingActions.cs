@@ -230,7 +230,7 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Publish, saveReason);
         }
 
-        ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
+        ZoneBlueprintStoreNotifications.PushNotification(notification);
 
         return ZoneBlueprintStoreDtos.Status(ZoneBlueprintStoreRpcType.Publish, true, HomesteadLocalization.Format("hs_store_listed", draft.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)));
     }
@@ -304,6 +304,10 @@ internal static class ZoneBlueprintStoreListingAction
         }
 
         DateTime utcNow = DateTime.UtcNow;
+        string successMessage = HomesteadLocalization.Format(
+            "hs_store_listed",
+            name,
+            ZoneBlueprintStorePrices.FormatPrice(priceItems));
         ZoneBlueprintStoreListing listing = new()
         {
             ListingId = listingId,
@@ -329,32 +333,78 @@ internal static class ZoneBlueprintStoreListingAction
             return HomesteadCommandResult.Fail(saveReason);
         }
 
-        ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
+        ZoneBlueprintStoreNotifications.PushNotification(notification);
 
         if (chest != null)
         {
-            chest.ReleaseDraftFileOwnership();
-            chest.DropAllContents();
-            chest.MarkConfirmed();
-            chest.DestroyChest();
+            try
+            {
+                chest.MarkConfirmed();
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    $"Blueprint listing was committed, but its chest marker could not be updated: {ex.Message}");
+            }
+
+            try
+            {
+                chest.ReleaseDraftFileOwnership();
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    $"Blueprint listing was committed, but its draft ownership marker could not be cleared: {ex.Message}");
+            }
+
+            try
+            {
+                chest.DropAllContents();
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    $"Blueprint listing was committed, but its chest contents could not be returned: {ex}");
+            }
+
+            try
+            {
+                chest.DestroyChest();
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    $"Blueprint listing was committed, but its chest could not be removed: {ex}");
+            }
         }
         else
         {
-            ZoneBlueprintStoreChest.MarkConfirmed(fallbackChestZdo);
-            if (fallbackChestZdo != null)
+            try
             {
-                SavedZdoHelper.Destroy(fallbackChestZdo);
-                SavedZdoHelper.FlushDestroyed();
+                ZoneBlueprintStoreChest.MarkConfirmed(fallbackChestZdo);
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    $"Blueprint listing was committed, but its unloaded chest marker could not be updated: {ex.Message}");
+            }
+
+            try
+            {
+                if (fallbackChestZdo != null)
+                {
+                    SavedZdoHelper.Destroy(fallbackChestZdo);
+                    SavedZdoHelper.FlushDestroyed();
+                }
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    $"Blueprint listing was committed, but its unloaded chest cleanup failed: {ex}");
             }
         }
 
-        string message = HomesteadLocalization.Format("hs_store_listed", name, ZoneBlueprintStorePrices.FormatPrice(priceItems));
-        if (targetPeer == 0L)
-        {
-            ZoneBlueprintStoreVisuals.Message(message, MessageHud.MessageType.TopLeft);
-        }
-
-        return HomesteadCommandResult.Ok(message);
+        return HomesteadCommandResult.Ok(successMessage);
     }
 
     public static ZoneBlueprintStoreRpcEnvelope ExecuteDelist(ZoneBlueprintStoreDelistRequest request, Player? player, long sender)
@@ -415,7 +465,11 @@ internal static class ZoneBlueprintStoreListingAction
         }
 
         listing.PriceItems = priceItems;
-        ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
+        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.EditPrice, saveReason);
+        }
+
         return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.EditPrice, true, HomesteadLocalization.Format("hs_store_price_updated", listing.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)), catalog, listing, playerId, platformId);
     }
 }

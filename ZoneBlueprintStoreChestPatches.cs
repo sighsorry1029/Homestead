@@ -4,33 +4,27 @@ using UnityEngine;
 namespace Homestead;
 
 
-[HarmonyPatch(typeof(WearNTear), nameof(WearNTear.Destroy))]
-internal static class ZoneBlueprintStoreWearNTearDestroyPatch
+internal static class ZoneBlueprintStoreDestroyPatches
 {
-    private static void Prefix(WearNTear __instance)
+    [HarmonyPatch(typeof(WearNTear), nameof(WearNTear.Destroy))]
+    private static class WearNTearDestroyPatch
     {
-        ZoneBlueprintPlanAnchor anchor = __instance.GetComponent<ZoneBlueprintPlanAnchor>();
-        if (anchor != null)
+        private static void Prefix(WearNTear __instance)
         {
-            anchor.HandleDestroyPrefix("PlanChest.WearNTear.Destroy prefix");
-            return;
+            CleanupBeforeDestroy(__instance.gameObject, "WearNTear.Destroy");
         }
-
-        ZoneBlueprintStoreChest chest = __instance.GetComponent<ZoneBlueprintStoreChest>();
-        if (chest == null)
-        {
-            return;
-        }
-
-        chest.ReleaseAzuCraftyBoxesContainer("StoreChest.WearNTear.Destroy");
-        chest.CleanupOwnedDraftFile("WearNTear.Destroy");
     }
-}
 
-[HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Destroy))]
-internal static class ZoneBlueprintStoreZNetSceneDestroyPatch
-{
-    private static void Prefix(GameObject go)
+    [HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Destroy))]
+    private static class ZNetSceneDestroyPatch
+    {
+        private static void Prefix(GameObject go)
+        {
+            CleanupBeforeDestroy(go, "ZNetScene.Destroy");
+        }
+    }
+
+    private static void CleanupBeforeDestroy(GameObject go, string source)
     {
         if (!go)
         {
@@ -40,7 +34,16 @@ internal static class ZoneBlueprintStoreZNetSceneDestroyPatch
         ZoneBlueprintPlanAnchor anchor = go.GetComponent<ZoneBlueprintPlanAnchor>();
         if (anchor != null)
         {
-            anchor.HandleDestroyPrefix("PlanChest.ZNetScene.Destroy prefix");
+            try
+            {
+                anchor.HandleDestroyPrefix($"PlanChest.{source} prefix");
+            }
+            catch (System.Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogError(
+                    $"Failed to clean up blueprint plan anchor before destruction ({source}): {ex}");
+            }
+
             return;
         }
 
@@ -50,8 +53,35 @@ internal static class ZoneBlueprintStoreZNetSceneDestroyPatch
             return;
         }
 
-        chest.ReleaseAzuCraftyBoxesContainer("StoreChest.ZNetScene.Destroy");
-        chest.CleanupOwnedDraftFile("ZNetScene.Destroy");
+        try
+        {
+            chest.ReleaseAzuCraftyBoxesContainer($"StoreChest.{source}");
+        }
+        catch (System.Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Failed to release blueprint store compatibility state before destruction ({source}): {ex.Message}");
+        }
+
+        try
+        {
+            chest.RefundPurchaseDepositsBeforeDestroy(source);
+        }
+        catch (System.Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogError(
+                $"Failed to refund blueprint store purchase escrow before destruction ({source}): {ex}");
+        }
+
+        try
+        {
+            chest.CleanupOwnedDraftFile(source);
+        }
+        catch (System.Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Failed to clean up blueprint store draft before destruction ({source}): {ex.Message}");
+        }
     }
 }
 

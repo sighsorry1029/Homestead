@@ -77,13 +77,17 @@ internal static class ZoneBlueprintRpcTransport
     }
 
     public static void HandleClientResponse<TEnvelope>(
+        long sender,
         ZPackage package,
         ManualLogSource logger,
         string description,
         Action<TEnvelope> handleResponse)
         where TEnvelope : IZoneBlueprintRpcEnvelope
     {
-        if (ZNet.instance != null && ZNet.instance.IsServer())
+        if (ZNet.instance == null ||
+            ZNet.instance.IsServer() ||
+            ZRoutedRpc.instance == null ||
+            sender != ZRoutedRpc.instance.GetServerPeerID())
         {
             return;
         }

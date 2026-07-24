@@ -141,24 +141,9 @@ internal static class ZoneBlueprintNetworkPayload
         }
     }
 
-    public static string ReadEnvelope(ZPackage package)
-    {
-        return ReadEnvelope(package, out _, MaxGeneralEnvelopeBytes);
-    }
-
-    public static string ReadEnvelope(ZPackage package, int maxOutputBytes)
-    {
-        return ReadEnvelope(package, out _, maxOutputBytes);
-    }
-
     public static string ReadEnvelope(ZPackage package, out byte[] blueprintPayload)
     {
-        return ReadEnvelope(package, out blueprintPayload, MaxGeneralEnvelopeBytes);
-    }
-
-    public static string ReadEnvelope(ZPackage package, out byte[] blueprintPayload, int maxOutputBytes)
-    {
-        return ReadEnvelope(ReadRawEnvelope(package, maxOutputBytes), out blueprintPayload);
+        return ReadEnvelope(ReadRawEnvelope(package, MaxGeneralEnvelopeBytes), out blueprintPayload);
     }
 
     public static RawEnvelopePayload ReadRawEnvelope(ZPackage package, int maxOutputBytes)
@@ -206,12 +191,6 @@ internal static class ZoneBlueprintNetworkPayload
 
         reason = "";
         return true;
-    }
-
-    public static int EstimateQueuedBytes(string envelopeYaml, byte[] blueprintPayload)
-    {
-        long bytes = Encoding.UTF8.GetByteCount(envelopeYaml ?? "") + (blueprintPayload?.Length ?? 0);
-        return bytes >= int.MaxValue ? int.MaxValue : Math.Max(1, (int)bytes);
     }
 
     public static int EstimateQueuedBytes(RawEnvelopePayload raw)

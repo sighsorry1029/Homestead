@@ -1,7 +1,5 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using BepInEx.Bootstrap;
 using BepInEx.Logging;
 using UnityEngine;
@@ -24,17 +22,17 @@ internal static class ZoneBuildCamera
 
     private struct NearbyCraftingStation
     {
-        public Vector3 Position;
         public float Distance;
         public float RangeBuild;
     }
 
     private const string ExternalBuildCameraGuid = "Azumatt.BuildCameraCHE";
-    private static readonly Dictionary<Player, bool> InBuildModeByPlayer = new();
-    private static readonly Dictionary<Player, float> OriginalMaxPlaceDistanceByPlayer = new();
     private static readonly Collider[] PickupOverlapBuffer = new Collider[128];
 
     private static ManualLogSource Log = null!;
+    private static Player? _activePlayer;
+    private static float _originalMaxPlaceDistance;
+    private static bool _hasOriginalMaxPlaceDistance;
     private static BuildCameraView _viewDirection;
     private static bool _externalBuildCameraWarningLogged;
     private static int _buildActionNoiseSuppressionDepth;
@@ -50,8 +48,6 @@ internal static class ZoneBuildCamera
     internal static void ResetForWorldSession()
     {
         DisableBuildMode();
-        RestoreAllMaxPlaceDistances();
-        InBuildModeByPlayer.Clear();
         ZoneBuildCameraDvergerLight.CleanupAll();
         _buildActionNoiseSuppressionDepth = 0;
         _nextMessageTime = 0f;
@@ -91,7 +87,7 @@ internal static class ZoneBuildCamera
     internal static bool InBuildMode()
     {
         Player player = Player.m_localPlayer;
-        return IsEnabled() && player && InBuildModeByPlayer.TryGetValue(player, out bool inBuildMode) && inBuildMode;
+        return IsEnabled() && player && _activePlayer == player;
     }
 
     internal static bool EnableBuildMode()
@@ -108,7 +104,11 @@ internal static class ZoneBuildCamera
             return false;
         }
 
-        InBuildModeByPlayer[player] = true;
+        if (_activePlayer != player)
+        {
+            RestoreMaxPlaceDistance();
+            _activePlayer = player;
+        }
 
         Quaternion rotation = player.m_eye.transform.rotation;
         SetViewDirectionFromRotation(rotation);
@@ -121,13 +121,8 @@ internal static class ZoneBuildCamera
 
     internal static void DisableBuildMode()
     {
-        Player player = Player.m_localPlayer;
-        if (player)
-        {
-            InBuildModeByPlayer[player] = false;
-        }
-
-        RestoreAllMaxPlaceDistances();
+        RestoreMaxPlaceDistance();
+        _activePlayer = null;
         ResetCameraSessionState();
         ZoneAreaToolStatusHud.HideBuildCameraDistance();
     }
@@ -172,14 +167,15 @@ internal static class ZoneBuildCamera
 
     internal static void ApplyMaxPlaceDistanceOverride(Player player)
     {
-        if (!player || !InBuildModeByPlayer.TryGetValue(player, out bool inBuildMode) || !inBuildMode)
+        if (!player || _activePlayer != player)
         {
             return;
         }
 
-        if (!OriginalMaxPlaceDistanceByPlayer.ContainsKey(player))
+        if (!_hasOriginalMaxPlaceDistance)
         {
-            OriginalMaxPlaceDistanceByPlayer[player] = player.m_maxPlaceDistance;
+            _originalMaxPlaceDistance = player.m_maxPlaceDistance;
+            _hasOriginalMaxPlaceDistance = true;
         }
 
         player.m_maxPlaceDistance = GetMaxPlaceDistance(player);
@@ -330,6 +326,11 @@ internal static class ZoneBuildCamera
         Player player = Player.m_localPlayer;
         if (!player)
         {
+            if (_activePlayer != null || _hasOriginalMaxPlaceDistance)
+            {
+                DisableBuildMode();
+            }
+
             return;
         }
 
@@ -339,36 +340,21 @@ internal static class ZoneBuildCamera
             return;
         }
 
-        RestoreMaxPlaceDistance(player);
+        if (_activePlayer != null || _hasOriginalMaxPlaceDistance)
+        {
+            DisableBuildMode();
+        }
     }
 
-    private static void RestoreMaxPlaceDistance(Player player)
+    private static void RestoreMaxPlaceDistance()
     {
-        if (!player)
+        if (_hasOriginalMaxPlaceDistance && _activePlayer)
         {
-            return;
+            _activePlayer.m_maxPlaceDistance = _originalMaxPlaceDistance;
         }
 
-        if (!OriginalMaxPlaceDistanceByPlayer.TryGetValue(player, out float originalDistance))
-        {
-            return;
-        }
-
-        player.m_maxPlaceDistance = originalDistance;
-        OriginalMaxPlaceDistanceByPlayer.Remove(player);
-    }
-
-    private static void RestoreAllMaxPlaceDistances()
-    {
-        foreach (KeyValuePair<Player, float> entry in OriginalMaxPlaceDistanceByPlayer.ToArray())
-        {
-            if (entry.Key)
-            {
-                entry.Key.m_maxPlaceDistance = entry.Value;
-            }
-        }
-
-        OriginalMaxPlaceDistanceByPlayer.Clear();
+        _originalMaxPlaceDistance = 0f;
+        _hasOriginalMaxPlaceDistance = false;
     }
 
     private static void UpdateLookAtLock(GameCamera camera)
@@ -513,7 +499,6 @@ internal static class ZoneBuildCamera
 
             nearest = new NearbyCraftingStation
             {
-                Position = station.transform.position,
                 Distance = distance,
                 RangeBuild = station.m_rangeBuild
             };

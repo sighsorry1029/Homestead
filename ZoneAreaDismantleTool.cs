@@ -29,7 +29,6 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
     private readonly List<ZDO> _nearbyTargetZdos = [];
     private readonly List<ZDO> _targetCandidateZdos = [];
     private ZoneAreaToolController? _areaTool;
-    private bool _active;
 
     private static float MaxSelectableSide => Mathf.Max(MinSideLength, BlueprintConfig.AreaDismantleMaxSide);
     public static bool IsActive => _instance?._areaTool?.Active == true;
@@ -45,7 +44,6 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
             DefaultDepth = () => BlueprintConfig.AreaDismantleDefaultDepth,
             Color = () => BlueprintConfig.AreaDismantleBoundaryColor,
             RangeLineName = "HomesteadAreaDismantleRadius",
-            TargetOverlayName = "HomesteadAreaDismantleTarget",
             TargetOverlayRefreshInterval = TargetOverlayRefreshInterval,
             GetSavedYaw = () => _lastAreaYaw,
             SetSavedYaw = yaw => _lastAreaYaw = yaw,
@@ -95,19 +93,17 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
 
     private void ActivateInternal(Player player)
     {
-        _active = true;
-        AreaTool.Activate(player);
+        AreaTool.Activate();
     }
 
     private void DeactivateInternal()
     {
-        _active = false;
         _areaTool?.Deactivate();
     }
 
     private void Update()
     {
-        if (!_active && _areaTool?.Active != true)
+        if (_areaTool?.Active != true)
         {
             return;
         }
@@ -127,11 +123,6 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
         {
             _instance = null;
         }
-    }
-
-    private void RequestDismantle(Player player)
-    {
-        RequestDismantle(player, AreaTool.CurrentArea);
     }
 
     private void RequestDismantle(Player player, ZoneAreaSelection area)
@@ -285,33 +276,8 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
         ZoneAreaTargetOverlay.CollectNearbyZdos(area, _nearbyTargetZdos);
         foreach (ZDO zdo in _nearbyTargetZdos)
         {
-            if (ZoneBlueprintCommands.IsHomesteadBlueprintChest(zdo))
-            {
-                continue;
-            }
-
-            if (zdo.GetLong(ZDOVars.s_creator, 0L) != playerId)
-            {
-                continue;
-            }
-
-            if (!ZoneBlueprintCommands.TryReadWearNTear(zdo, out GameObject prefab))
-            {
-                continue;
-            }
-
-            if (!IsLoadedWearNTear(zdo))
-            {
-                continue;
-            }
-
-            string prefabName = Utils.GetPrefabName(prefab);
-            if (prefabBlacklist.Contains(prefabName))
-            {
-                continue;
-            }
-
-            if (HasProtectedContentsOrAttachments(zdo, prefab))
+            if (ClassifyDismantleTarget(zdo, playerId, prefabBlacklist, out _) != DismantleEligibility.Eligible ||
+                !IsLoadedWearNTear(zdo))
             {
                 continue;
             }
@@ -362,40 +328,25 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
         ZoneAreaTargetOverlay.CollectNearbyZdos(area, nearbyZdos);
         foreach (ZDO zdo in nearbyZdos)
         {
-            if (!ZoneBlueprintCommands.TryReadWearNTear(zdo, out GameObject prefab))
-            {
-                continue;
-            }
-
-            string prefabName = Utils.GetPrefabName(prefab);
             if (!area.Contains(zdo.GetPosition()))
             {
                 continue;
             }
 
-            if (ZoneBlueprintCommands.IsHomesteadBlueprintChest(zdo))
+            DismantleEligibility eligibility = ClassifyDismantleTarget(zdo, playerId, prefabBlacklist, out GameObject prefab);
+            switch (eligibility)
             {
-                skippedBlacklisted++;
-                continue;
-            }
-
-            if (prefabBlacklist.Contains(prefabName) || ZoneBlueprintCommands.IsHomesteadBlueprintChestPrefab(prefab))
-            {
-                skippedBlacklisted++;
-                continue;
-            }
-
-            long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
-            if (creator != playerId)
-            {
-                skippedNotOwned++;
-                continue;
-            }
-
-            if (HasProtectedContentsOrAttachments(zdo, prefab))
-            {
-                skippedWithContents++;
-                continue;
+                case DismantleEligibility.NotOwned:
+                    skippedNotOwned++;
+                    continue;
+                case DismantleEligibility.Blacklisted:
+                    skippedBlacklisted++;
+                    continue;
+                case DismantleEligibility.ProtectedContents:
+                    skippedWithContents++;
+                    continue;
+                case DismantleEligibility.NotWearNTear:
+                    continue;
             }
 
             targets.Add(new DismantleTarget(zdo, prefab));
@@ -429,6 +380,36 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
 
         string skipped = BuildSkippedMessage(skippedNotOwned, skippedBlacklisted, skippedWithContents, verbose: false);
         return DismantleResult.Ok(HomesteadLocalization.Format("hs_dismantle_done", destroyed, materialTotal, stackTotal, skipped), area.Center);
+    }
+
+    private static DismantleEligibility ClassifyDismantleTarget(
+        ZDO zdo,
+        long playerId,
+        HashSet<string> prefabBlacklist,
+        out GameObject prefab)
+    {
+        prefab = null!;
+        if (!ZoneBlueprintCommands.TryReadWearNTear(zdo, out prefab))
+        {
+            return DismantleEligibility.NotWearNTear;
+        }
+
+        string prefabName = Utils.GetPrefabName(prefab);
+        if (ZoneBlueprintCommands.IsHomesteadBlueprintChest(zdo) ||
+            ZoneBlueprintCommands.IsHomesteadBlueprintChestPrefab(prefab) ||
+            prefabBlacklist.Contains(prefabName))
+        {
+            return DismantleEligibility.Blacklisted;
+        }
+
+        if (zdo.GetLong(ZDOVars.s_creator, 0L) != playerId)
+        {
+            return DismantleEligibility.NotOwned;
+        }
+
+        return HasProtectedContentsOrAttachments(zdo, prefab)
+            ? DismantleEligibility.ProtectedContents
+            : DismantleEligibility.Eligible;
     }
 
     private static string BuildSkippedMessage(int skippedNotOwned, int skippedBlacklisted, int skippedWithContents, bool verbose)
@@ -583,8 +564,6 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
             if (!refunds.TryGetValue(prefabName, out MaterialRefund refund))
             {
                 refund = new MaterialRefund(
-                    prefabName,
-                    requirement.m_resItem.m_itemData.m_shared.m_name,
                     requirement.m_resItem.m_itemData,
                     requirement.m_resItem.gameObject);
                 refunds[prefabName] = refund;
@@ -657,12 +636,6 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
         Object.Instantiate(prefab, position, Quaternion.identity);
     }
 
-    private static void Message(Player player, string message)
-    {
-        _logger?.LogInfo(message);
-        player.Message(MessageHud.MessageType.TopLeft, message);
-    }
-
     private readonly struct DismantleTarget
     {
         public DismantleTarget(ZDO zdo, GameObject prefab)
@@ -677,19 +650,24 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
 
     private sealed class MaterialRefund
     {
-        public MaterialRefund(string prefabName, string displayName, ItemDrop.ItemData prototype, GameObject dropPrefab)
+        public MaterialRefund(ItemDrop.ItemData prototype, GameObject dropPrefab)
         {
-            PrefabName = prefabName;
-            DisplayName = displayName;
             Prototype = prototype;
             DropPrefab = dropPrefab;
         }
 
-        public string PrefabName { get; }
-        public string DisplayName { get; }
         public ItemDrop.ItemData Prototype { get; }
         public GameObject DropPrefab { get; }
         public int Amount { get; set; }
+    }
+
+    private enum DismantleEligibility
+    {
+        Eligible,
+        NotWearNTear,
+        Blacklisted,
+        NotOwned,
+        ProtectedContents
     }
 
     private readonly struct DismantleResult

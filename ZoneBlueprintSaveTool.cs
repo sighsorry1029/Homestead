@@ -28,7 +28,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
     private static ZoneBlueprintSaveTool? _instance;
     private static float? _lastAreaYaw;
 
-    private readonly List<GameObject> _previewVisuals = [];
     private readonly List<ZDO> _nearbyTargetZdos = [];
     private readonly List<ZDO> _targetCandidateZdos = [];
     private readonly Queue<string> _iconRenderQueue = new();
@@ -39,14 +38,12 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
     private SaveSelection? _selection;
     private Coroutine? _iconRenderCoroutine;
     private Coroutine? _previewBuildCoroutine;
-    private bool _active;
     private GameObject? _savePanel;
     private InputField? _saveNameInput;
     private Text? _saveCountText;
     private Text? _saveStatusText;
     private string _saveName = "";
     private string _saveStatus = "";
-    private bool _focusSaveName;
     private bool _saveInputBlocked;
     private float _selectionPreviewYawOffset;
 
@@ -66,7 +63,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
             DefaultDepth = () => BlueprintConfig.AreaSaveDefaultDepth,
             Color = () => BlueprintConfig.AreaSaveBoundaryColor,
             RangeLineName = "HomesteadBlueprintRadius",
-            TargetOverlayName = "HomesteadAreaSaveTarget",
             TargetOverlayRefreshInterval = TargetOverlayRefreshInterval,
             GetSavedYaw = () => _lastAreaYaw,
             SetSavedYaw = yaw => _lastAreaYaw = yaw,
@@ -191,16 +187,13 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
 
     private void ActivateInternal(Player player)
     {
-        _active = true;
-        AreaTool.Activate(player);
+        AreaTool.Activate();
     }
 
     private void DeactivateInternal()
     {
-        _active = false;
         _areaTool?.Deactivate();
         _saveStatus = "";
-        _focusSaveName = false;
         _selectionPreviewYawOffset = 0f;
         SetSaveUiInputBlocked(false);
         SetSavePanelVisible(false);
@@ -213,7 +206,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
     {
         _selection = null;
         _saveStatus = "";
-        _focusSaveName = false;
         _selectionPreviewYawOffset = 0f;
         _areaTool?.ResetOffsets();
         SetSaveUiInputBlocked(false);
@@ -225,7 +217,7 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
 
     private void Update()
     {
-        if (!_active && _areaTool?.Active != true)
+        if (_areaTool?.Active != true)
         {
             return;
         }
@@ -262,8 +254,7 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
             return;
         }
 
-        BlueprintAreaSaveCreatorMode creatorMode = BlueprintConfig.AreaSaveCreatorMode;
-        List<ZDO> zdos = ZoneBlueprintCommands.FindBlueprintWearNTearZdos(player, area, creatorMode);
+        List<ZDO> zdos = ZoneBlueprintCommands.FindBlueprintWearNTearZdos(player, area);
         if (zdos.Count == 0)
         {
             _selection = null;
@@ -281,7 +272,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         _selectionPreviewYawOffset = 0f;
         _saveName = GenerateDefaultBlueprintName();
         _saveStatus = "";
-        _focusSaveName = false;
         EnsureSavePanel();
         RefreshSavePanel();
         SetSavePanelVisible(true);
@@ -305,7 +295,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         {
             _selection = null;
             _selectionPreviewYawOffset = 0f;
-            _focusSaveName = false;
             SetSaveUiInputBlocked(false);
             SetSavePanelVisible(false);
             ClearPreviewLines();
@@ -399,11 +388,13 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
             Vector3 localPosition = inverseAnchorRotation * (zdo.GetPosition() - selection.Anchor);
             Quaternion localRotation = inverseAnchorRotation * zdo.GetRotation();
 
-            GameObject? visual = CreateVisualPreview(prefab, localPosition, localRotation, scale, count, _selectionPreviewRoot.transform);
-            if (visual != null)
-            {
-                _previewVisuals.Add(visual);
-            }
+            ZoneBlueprintPreviewBuilder.CreateVisualPreview(
+                prefab,
+                localPosition,
+                localRotation,
+                scale,
+                count,
+                root.transform);
 
             count++;
             if (count % PreviewBuildBatchSize == 0)
@@ -562,11 +553,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
 
         bool shouldBlock = _saveNameInput != null && _saveNameInput.isFocused;
         SetSaveUiInputBlocked(shouldBlock);
-        if (_focusSaveName && _saveNameInput != null)
-        {
-            _saveNameInput.ActivateInputField();
-            _focusSaveName = false;
-        }
     }
 
     private void RefreshSavePanel()
@@ -662,11 +648,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         return "blueprint_" + DateTime.Now.ToString("yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private GameObject? CreateVisualPreview(GameObject prefab, Vector3 localPosition, Quaternion localRotation, Vector3 scale, int index, Transform parent)
-    {
-        return ZoneBlueprintPreviewBuilder.CreateVisualPreview(prefab, localPosition, localRotation, scale, index, parent);
-    }
-
     private void ClearPreviewLines()
     {
         if (_previewBuildCoroutine != null)
@@ -681,15 +662,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
             _selectionPreviewRoot = null;
         }
 
-        foreach (GameObject visual in _previewVisuals)
-        {
-            if (visual != null)
-            {
-                Destroy(visual);
-            }
-        }
-
-        _previewVisuals.Clear();
     }
 
     private void QueueIconRenderInternal(string blueprintName, ZoneBlueprintFile? blueprint)
@@ -1211,9 +1183,12 @@ internal static class ZoneBlueprintSaveToolMenu
         }
     }
 
-    private static void ProcessBlueprintDirectoryChange(IReadOnlyList<string> iconInvalidations)
+    private static void ProcessBlueprintDirectoryChange(
+        IReadOnlyList<string> blueprintChanges,
+        IReadOnlyList<string> iconInvalidations)
     {
-        foreach (string name in iconInvalidations)
+        HashSet<string> changedBlueprintNames = blueprintChanges.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in changedBlueprintNames)
         {
             ZoneBlueprintVisuals.InvalidateIcon(name);
             if (BlueprintPieces.TryGetValue(name, out Piece piece) &&
@@ -1222,6 +1197,24 @@ internal static class ZoneBlueprintSaveToolMenu
                 ZoneBlueprintCommands.TryLoadBlueprint(name, out ZoneBlueprintFile blueprint))
             {
                 UpdateBlueprintPiece(piece, name, blueprint, queueMissingIcon: false);
+                ZoneBlueprintSaveTool.QueueIconRender(name, blueprint);
+            }
+        }
+
+        foreach (string name in iconInvalidations)
+        {
+            if (changedBlueprintNames.Contains(name))
+            {
+                continue;
+            }
+
+            ZoneBlueprintVisuals.InvalidateIcon(name);
+            if (BlueprintPieces.TryGetValue(name, out Piece piece) &&
+                piece != null &&
+                piece &&
+                ZoneBlueprintCommands.TryLoadBlueprint(name, out ZoneBlueprintFile blueprint))
+            {
+                UpdateBlueprintPiece(piece, name, blueprint, queueMissingIcon: true);
             }
         }
 
@@ -1819,7 +1812,7 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintSaveTool.Deactivate();
             ZoneAreaDismantleTool.Deactivate();
             ZoneBlueprintPlacementTool.Deactivate();
-            ZoneBlueprintStore.Open(player);
+            ZoneBlueprintStore.Open();
         }
         else
         {

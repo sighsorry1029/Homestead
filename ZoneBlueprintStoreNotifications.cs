@@ -334,50 +334,62 @@ internal static class ZoneBlueprintStoreNotifications
         }
     }
 
-    public static void PushLatestNotification(ZoneBlueprintStoreCatalog catalog)
+    public static void PushNotification(ZoneBlueprintStoreNotification notification)
     {
-        ZoneBlueprintStoreNotification? notification = catalog.Notifications?
-            .Where(item => !item.Read)
-            .OrderByDescending(item => HomesteadTimestamp.ParseUtc(item.CreatedAt))
-            .ThenByDescending(item => item.NotificationId, StringComparer.Ordinal)
-            .FirstOrDefault();
-        if (notification != null)
+        try
         {
-            PushNotification(notification);
-        }
-    }
-
-    private static void PushNotification(ZoneBlueprintStoreNotification notification)
-    {
-        ZoneBlueprintStoreNotificationResponse response = new()
-        {
-            Notifications = [ToNotificationDto(notification)]
-        };
-        ZoneBlueprintStoreRpcEnvelope envelope = ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.Notify, response);
-        bool isPublic = IsPublicNotification(notification);
-
-        if (TryHandleLocalNotification(notification, envelope) && !isPublic)
-        {
-            return;
-        }
-
-        if (ZNet.instance == null || !ZNet.instance.IsServer() || ZRoutedRpc.instance == null)
-        {
-            return;
-        }
-
-        foreach (ZNetPeer peer in ZNet.instance.GetPeers())
-        {
-            if (!IsPeerNotificationRecipient(peer, notification))
+            ZoneBlueprintStoreNotificationResponse response = new()
             {
-                continue;
+                Notifications = [ToNotificationDto(notification)]
+            };
+            ZoneBlueprintStoreRpcEnvelope envelope = ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.Notify, response);
+            bool isPublic = IsPublicNotification(notification);
+
+            bool handledLocally = false;
+            try
+            {
+                handledLocally = TryHandleLocalNotification(notification, envelope);
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to display a blueprint store notification locally: {ex.Message}");
             }
 
-            ZoneBlueprintStoreRpcTransport.SendResponse(peer.m_uid, envelope);
-            if (!isPublic)
+            if (handledLocally && !isPublic)
             {
                 return;
             }
+
+            if (ZNet.instance == null || !ZNet.instance.IsServer() || ZRoutedRpc.instance == null)
+            {
+                return;
+            }
+
+            foreach (ZNetPeer peer in ZNet.instance.GetPeers())
+            {
+                try
+                {
+                    if (!IsPeerNotificationRecipient(peer, notification))
+                    {
+                        continue;
+                    }
+
+                    ZoneBlueprintStoreRpcTransport.SendResponse(peer.m_uid, envelope);
+                    if (!isPublic)
+                    {
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    HomesteadPlugin.HomesteadLogger.LogWarning(
+                        $"Failed to send a blueprint store notification to peer {peer.m_uid}: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning($"Failed to prepare a blueprint store notification: {ex.Message}");
         }
     }
 

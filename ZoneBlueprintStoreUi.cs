@@ -22,6 +22,7 @@ internal static class ZoneBlueprintStoreUi
     private const int MaxStoreIdLength = 64;
     private const float ScrollWheelThreshold = 0.05f;
     private const float WithdrawBlinkInterval = 0.55f;
+    private const float ListRequestTimeoutSeconds = 10f;
 
     private static GameObject? _panel;
     private static Text? _statusText;
@@ -29,26 +30,23 @@ internal static class ZoneBlueprintStoreUi
     private static Button? _withdrawButton;
     private static Text? _withdrawButtonText;
     private static Text? _withdrawAlertText;
-    private static readonly List<GameObject> Rows = [];
     private static readonly List<StoreRowWidgets> RowWidgets = [];
     private static readonly Dictionary<string, Sprite?> SnapshotCache = [];
     private static readonly LinkedList<string> SnapshotCacheOrder = [];
     private static readonly HashSet<string> OwnedSnapshotKeys = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, string> ListingIconBase64Cache = new(StringComparer.Ordinal);
     private static readonly LinkedList<string> ListingIconCacheOrder = [];
-    private static readonly Dictionary<string, Sprite> ItemIconCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> RequestedListingIconIds = new(StringComparer.Ordinal);
     private static readonly Queue<SnapshotDecodeRequest> PendingSnapshotDecodes = [];
     private static readonly HashSet<string> PendingSnapshotDecodeKeys = new(StringComparer.Ordinal);
     private static readonly HashSet<string> HiddenListingIds = new(StringComparer.Ordinal);
     private static Sprite? _missingSnapshot;
-    private static Sprite? _missingPriceIcon;
     private static List<ZoneBlueprintStoreListingSummaryDto> _listings = [];
-    private static List<ZoneBlueprintStoreListingSummaryDto> _visibleListings = [];
     private static int _scrollOffset;
     private static int _totalListings;
     private static int _hiddenListingCount;
     private static int _latestListRequestId;
+    private static int _activeListRequestId;
     private static bool _showHidden;
     private static bool _hasWithdrawableBalance;
     private static bool _withdrawBlinkOn = true;
@@ -56,6 +54,7 @@ internal static class ZoneBlueprintStoreUi
     private static bool _hiddenStateDirty;
     private static bool _inputBlocked;
     private static float _nextWithdrawBlinkAt;
+    private static float _activeListRequestExpiresAt;
     private static string _loadedHiddenListingsPath = "";
     private static string HiddenListingsPath => Path.Combine(HomesteadPlugin.DataStorageFullPath, GetHiddenListingsFileName());
 
@@ -86,11 +85,13 @@ internal static class ZoneBlueprintStoreUi
 
     public static void ResetForWorldSession()
     {
+        ZoneBlueprintStorePanelLayout.CaptureAndFlush(_panel, ZoneBlueprintStorePanelKind.Large);
         _listings = [];
-        _visibleListings = [];
         _scrollOffset = 0;
         _totalListings = 0;
         _hiddenListingCount = 0;
+        _activeListRequestId = 0;
+        _activeListRequestExpiresAt = 0f;
         AdvanceListRequestId();
         _showHidden = false;
         _hasWithdrawableBalance = false;
@@ -110,9 +111,8 @@ internal static class ZoneBlueprintStoreUi
         ReleaseSnapshotCache();
         ListingIconBase64Cache.Clear();
         ListingIconCacheOrder.Clear();
-        ItemIconCache.Clear();
         ReleaseOwnedSprite(ref _missingSnapshot);
-        ReleaseOwnedSprite(ref _missingPriceIcon);
+        ZoneBlueprintStorePriceIconStrip.ResetForWorldSession();
 
         SetInputBlocked(false);
     }
@@ -122,6 +122,18 @@ internal static class ZoneBlueprintStoreUi
         if (IsPanelVisible())
         {
             ApplyPanelLayout();
+        }
+
+        if (_activeListRequestId != 0 && Time.realtimeSinceStartup >= _activeListRequestExpiresAt)
+        {
+            _activeListRequestId = 0;
+            _activeListRequestExpiresAt = 0f;
+            RequestedListingIconIds.Clear();
+            AdvanceListRequestId();
+            if (IsPanelVisible())
+            {
+                SetStatus(HomesteadLocalization.Text("hs_store_list_request_timeout"));
+            }
         }
 
         if (_inputBlocked && !IsPanelVisible())
@@ -142,17 +154,18 @@ internal static class ZoneBlueprintStoreUi
         }
     }
 
-    public static void SetListings(ZoneBlueprintStoreListResponse response)
+    public static bool SetListings(ZoneBlueprintStoreListResponse response)
     {
-        if (response.RequestId > 0 && response.RequestId != _latestListRequestId)
+        if (_activeListRequestId == 0 || response.RequestId != _activeListRequestId)
         {
-            return;
+            return false;
         }
 
+        _activeListRequestId = 0;
+        _activeListRequestExpiresAt = 0f;
         List<ZoneBlueprintStoreListingSummaryDto> listings = response.Listings ?? [];
         MergeListingIconCache(response.Icons ?? []);
         _listings = listings;
-        _visibleListings = listings;
         _scrollOffset = response.Offset;
         _totalListings = response.TotalListings;
         _hiddenListingCount = response.HiddenListings;
@@ -165,6 +178,7 @@ internal static class ZoneBlueprintStoreUi
         RefreshWithdrawButton(force: true);
         RequestMissingVisibleListingIcons();
         SetStatus(string.IsNullOrWhiteSpace(response.Message) ? BuildListingStatusText() : response.Message);
+        return true;
     }
 
     public static void SetWithdrawableBalance(bool hasBalance)
@@ -177,7 +191,7 @@ internal static class ZoneBlueprintStoreUi
 
     public static void ApplyListingIcons(ZoneBlueprintStoreListResponse response)
     {
-        if (response.RequestId > 0 && response.RequestId != _latestListRequestId)
+        if (response.RequestId != _latestListRequestId)
         {
             return;
         }
@@ -220,7 +234,6 @@ internal static class ZoneBlueprintStoreUi
             return false;
         }
 
-        _visibleListings = _listings;
         RefreshRows();
         RequestMissingVisibleListingIcons();
         return true;
@@ -231,7 +244,7 @@ internal static class ZoneBlueprintStoreUi
         LoadHiddenState();
         SyncHiddenStateIfNeeded();
         RequestedListingIconIds.Clear();
-        ZoneBlueprintStore.RequestListingPage(NextListRequestId(), _scrollOffset, iconListingIds, _showHidden, includeNotifications);
+        ZoneBlueprintStore.RequestListingPage(BeginListRequest(), _scrollOffset, iconListingIds, _showHidden, includeNotifications);
     }
 
     private static void RequestPage(int offset, IReadOnlyList<string>? iconListingIds = null)
@@ -241,12 +254,15 @@ internal static class ZoneBlueprintStoreUi
         _scrollOffset = Mathf.Max(0, offset);
         RequestedListingIconIds.Clear();
         SetStatus(HomesteadLocalization.Text("hs_store_loading"));
-        ZoneBlueprintStore.RequestListingPage(NextListRequestId(), _scrollOffset, iconListingIds, _showHidden, includeNotifications: false);
+        ZoneBlueprintStore.RequestListingPage(BeginListRequest(), _scrollOffset, iconListingIds, _showHidden, includeNotifications: false);
     }
 
-    private static int NextListRequestId()
+    private static int BeginListRequest()
     {
-        return AdvanceListRequestId();
+        int requestId = AdvanceListRequestId();
+        _activeListRequestId = requestId;
+        _activeListRequestExpiresAt = Time.realtimeSinceStartup + ListRequestTimeoutSeconds;
+        return requestId;
     }
 
     private static int AdvanceListRequestId()
@@ -333,7 +349,7 @@ internal static class ZoneBlueprintStoreUi
         _ = gui.CreateText(HomesteadLocalization.Text("hs_store_title"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), gui.AveriaSerifBold, 22, gui.ValheimOrange, true, Color.black, 620f, 30f, false);
 
         Button refresh = gui.CreateButton(HomesteadLocalization.Text("hs_common_refresh"), panel, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(82f, -548f), 128f, 34f).GetComponent<Button>();
-        refresh.onClick.AddListener(ZoneBlueprintStore.RequestListings);
+        refresh.onClick.AddListener(() => RequestCurrentPage());
         _withdrawButton = gui.CreateButton(HomesteadLocalization.Text("hs_common_withdraw"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -548f), 128f, 34f).GetComponent<Button>();
         _withdrawButton.onClick.AddListener(ZoneBlueprintStore.RequestWithdraw);
         _withdrawButtonText = _withdrawButton.GetComponentInChildren<Text>();
@@ -374,6 +390,7 @@ internal static class ZoneBlueprintStoreUi
 
             StoreRowWidgets widgets = new()
             {
+                Root = row,
                 Snapshot = CreateImage(row.transform, "Snapshot", new Vector2(-382f, -32f), new Vector2(54f, 54f)),
                 Name = gui.CreateText("", row.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(-312f, -18f), gui.AveriaSerifBold, 14, gui.ValheimBeige, true, Color.black, 128f, 20f, false).GetComponent<Text>(),
                 Seller = gui.CreateText("", row.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(-18f, -32f), gui.AveriaSerif, 13, gui.ValheimBeige, true, Color.black, 82f, 24f, false).GetComponent<Text>(),
@@ -395,7 +412,6 @@ internal static class ZoneBlueprintStoreUi
             ZoneBlueprintStorePriceIconStrip.CreateSlots(gui, row.transform, PriceSlots, new Vector2(-232f, -20f), 34f, -26f, 4, widgets.PriceIcons, widgets.PriceAmounts);
 
             RowWidgets.Add(widgets);
-            Rows.Add(row);
         }
 
         RefreshRows();
@@ -405,9 +421,8 @@ internal static class ZoneBlueprintStoreUi
     {
         return _panel != null &&
                _panel &&
-               Rows.Count == MaxRows &&
                RowWidgets.Count == MaxRows &&
-               Rows.All(row => row != null && row);
+               RowWidgets.All(widgets => widgets.Root != null && widgets.Root);
     }
 
     private static void ResetPanel()
@@ -424,7 +439,6 @@ internal static class ZoneBlueprintStoreUi
         _withdrawButtonText = null;
         _withdrawAlertText = null;
         _showHiddenButton = null;
-        Rows.Clear();
         RowWidgets.Clear();
     }
 
@@ -438,24 +452,25 @@ internal static class ZoneBlueprintStoreUi
         ClampScrollOffset();
         RefreshShowHiddenButton();
         RefreshWithdrawButton(force: false);
-        for (int i = 0; i < Rows.Count; i++)
+        for (int i = 0; i < RowWidgets.Count; i++)
         {
-            GameObject row = Rows[i];
+            StoreRowWidgets widgets = RowWidgets[i];
+            GameObject row = widgets.Root;
             if (row == null || !row)
             {
                 continue;
             }
 
             int listingIndex = i;
-            bool visible = listingIndex < _visibleListings.Count;
+            bool visible = listingIndex < _listings.Count;
             row.SetActive(visible);
             if (!visible)
             {
                 continue;
             }
 
-            ZoneBlueprintStoreListingSummaryDto listing = _visibleListings[listingIndex];
-            RefreshRow(RowWidgets[i], listing);
+            ZoneBlueprintStoreListingSummaryDto listing = _listings[listingIndex];
+            RefreshRow(widgets, listing);
         }
 
         SetStatus(BuildListingStatusText());
@@ -464,13 +479,13 @@ internal static class ZoneBlueprintStoreUi
     private static void ClearListingRowsForLoading()
     {
         _listings = [];
-        _visibleListings = [];
         _totalListings = 0;
         _hiddenListingCount = 0;
         _scrollOffset = 0;
         RefreshShowHiddenButton();
-        foreach (GameObject row in Rows)
+        foreach (StoreRowWidgets widgets in RowWidgets)
         {
+            GameObject row = widgets.Root;
             if (row != null && row)
             {
                 row.SetActive(false);
@@ -607,16 +622,16 @@ internal static class ZoneBlueprintStoreUi
 
     private static void RequestMissingVisibleListingIcons()
     {
-        if (_visibleListings.Count == 0)
+        if (_listings.Count == 0)
         {
             return;
         }
 
         List<string> missingIds = [];
-        int last = Mathf.Min(MaxRows, _visibleListings.Count);
+        int last = Mathf.Min(MaxRows, _listings.Count);
         for (int i = 0; i < last; i++)
         {
-            ZoneBlueprintStoreListingSummaryDto listing = _visibleListings[i];
+            ZoneBlueprintStoreListingSummaryDto listing = _listings[i];
             if (listing == null ||
                 string.IsNullOrWhiteSpace(listing.ListingId) ||
                 ListingIconBase64Cache.ContainsKey(listing.ListingId) ||
@@ -643,12 +658,12 @@ internal static class ZoneBlueprintStoreUi
     private static void ToggleHidden(int rowIndex)
     {
         int listingIndex = rowIndex;
-        if (listingIndex < 0 || listingIndex >= _visibleListings.Count)
+        if (listingIndex < 0 || listingIndex >= _listings.Count)
         {
             return;
         }
 
-        string listingId = _visibleListings[listingIndex].ListingId;
+        string listingId = _listings[listingIndex].ListingId;
         if (!HiddenListingIds.Remove(listingId))
         {
             if (HiddenListingIds.Count >= MaxHiddenListingIds)
@@ -746,7 +761,7 @@ internal static class ZoneBlueprintStoreUi
     private static string BuildListingStatusText()
     {
         int hidden = _hiddenListingCount;
-        if (_visibleListings.Count == 0)
+        if (_listings.Count == 0)
         {
             return hidden > 0 && !_showHidden
                 ? HomesteadLocalization.Format("hs_store_no_visible_listings", hidden)
@@ -754,7 +769,7 @@ internal static class ZoneBlueprintStoreUi
         }
 
         int first = _scrollOffset + 1;
-        int last = Mathf.Min(_scrollOffset + _visibleListings.Count, _totalListings);
+        int last = Mathf.Min(_scrollOffset + _listings.Count, _totalListings);
         string hiddenText = hidden > 0 ? HomesteadLocalization.Format("hs_store_hidden_count", hidden) : "";
         string modeText = _showHidden ? HomesteadLocalization.Text("hs_store_showing_hidden") : "";
         return HomesteadLocalization.Format("hs_store_listing_status", first, last, _totalListings, hiddenText, modeText);
@@ -991,12 +1006,12 @@ internal static class ZoneBlueprintStoreUi
         for (int i = 0; i < RowWidgets.Count; i++)
         {
             int listingIndex = i;
-            if (listingIndex < 0 || listingIndex >= _visibleListings.Count)
+            if (listingIndex < 0 || listingIndex >= _listings.Count)
             {
                 continue;
             }
 
-            ZoneBlueprintStoreListingSummaryDto listing = _visibleListings[listingIndex];
+            ZoneBlueprintStoreListingSummaryDto listing = _listings[listingIndex];
             if (!string.Equals(SnapshotKey(listing), key, StringComparison.Ordinal))
             {
                 continue;
@@ -1016,29 +1031,6 @@ internal static class ZoneBlueprintStoreUi
     {
         PendingSnapshotDecodes.Clear();
         PendingSnapshotDecodeKeys.Clear();
-    }
-
-    internal static Sprite GetItemIcon(ZoneBlueprintStorePriceItem item)
-    {
-        string key = !string.IsNullOrWhiteSpace(item.PrefabName)
-            ? item.PrefabName
-            : !string.IsNullOrWhiteSpace(item.ItemName)
-                ? item.ItemName
-                : item.DisplayName ?? "";
-        if (!string.IsNullOrWhiteSpace(key) && ItemIconCache.TryGetValue(key, out Sprite cached))
-        {
-            return cached;
-        }
-
-        GameObject? prefab = ZoneBlueprintStoreVisuals.FindItemPrefab(item.PrefabName);
-        ItemDrop? drop = prefab ? prefab.GetComponent<ItemDrop>() : null;
-        Sprite icon = drop != null ? drop.m_itemData.GetIcon() : GetMissingPriceIcon();
-        if (!string.IsNullOrWhiteSpace(key))
-        {
-            ItemIconCache[key] = icon;
-        }
-
-        return icon;
     }
 
     private static Sprite GetMissingSnapshotSprite()
@@ -1066,37 +1058,9 @@ internal static class ZoneBlueprintStoreUi
         return _missingSnapshot;
     }
 
-    private static Sprite GetMissingPriceIcon()
-    {
-        if (_missingPriceIcon != null)
-        {
-            return _missingPriceIcon;
-        }
-
-        Texture2D texture = new(16, 16, TextureFormat.RGBA32, false);
-        Color dark = new(0.08f, 0.06f, 0.04f, 1f);
-        Color light = new(1f, 0.72f, 0.18f, 1f);
-        for (int y = 0; y < 16; y++)
-        {
-            for (int x = 0; x < 16; x++)
-            {
-                bool dot = (x - 8) * (x - 8) + (y - 8) * (y - 8) <= 36;
-                texture.SetPixel(x, y, dot ? light : dark);
-            }
-        }
-
-        texture.Apply();
-        _missingPriceIcon = Sprite.Create(texture, new Rect(0f, 0f, 16f, 16f), new Vector2(0.5f, 0.5f), 16f);
-        return _missingPriceIcon;
-    }
-
-    internal static string FormatAmount(int amount)
-    {
-        return amount >= 1000 ? $"{amount / 1000f:0.#}k" : amount.ToString();
-    }
-
     private sealed class StoreRowWidgets
     {
+        public GameObject Root = null!;
         public Image? Snapshot;
         public Text? Name;
         public Text? Seller;
@@ -1129,9 +1093,9 @@ internal static class ZoneBlueprintStoreUi
     private static void PrimaryAction(int index)
     {
         int listingIndex = index;
-        if (listingIndex >= 0 && listingIndex < _visibleListings.Count)
+        if (listingIndex >= 0 && listingIndex < _listings.Count)
         {
-            ZoneBlueprintStoreListingSummaryDto listing = _visibleListings[listingIndex];
+            ZoneBlueprintStoreListingSummaryDto listing = _listings[listingIndex];
             if (listing.CanManage)
             {
                 Close();
@@ -1144,25 +1108,15 @@ internal static class ZoneBlueprintStoreUi
         }
     }
 
-    private static void RequestBuy(int index)
-    {
-        int listingIndex = index;
-        if (listingIndex >= 0 && listingIndex < _visibleListings.Count)
-        {
-            Close();
-            ZoneBlueprintStore.RequestBuy(_visibleListings[listingIndex].ListingId);
-        }
-    }
-
     private static void OpenOfferInput(int index)
     {
         int listingIndex = index;
-        if (listingIndex < 0 || listingIndex >= _visibleListings.Count)
+        if (listingIndex < 0 || listingIndex >= _listings.Count)
         {
             return;
         }
 
-        ZoneBlueprintStoreListingSummaryDto listing = _visibleListings[listingIndex];
+        ZoneBlueprintStoreListingSummaryDto listing = _listings[listingIndex];
         Close();
         ZoneBlueprintStorePriceInputUi.OpenOffer(listing);
     }
@@ -1170,26 +1124,25 @@ internal static class ZoneBlueprintStoreUi
     private static void OpenOfferList(int index)
     {
         int listingIndex = index;
-        if (listingIndex < 0 || listingIndex >= _visibleListings.Count)
+        if (listingIndex < 0 || listingIndex >= _listings.Count)
         {
             return;
         }
 
-        ZoneBlueprintStoreListingSummaryDto listing = _visibleListings[listingIndex];
+        ZoneBlueprintStoreListingSummaryDto listing = _listings[listingIndex];
         Close();
         ZoneBlueprintStoreOffersUi.Open(listing.ListingId, listing.Name);
-        ZoneBlueprintStore.RequestOfferList(listing.ListingId);
     }
 
     private static void Delist(int index)
     {
         int listingIndex = index;
-        if (listingIndex < 0 || listingIndex >= _visibleListings.Count)
+        if (listingIndex < 0 || listingIndex >= _listings.Count)
         {
             return;
         }
 
-        ZoneBlueprintStoreListingSummaryDto listing = _visibleListings[listingIndex];
+        ZoneBlueprintStoreListingSummaryDto listing = _listings[listingIndex];
         if (!listing.CanDelist)
         {
             SetStatus(HomesteadLocalization.Text("hs_store_only_seller_delist"));
@@ -1210,6 +1163,14 @@ internal static class ZoneBlueprintStoreUi
 
     private static void Close()
     {
+        if (_activeListRequestId != 0)
+        {
+            _activeListRequestId = 0;
+            _activeListRequestExpiresAt = 0f;
+            AdvanceListRequestId();
+        }
+
+        ZoneBlueprintStorePanelLayout.CaptureAndFlush(_panel, ZoneBlueprintStorePanelKind.Large);
         if (_panel != null && _panel)
         {
             _panel.SetActive(false);

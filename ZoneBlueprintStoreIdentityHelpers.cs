@@ -1,4 +1,3 @@
-using System;
 using System.Linq;
 using UnityEngine;
 
@@ -86,10 +85,13 @@ internal static class ZoneBlueprintStoreAccess
         out string reason)
     {
         int maxListings = BlueprintConfig.StoreSettings.MaxListingsPerSteamId;
+        ZoneBlueprintStoreActor seller = ZoneBlueprintStoreIdentity.Actor(sellerPlayerId, sellerPlatformId);
         int activeListings = catalog.Listings.Count(listing =>
             listing.Active &&
-            (string.Equals(listing.SellerPlatformId, sellerPlatformId, StringComparison.Ordinal) ||
-             (string.IsNullOrWhiteSpace(listing.SellerPlatformId) && listing.SellerPlayerId == sellerPlayerId)));
+            seller.MatchesStored(
+                listing.SellerPlayerId,
+                listing.SellerPlatformId,
+                BlueprintConfig.StoreIdentityMode));
 
         if (activeListings >= maxListings)
         {

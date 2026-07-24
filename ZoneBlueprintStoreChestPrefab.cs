@@ -76,7 +76,9 @@ internal static class ZoneBlueprintStoreChestPrefab
     }
 
     private static bool TryValidatePlacement(
-        StoreChestPlacementRequest request,
+        ChestPrefabDefinition definition,
+        string mode,
+        string ownerPlatformId,
         int requestedCount,
         out GameObject prefab,
         out HomesteadCommandResult failure)
@@ -84,16 +86,16 @@ internal static class ZoneBlueprintStoreChestPrefab
         RegisterPrefab();
         prefab = null!;
         failure = HomesteadCommandResult.Fail("");
-        if (!ZoneBlueprintChestLifecycle.CanPlaceChests(request.OwnerPlatformId, requestedCount, out string limitReason))
+        if (!ZoneBlueprintChestLifecycle.CanPlaceChests(ownerPlatformId, requestedCount, out string limitReason))
         {
             failure = HomesteadCommandResult.Fail(limitReason);
             return false;
         }
 
-        GameObject? resolvedPrefab = GetPrefab(request.Definition);
+        GameObject? resolvedPrefab = GetPrefab(definition);
         if (!resolvedPrefab)
         {
-            failure = HomesteadCommandResult.Fail(GetPrefabNotReadyMessage(request.Mode));
+            failure = HomesteadCommandResult.Fail(GetPrefabNotReadyMessage(mode));
             return false;
         }
 
@@ -163,7 +165,13 @@ internal static class ZoneBlueprintStoreChestPrefab
             position,
             rotation,
             vfxExcludePeer);
-        if (!TryValidatePlacement(placement, requestedCount: 1, out GameObject prefab, out HomesteadCommandResult failure))
+        if (!TryValidatePlacement(
+                PurchaseChest,
+                ZoneBlueprintStoreChest.ModePurchase,
+                buyerPlatformId,
+                requestedCount: 1,
+                out GameObject prefab,
+                out HomesteadCommandResult failure))
         {
             return failure;
         }
@@ -209,7 +217,13 @@ internal static class ZoneBlueprintStoreChestPrefab
             position,
             rotation,
             vfxExcludePeer);
-        if (!TryValidatePlacement(placement, requestedCount: 1, out GameObject prefab, out HomesteadCommandResult failure))
+        if (!TryValidatePlacement(
+                PriceChest,
+                ZoneBlueprintStoreChest.ModePrice,
+                sellerPlatformId,
+                requestedCount: 1,
+                out GameObject prefab,
+                out HomesteadCommandResult failure))
         {
             return failure;
         }
@@ -243,32 +257,18 @@ internal static class ZoneBlueprintStoreChestPrefab
         long vfxExcludePeer = 0L)
     {
         chestTransforms = [];
-        if (!ZoneMaterialEscrow.TrySplitIntoStacks(payoutItems, out List<ZoneBlueprintStorePriceItem> stacks, out string reason))
-        {
-            return HomesteadCommandResult.Fail(reason);
-        }
-
-        const int chestCapacity = 32;
-        int chestCount = Mathf.CeilToInt(stacks.Count / (float)chestCapacity);
-        if (chestCount <= 0)
-        {
-            return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_store_no_payout_materials"));
-        }
-
-        StoreChestPlacementRequest validationPlacement = new(
-            PayoutChest,
-            ZoneBlueprintStoreChest.ModePayout,
-            sellerPlayerId,
-            sellerName,
-            sellerPlatformId,
-            basePosition,
-            rotation,
-            vfxExcludePeer);
-        if (!TryValidatePlacement(validationPlacement, chestCount, out GameObject prefab, out HomesteadCommandResult failure))
+        if (!TryPreparePayoutChests(
+                payoutItems,
+                sellerPlatformId,
+                out List<ZoneBlueprintStorePriceItem> stacks,
+                out int chestCount,
+                out GameObject prefab,
+                out HomesteadCommandResult failure))
         {
             return failure;
         }
 
+        const int chestCapacity = 32;
         List<GameObject> spawned = [];
         try
         {
@@ -324,6 +324,55 @@ internal static class ZoneBlueprintStoreChestPrefab
 
         ZoneBlueprintChestVfx.BroadcastPlace(ZoneBlueprintStoreChest.ModePayout, chestTransforms, vfxExcludePeer);
         return HomesteadCommandResult.Ok(HomesteadLocalization.Format("hs_store_payout_chest_placed", chestCount));
+    }
+
+    public static HomesteadCommandResult PreflightPayoutChests(
+        IReadOnlyList<ZoneBlueprintStorePriceItem> payoutItems,
+        string sellerPlatformId)
+    {
+        return TryPreparePayoutChests(
+            payoutItems,
+            sellerPlatformId,
+            out _,
+            out _,
+            out _,
+            out HomesteadCommandResult failure)
+            ? HomesteadCommandResult.Ok("")
+            : failure;
+    }
+
+    private static bool TryPreparePayoutChests(
+        IReadOnlyList<ZoneBlueprintStorePriceItem> payoutItems,
+        string sellerPlatformId,
+        out List<ZoneBlueprintStorePriceItem> stacks,
+        out int chestCount,
+        out GameObject prefab,
+        out HomesteadCommandResult failure)
+    {
+        prefab = null!;
+        chestCount = 0;
+        failure = HomesteadCommandResult.Fail("");
+        if (!ZoneMaterialEscrow.TrySplitIntoStacks(payoutItems, out stacks, out string reason))
+        {
+            failure = HomesteadCommandResult.Fail(reason);
+            return false;
+        }
+
+        const int chestCapacity = 32;
+        chestCount = Mathf.CeilToInt(stacks.Count / (float)chestCapacity);
+        if (chestCount <= 0)
+        {
+            failure = HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_store_no_payout_materials"));
+            return false;
+        }
+
+        return TryValidatePlacement(
+            PayoutChest,
+            ZoneBlueprintStoreChest.ModePayout,
+            sellerPlatformId,
+            chestCount,
+            out prefab,
+            out failure);
     }
 
     private static string FormatStoreChestPlaceFailed(Exception ex)

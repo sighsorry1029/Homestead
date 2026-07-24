@@ -45,15 +45,7 @@ internal static class ZoneBlueprintStorePanelLayout
 
         panel.transform.localScale = Vector3.one * GetScale(kind);
 
-        RectTransform? rect = panel.GetComponent<RectTransform>();
-        if (rect != null)
-        {
-            Vector2 current = rect.anchoredPosition;
-            if (Vector2.Distance(current, GetOffset(kind)) > PositionEpsilon)
-            {
-                MarkOffset(kind, current);
-            }
-        }
+        CaptureOffset(panel, kind);
 
         SaveIfDue();
     }
@@ -82,6 +74,21 @@ internal static class ZoneBlueprintStorePanelLayout
         _dirtyForm = false;
     }
 
+    public static void FlushPending()
+    {
+        SavePending();
+    }
+
+    public static void CaptureAndFlush(GameObject? panel, ZoneBlueprintStorePanelKind kind)
+    {
+        if (panel != null && panel && panel.activeSelf)
+        {
+            CaptureOffset(panel, kind);
+        }
+
+        SavePending();
+    }
+
     private static Vector2 GetSize(ZoneBlueprintStorePanelKind kind)
     {
         return kind == ZoneBlueprintStorePanelKind.Large
@@ -94,6 +101,36 @@ internal static class ZoneBlueprintStorePanelLayout
         return kind == ZoneBlueprintStorePanelKind.Large
             ? BlueprintConfig.StoreLargePanelOffset
             : BlueprintConfig.StoreFormPanelOffset;
+    }
+
+    private static Vector2 GetTrackedOffset(ZoneBlueprintStorePanelKind kind)
+    {
+        if (kind == ZoneBlueprintStorePanelKind.Large)
+        {
+            return _dirtyLarge ? _pendingLargeOffset : BlueprintConfig.StoreLargePanelOffset;
+        }
+
+        return _dirtyForm ? _pendingFormOffset : BlueprintConfig.StoreFormPanelOffset;
+    }
+
+    private static void CaptureOffset(GameObject? panel, ZoneBlueprintStorePanelKind kind)
+    {
+        if (panel == null || !panel)
+        {
+            return;
+        }
+
+        RectTransform? rect = panel.GetComponent<RectTransform>();
+        if (rect == null)
+        {
+            return;
+        }
+
+        Vector2 current = ClampOffset(rect.anchoredPosition);
+        if (Vector2.Distance(current, GetTrackedOffset(kind)) > PositionEpsilon)
+        {
+            MarkOffset(kind, current);
+        }
     }
 
     private static void MarkOffset(ZoneBlueprintStorePanelKind kind, Vector2 offset)
@@ -134,6 +171,11 @@ internal static class ZoneBlueprintStorePanelLayout
             return;
         }
 
+        SavePending();
+    }
+
+    private static void SavePending()
+    {
         if (_dirtyLarge)
         {
             BlueprintConfig.SetStoreLargePanelOffset(_pendingLargeOffset);

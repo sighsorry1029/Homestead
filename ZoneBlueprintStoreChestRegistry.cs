@@ -55,9 +55,30 @@ internal static class ZoneBlueprintStoreChestRegistry
         }
     }
 
-    public static ZoneBlueprintStoreChest? FindPurchaseChest(string listingId, ZoneBlueprintStoreActor buyer, string offerId = "")
+    public static bool TryFindPurchaseChest(
+        ZDOID chestId,
+        string listingId,
+        ZoneBlueprintStoreActor buyer,
+        string offerId,
+        out ZoneBlueprintStoreChest? chest,
+        out ZDO? zdo)
     {
-        return Find(ZoneBlueprintStoreChest.ModePurchase, listingId, buyer, offerId);
+        chest = null;
+        zdo = ZDOMan.instance != null ? ZDOMan.instance.GetZDO(chestId) : null;
+        if (!MatchesPurchaseChest(zdo, listingId, buyer, offerId))
+        {
+            zdo = null;
+            return false;
+        }
+
+        ZNetView? view = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(zdo) : null;
+        if (view != null)
+        {
+            chest = view.GetComponent<ZoneBlueprintStoreChest>() ?? view.gameObject.AddComponent<ZoneBlueprintStoreChest>();
+            Refresh(chest);
+        }
+
+        return true;
     }
 
     public static ZoneBlueprintStoreChest? FindPriceChest(string listingId, ZoneBlueprintStoreActor seller)
@@ -70,9 +91,11 @@ internal static class ZoneBlueprintStoreChestRegistry
         return TryFindChestZdo(ZoneBlueprintStoreChest.ModePrice, listingId, seller, offerId: "", out zdo);
     }
 
-    public static bool TryFindPurchaseChestZdo(string listingId, ZoneBlueprintStoreActor buyer, string offerId, out ZDO? zdo)
+    public static bool MatchesPurchaseChest(ZDO? zdo, string listingId, ZoneBlueprintStoreActor buyer, string offerId)
     {
-        return TryFindChestZdo(ZoneBlueprintStoreChest.ModePurchase, listingId, buyer, offerId, out zdo);
+        return zdo != null &&
+               zdo.GetPrefab() == ZoneBlueprintStoreChestPrefab.PurchasePrefabHash &&
+               MatchesZdo(zdo, ZoneBlueprintStoreChest.ModePurchase, listingId, buyer, offerId);
     }
 
     private static bool TryFindChestZdo(string mode, string listingId, ZoneBlueprintStoreActor actor, string offerId, out ZDO? zdo)

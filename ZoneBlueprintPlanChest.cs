@@ -31,6 +31,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private const float FailedPlanReloadRetryInterval = 5f;
     private const float FailedPlanWarningInterval = 60f;
     private static int _lastConfirmInputFrame = -1;
+    private static readonly HashSet<ZoneBlueprintPlanAnchor> ActiveAnchors = [];
 
     private ZNetView? _nview;
     private Container? _container;
@@ -45,10 +46,11 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private bool _absorbing;
     private bool _refundStarted;
     private bool _confirmInProgress;
+    private bool _confirmationCanceled;
     private string _lastReadySignature = "";
-    private string _lastPreviewStyleSignature = "";
     private string _failedBlueprintName = "";
     private string _lastPlanLoadFailure = "";
+    private string _requestedServerPreviewName = "";
     private int _lastInventorySignatureHash;
     private bool _hasInventorySignature;
     private float _nextCleanupCheck;
@@ -60,8 +62,34 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         _lastConfirmInputFrame = Time.frameCount;
     }
 
+    internal static void RefreshCachedPlan(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        ActiveAnchors.RemoveWhere(static anchor => !anchor);
+        foreach (ZoneBlueprintPlanAnchor anchor in ActiveAnchors.ToArray())
+        {
+            if (!string.Equals(anchor.GetBlueprintName(), name, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            anchor.ClearLoadedPlan();
+            anchor.ClearPlanLoadFailure();
+            anchor.ClearPreview();
+            if (anchor.ReloadPlan(force: true))
+            {
+                anchor.UpdatePreview();
+            }
+        }
+    }
+
     private void Awake()
     {
+        ActiveAnchors.Add(this);
         _nview = GetComponent<ZNetView>();
         _container = GetComponent<Container>();
         _wearNTear = GetComponent<WearNTear>();
@@ -76,6 +104,8 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     private void OnDestroy()
     {
+        _confirmationCanceled = true;
+        ActiveAnchors.Remove(this);
         ReleaseAzuCraftyBoxesContainer("PlanChest.OnDestroy");
         TryRefundDepositedMaterials("Unity.OnDestroy");
         ClearPreview();
@@ -136,19 +166,48 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return true;
         }
 
-        _nview.ClaimOwnership();
-        Touch();
-        Tick();
+        ZDO? zdo = _nview.GetZDO();
+        if (zdo == null || zdo.GetBool(ConfirmedKey, false))
+        {
+            return true;
+        }
 
-        long creator = _nview.GetZDO().GetLong(ZDOVars.s_creator, 0L);
+        long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
         if (creator != 0L && player.GetPlayerID() != creator)
         {
             Message(player, HomesteadLocalization.Text("hs_blueprint_other_creator"), MessageHud.MessageType.Center);
             return true;
         }
 
+        if (_confirmInProgress)
+        {
+            Message(player, HomesteadLocalization.Text("hs_blueprint_confirmation_in_progress"), MessageHud.MessageType.Center);
+            return true;
+        }
+
+        if (!_nview.IsOwner())
+        {
+            _nview.ClaimOwnership();
+        }
+
+        if (!_nview.IsOwner())
+        {
+            Message(player, HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete"), MessageHud.MessageType.Center);
+            return true;
+        }
+
+        Touch();
+        Tick();
+
         string name = GetBlueprintName();
         if (!ReloadPlan())
+        {
+            Message(player, HomesteadLocalization.Format("hs_blueprint_not_available", name), MessageHud.MessageType.Center);
+            return true;
+        }
+
+        ZoneBlueprintFile? blueprint = _blueprint;
+        if (blueprint == null)
         {
             Message(player, HomesteadLocalization.Format("hs_blueprint_not_available", name), MessageHud.MessageType.Center);
             return true;
@@ -160,43 +219,53 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
 
         Dictionary<string, int> deposited = GetDepositedMaterials();
-        if (_confirmInProgress)
-        {
-            Message(player, HomesteadLocalization.Text("hs_blueprint_confirmation_in_progress"), MessageHud.MessageType.Center);
-            return true;
-        }
-
         if (!TryGetAnchorTransform(out Vector3 anchorPosition, out Quaternion anchorRotation))
         {
             Message(player, HomesteadLocalization.Format("hs_blueprint_not_available", name), MessageHud.MessageType.Center);
             return true;
         }
 
+        _confirmationCanceled = false;
         _confirmInProgress = true;
-        StartCoroutine(ConfirmAsync(player, name, anchorPosition, anchorRotation, deposited));
+        HomesteadPlugin.Instance.StartCoroutine(ConfirmAsync(player, name, blueprint, anchorPosition, anchorRotation, deposited));
         return true;
     }
 
-    private IEnumerator ConfirmAsync(Player player, string name, Vector3 anchorPosition, Quaternion anchorRotation, Dictionary<string, int> deposited)
+    private IEnumerator ConfirmAsync(
+        Player player,
+        string name,
+        ZoneBlueprintFile blueprint,
+        Vector3 anchorPosition,
+        Quaternion anchorRotation,
+        Dictionary<string, int> deposited)
     {
         HomesteadCommandResult result = HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete"));
-        yield return ZoneBlueprintCommands.FinalizeBlueprintPlanAsync(name, player, anchorPosition, anchorRotation, deposited, value => result = value);
-        _confirmInProgress = false;
-        Message(player, result.Message, result.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
+        try
+        {
+            yield return ZoneBlueprintCommands.FinalizeBlueprintPlanAsync(
+                name,
+                blueprint,
+                player,
+                anchorPosition,
+                anchorRotation,
+                deposited,
+                () => CanContinueConfirmation(name, anchorPosition, anchorRotation),
+                () => TryCommitConfirmation(name, anchorPosition, anchorRotation),
+                value => result = value);
+        }
+        finally
+        {
+            _confirmInProgress = false;
+        }
+
         if (!result.Success)
         {
+            Message(player, result.Message, MessageHud.MessageType.Center);
             yield break;
         }
 
-        if (_nview == null || !_nview.IsValid())
-        {
-            yield break;
-        }
-
-        PlayConfirmSfx();
-        _nview.GetZDO().Set(ConfirmedKey, true);
-        ClearDepositedMaterials();
-        _nview.Destroy();
+        CompleteCommittedConfirmation();
+        Message(player, result.Message, MessageHud.MessageType.TopLeft);
     }
 
     private void Tick()
@@ -206,12 +275,22 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return;
         }
 
+        if (_nview.GetZDO()?.GetBool(ConfirmedKey, false) == true)
+        {
+            if (_nview.IsOwner())
+            {
+                _nview.Destroy();
+            }
+
+            return;
+        }
+
         if (!ReloadPlan())
         {
             return;
         }
 
-        if (_nview.IsOwner())
+        if (_nview.IsOwner() && !_confirmInProgress)
         {
             AbsorbContainerMaterials();
             TouchWhenInventoryChanged();
@@ -298,38 +377,32 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
         if (!TryGetAnchorTransform(out Vector3 anchorPosition, out Quaternion anchorRotation))
         {
-            _blueprint = null;
-            _plan = null;
-            _requirements = [];
-            _stationRequirements = [];
-            _loadedBlueprintName = "";
-            _lastReadySignature = "";
+            ClearLoadedPlan();
             ClearPreview();
             return false;
         }
 
+        if (ZNet.instance != null &&
+            !ZNet.instance.IsServer() &&
+            !string.Equals(_requestedServerPreviewName, name, StringComparison.OrdinalIgnoreCase))
+        {
+            _requestedServerPreviewName = name;
+            ZoneBlueprintPlanRpc.RequestPreview(name, refreshCached: true);
+        }
+
         try
         {
-            _blueprint = ZoneBlueprintCommands.LoadBlueprintForPlan(name);
-            _plan = ZoneBlueprintCommands.CreateLoadPlanForBlueprint(name, anchorPosition, anchorRotation);
-            _requirements = ZoneBlueprintCommands.CollectRequirements(_plan);
-            _stationRequirements = ZoneBlueprintCommands.CollectCraftingStations(_plan);
-            _loadedBlueprintName = name;
-            _lastReadySignature = "";
-            ClearPlanLoadFailure();
+            ZoneBlueprintFile blueprint = ZoneBlueprintCommands.LoadBlueprintForPlan(name);
+            ZoneBlueprintCommands.BlueprintLoadPlan plan = ZoneBlueprintCommands.CreateLoadPlanForBlueprint(blueprint, anchorPosition, anchorRotation);
+            ApplyLoadedPlan(name, blueprint, plan);
             return true;
         }
         catch (Exception localEx) when (ZoneBlueprintPlanRpc.TryGetCachedPreview(name, out ZoneBlueprintFile serverPreview))
         {
             try
             {
-                _blueprint = serverPreview;
-                _plan = ZoneBlueprintCommands.CreateLoadPlanForBlueprint(serverPreview, anchorPosition, anchorRotation);
-                _requirements = ZoneBlueprintCommands.CollectRequirements(_plan);
-                _stationRequirements = ZoneBlueprintCommands.CollectCraftingStations(_plan);
-                _loadedBlueprintName = name;
-                _lastReadySignature = "";
-                ClearPlanLoadFailure();
+                ZoneBlueprintCommands.BlueprintLoadPlan plan = ZoneBlueprintCommands.CreateLoadPlanForBlueprint(serverPreview, anchorPosition, anchorRotation);
+                ApplyLoadedPlan(name, serverPreview, plan);
                 return true;
             }
             catch (Exception previewEx)
@@ -337,12 +410,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
                 RecordPlanLoadFailure(name, $"Failed to load Homestead server blueprint preview '{name}': {previewEx.Message} (local: {localEx.Message})", logWarning: true);
             }
 
-            _blueprint = null;
-            _plan = null;
-            _requirements = [];
-            _stationRequirements = [];
-            _loadedBlueprintName = "";
-            _lastReadySignature = "";
+            ClearLoadedPlan();
             ClearPreview();
             return false;
         }
@@ -351,15 +419,36 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             ZoneBlueprintPlanRpc.RequestPreview(name);
             RecordPlanLoadFailure(name, $"Failed to load Homestead blueprint plan '{name}': {ex.Message}", logWarning: !ZoneBlueprintPlanRpc.IsPreviewPending(name));
 
-            _blueprint = null;
-            _plan = null;
-            _requirements = [];
-            _stationRequirements = [];
-            _loadedBlueprintName = "";
-            _lastReadySignature = "";
+            ClearLoadedPlan();
             ClearPreview();
             return false;
         }
+    }
+
+    private void ApplyLoadedPlan(
+        string name,
+        ZoneBlueprintFile blueprint,
+        ZoneBlueprintCommands.BlueprintLoadPlan plan)
+    {
+        List<ZoneBlueprintRequirement> requirements = ZoneBlueprintCommands.CollectRequirements(plan);
+        List<ZoneBlueprintCraftingStationRequirement> stationRequirements = ZoneBlueprintCommands.CollectCraftingStations(plan);
+        _blueprint = blueprint;
+        _plan = plan;
+        _requirements = requirements;
+        _stationRequirements = stationRequirements;
+        _loadedBlueprintName = name;
+        _lastReadySignature = "";
+        ClearPlanLoadFailure();
+    }
+
+    private void ClearLoadedPlan()
+    {
+        _blueprint = null;
+        _plan = null;
+        _requirements = [];
+        _stationRequirements = [];
+        _loadedBlueprintName = "";
+        _lastReadySignature = "";
     }
 
     private bool ShouldSkipFailedPlanReload(string name, bool force)
@@ -630,11 +719,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         Instantiate(prefab, transform.position, Quaternion.identity);
     }
 
-    private static void GiveOrDropItem(ItemDrop.ItemData prototype, int amount, Vector3 dropPosition, bool preferInventory, GameObject? dropPrefab = null)
-    {
-        ZoneMaterialEscrow.GiveOrDropItem(prototype, amount, dropPosition, preferInventory, dropPrefab);
-    }
-
     private void UpdatePreview()
     {
         if (Player.m_localPlayer == null || _blueprint == null || _plan == null)
@@ -751,21 +835,11 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         _previewGhost.ApplyMaterial(root, BlueprintConfig.PreviewGhostColor);
     }
 
-    private bool RefreshPendingMaterialStyle()
+    private void RefreshPendingMaterialStyle()
     {
         Color color = BlueprintConfig.PreviewGhostColor;
-        string signature = GetPreviewStyleSignature(color);
-        bool changed = !string.Equals(signature, _lastPreviewStyleSignature, StringComparison.Ordinal);
-        _lastPreviewStyleSignature = signature;
         _previewGhost.UpdateMaterialColor(color);
         _stationGhost.UpdateMaterialColor(color);
-
-        return changed;
-    }
-
-    private static string GetPreviewStyleSignature(Color color)
-    {
-        return ColorUtility.ToHtmlStringRGBA(color);
     }
 
     private HashSet<int> GetReadyEntryIndices(out string signature)
@@ -796,15 +870,17 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
         foreach ((ZoneBlueprintCommands.BlueprintLoadEntry entry, int index) in orderedEntries)
         {
-            Dictionary<string, int> entryRequirements = GetEntryRequirements(entry);
-            if (entryRequirements.Any(pair => !budget.TryGetValue(pair.Key, out int available) || available < pair.Value))
+            Dictionary<string, ZoneBlueprintRequirement> entryRequirements = ZoneBlueprintCommands.GetEntryRequirements(entry);
+            if (entryRequirements.Values.Any(requirement =>
+                    !budget.TryGetValue(requirement.ItemName, out int available) ||
+                    available < requirement.Amount))
             {
                 continue;
             }
 
-            foreach (KeyValuePair<string, int> pair in entryRequirements)
+            foreach (ZoneBlueprintRequirement requirement in entryRequirements.Values)
             {
-                budget[pair.Key] -= pair.Value;
+                budget[requirement.ItemName] -= requirement.Amount;
             }
 
             readyEntries.Add(index);
@@ -812,30 +888,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
         signature = string.Join(",", readyEntries.OrderBy(index => index));
         return readyEntries;
-    }
-
-    private static Dictionary<string, int> GetEntryRequirements(ZoneBlueprintCommands.BlueprintLoadEntry entry)
-    {
-        Dictionary<string, int> requirements = [];
-        Piece piece = entry.Prefab.GetComponent<Piece>();
-        if (piece == null)
-        {
-            return requirements;
-        }
-
-        foreach (Piece.Requirement requirement in piece.m_resources)
-        {
-            if (!requirement.m_resItem || requirement.m_amount <= 0)
-            {
-                continue;
-            }
-
-            string itemName = requirement.m_resItem.m_itemData.m_shared.m_name;
-            requirements.TryGetValue(itemName, out int current);
-            requirements[itemName] = current + requirement.GetAmount(0);
-        }
-
-        return requirements;
     }
 
     private IEnumerable<ZoneBlueprintRequirement> GetMissingRequirements()
@@ -900,7 +952,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     {
         if (amount <= 0 || _nview?.GetZDO() == null)
         {
-            LogRefundDebug($"Skipped refund ledger add for '{requirement.ItemName}'. amount={amount}, zdo={_nview?.GetZDO() != null}.");
             return;
         }
 
@@ -923,7 +974,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
         material.Amount = ZoneMaterialEscrow.AddAmountsSaturating(material.Amount, amount);
         WriteRefundMaterials(materials);
-        LogRefundInfo($"Recorded refund material: {requirement.ItemName} prefab={material.PrefabName} added={amount} total={material.Amount}.");
     }
 
     private List<RefundMaterial> ReadRefundMaterials()
@@ -931,14 +981,12 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         ZDO? zdo = _nview?.GetZDO();
         if (zdo == null)
         {
-            LogRefundDebug("Read refund ledger skipped: no ZDO.");
             return [];
         }
 
         string payload = zdo.GetString(RefundPayloadKey, "");
         if (string.IsNullOrWhiteSpace(payload))
         {
-            LogRefundDebug("Read refund ledger: empty payload.");
             return [];
         }
 
@@ -948,7 +996,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             int version = package.ReadInt();
             if (version != RefundPayloadVersion)
             {
-                LogRefundInfo($"Read refund ledger: unsupported version {version}.");
                 return [];
             }
 
@@ -964,12 +1011,10 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
                 });
             }
 
-            LogRefundInfo($"Read refund ledger: {materials.Count} material entries, total={materials.Sum(item => item.Amount)}.");
             return materials;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            LogRefundInfo($"Failed to read refund payload: {ex.Message}");
             return [];
         }
     }
@@ -979,7 +1024,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         ZDO? zdo = _nview?.GetZDO();
         if (zdo == null)
         {
-            LogRefundDebug("Write refund ledger skipped: no ZDO.");
             return;
         }
 
@@ -991,7 +1035,6 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         if (activeMaterials.Count == 0)
         {
             zdo.Set(RefundPayloadKey, "");
-            LogRefundDebug("Cleared refund ledger payload.");
             return;
         }
 
@@ -1006,13 +1049,11 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
 
         zdo.Set(RefundPayloadKey, package.GetBase64());
-        LogRefundDebug($"Wrote refund ledger: {activeMaterials.Count} entries, total={activeMaterials.Sum(item => item.Amount)}.");
     }
 
     private void ClearRefundMaterials()
     {
         _nview?.GetZDO()?.Set(RefundPayloadKey, "");
-        LogRefundDebug("Refund ledger cleared.");
     }
 
     private string GetBlueprintName()
@@ -1051,14 +1092,89 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     private void OnDestroyed()
     {
+        _confirmationCanceled = true;
         ReleaseAzuCraftyBoxesContainer("PlanChest.WearNTear.m_onDestroyed");
         TryRefundDepositedMaterials("WearNTear.m_onDestroyed");
     }
 
     internal void HandleDestroyPrefix(string source)
     {
+        _confirmationCanceled = true;
         ReleaseAzuCraftyBoxesContainer(source);
         TryRefundDepositedMaterials(source);
+    }
+
+    private bool CanContinueConfirmation(string name, Vector3 anchorPosition, Quaternion anchorRotation)
+    {
+        if (_confirmationCanceled ||
+            !_confirmInProgress ||
+            _nview == null ||
+            !_nview.IsValid() ||
+            !_nview.IsOwner())
+        {
+            return false;
+        }
+
+        ZDO? zdo = _nview.GetZDO();
+        return zdo != null &&
+               !zdo.GetBool(ConfirmedKey, false) &&
+               string.Equals(GetBlueprintName(), name, StringComparison.OrdinalIgnoreCase) &&
+               TryGetAnchorTransform(out Vector3 currentAnchor, out Quaternion currentRotation) &&
+               (currentAnchor - anchorPosition).sqrMagnitude < 0.0001f &&
+               Mathf.Abs(Quaternion.Dot(currentRotation, anchorRotation)) > 0.9999f;
+    }
+
+    private bool TryCommitConfirmation(string name, Vector3 anchorPosition, Quaternion anchorRotation)
+    {
+        if (!CanContinueConfirmation(name, anchorPosition, anchorRotation))
+        {
+            return false;
+        }
+
+        ZDO? zdo = _nview?.GetZDO();
+        if (zdo == null)
+        {
+            return false;
+        }
+
+        zdo.Set(ConfirmedKey, true);
+        return zdo.GetBool(ConfirmedKey, false);
+    }
+
+    private void CompleteCommittedConfirmation()
+    {
+        try
+        {
+            ClearDepositedMaterials();
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Blueprint confirmation committed, but escrow cleanup failed: {ex.Message}");
+        }
+
+        try
+        {
+            PlayConfirmSfx();
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Blueprint confirmation committed, but its visual effect failed: {ex.Message}");
+        }
+
+        try
+        {
+            if (_nview != null && _nview.IsValid() && _nview.IsOwner())
+            {
+                _nview.Destroy();
+            }
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Blueprint confirmation committed, but the plan chest could not be removed: {ex.Message}");
+        }
     }
 
     private void ReleaseAzuCraftyBoxesContainer(string source)
@@ -1070,28 +1186,24 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     {
         if (_refundStarted || _nview == null)
         {
-            LogRefundDebug($"{source}: skipped refund. started={_refundStarted}, nview={_nview != null}.");
             return;
         }
 
         ZDO zdo = _nview.GetZDO();
         if (zdo == null || zdo.GetBool(ConfirmedKey, false))
         {
-            LogRefundDebug($"{source}: skipped refund. zdo={zdo != null}, confirmed={zdo?.GetBool(ConfirmedKey, false)}.");
             return;
         }
 
-        if (_nview.IsValid() && !_nview.IsOwner())
+        if (!_nview.IsValid() || !_nview.IsOwner())
         {
-            LogRefundDebug($"{source}: skipped refund because this peer is not owner. valid={_nview.IsValid()}.");
             return;
         }
 
         _refundStarted = true;
-        LogRefundInfo($"{source}: refund starting at {transform.position}. valid={_nview.IsValid()}, owner={_nview.IsOwner()}, payloadBytes={zdo.GetString(RefundPayloadKey, "").Length}.");
         try
         {
-            RefundDepositedMaterials(source);
+            RefundDepositedMaterials();
         }
         catch (Exception ex)
         {
@@ -1099,41 +1211,38 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
     }
 
-    private void RefundDepositedMaterials(string source)
+    private void RefundDepositedMaterials()
     {
         List<RefundMaterial> refundMaterials = ReadRefundMaterials();
         if (refundMaterials.All(material => material.Amount <= 0))
         {
-            LogRefundInfo("Refund skipped: no deposited materials found.");
             return;
         }
 
         ClearDepositedMaterials();
         Vector3 dropPosition = transform.position;
-        LogRefundInfo($"Queueing refund materials from {source}: entries={refundMaterials.Count}, total={refundMaterials.Sum(material => material.Amount)}.");
-        ScheduleRefundDrop(refundMaterials, dropPosition, source);
+        ScheduleRefundDrop(refundMaterials, dropPosition);
     }
 
-    private static void ScheduleRefundDrop(List<RefundMaterial> refundMaterials, Vector3 dropPosition, string source)
+    private static void ScheduleRefundDrop(List<RefundMaterial> refundMaterials, Vector3 dropPosition)
     {
         if (HomesteadPlugin.Instance != null)
         {
-            HomesteadPlugin.Instance.StartCoroutine(DropRefundMaterialsDeferred(refundMaterials, dropPosition, source));
+            HomesteadPlugin.Instance.StartCoroutine(DropRefundMaterialsDeferred(refundMaterials, dropPosition));
             return;
         }
 
-        DropRefundMaterials(refundMaterials, dropPosition, source);
+        DropRefundMaterials(refundMaterials, dropPosition);
     }
 
-    private static IEnumerator DropRefundMaterialsDeferred(List<RefundMaterial> refundMaterials, Vector3 dropPosition, string source)
+    private static IEnumerator DropRefundMaterialsDeferred(List<RefundMaterial> refundMaterials, Vector3 dropPosition)
     {
         yield return new WaitForEndOfFrame();
-        DropRefundMaterials(refundMaterials, dropPosition, source);
+        DropRefundMaterials(refundMaterials, dropPosition);
     }
 
-    private static void DropRefundMaterials(IEnumerable<RefundMaterial> refundMaterials, Vector3 dropPosition, string source)
+    private static void DropRefundMaterials(IEnumerable<RefundMaterial> refundMaterials, Vector3 dropPosition)
     {
-        LogRefundInfo($"Dropping queued refund materials from {source}.");
         foreach (RefundMaterial material in refundMaterials)
         {
             if (material.Amount <= 0)
@@ -1149,17 +1258,8 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
                 continue;
             }
 
-            LogRefundInfo($"Dropping refund material '{material.ItemName}' prefab={material.PrefabName} amount={material.Amount}.");
-            GiveOrDropItem(itemDrop.m_itemData, material.Amount, dropPosition, preferInventory: false, prefab);
+            ZoneMaterialEscrow.GiveOrDropItem(itemDrop.m_itemData, material.Amount, dropPosition, preferInventory: false, prefab);
         }
-    }
-
-    private static void LogRefundInfo(string message)
-    {
-    }
-
-    private static void LogRefundDebug(string message)
-    {
     }
 
     public void DrawRequirementOverlay(InventoryGrid grid)
@@ -1193,8 +1293,16 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     private static void Message(Player player, string message, MessageHud.MessageType type)
     {
-        HomesteadPlugin.HomesteadLogger.LogInfo(message);
-        player.Message(type, message);
+        try
+        {
+            HomesteadPlugin.HomesteadLogger.LogInfo(message);
+            player.Message(type, message);
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Could not show a blueprint plan message after processing the request: {ex.Message}");
+        }
     }
 
     [HarmonyPatch(typeof(Player), nameof(Player.Update))]

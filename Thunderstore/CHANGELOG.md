@@ -1,23 +1,126 @@
-| `Version` | `Update Notes`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-|-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.1.9     | - Fixed Build Camera piece placement and dismantling actions emitting player-centered gameplay noise that could alert nearby AI, remove Resting, and immediately exit Build Camera. |
-| 1.1.8     | - Added InventorySlots container-preview compatibility for Homestead blueprint and plan chests, showing their virtual missing-material requirements instead of misleading chest contents. <br> - Prevented InventorySlots from previewing Blueprint Store price-setting chests. |
-| 1.1.7     | - Hardened Blueprint Store catalog persistence with validated writes, automatic backup recovery, and protection against corrupt or incompatible catalog versions. <br> - Expired and delisted listings now clean up related offers and unreferenced blueprint files after the catalog is safely saved. <br> - Fixed Store panels, locked previews, chest registries, build camera state, and blueprint caches carrying stale state across world changes. <br> - Added bounds for Store request and cache data, corrected timestamp ordering across time zones, prevented stale list/icon responses, and protected material totals from integer overflow. <br> - Simplified duplicated blueprint, terrain, input, Store, and session-lifecycle code to reduce maintenance risk. |
-| 1.1.6     | - Added compatibility with My Little UI so Homestead blueprint store and plan chest hover hints keep their custom actions after container hover UI mods rewrite chest hover text.                                                                                                                                                                                                                                                                                                                                                                                     |
-| 1.1.5     | - Fixed area repair tooltip text leaking onto veiled build pieces or empty build-menu slots when compatibility mods update the build HUD.                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 1.1.4     | - Dvergr circlets now repair after other worn equipment instead of taking repair priority while equipped. <br> - Dvergr circlets are only considered repairable at 95% durability or lower, preventing tiny light-drain ticks from keeping the repair button focused on the circlet.                                                                                                                                                                                                                                                                                    |
-| 1.1.3     | - Added area repair with base radius and comfort-scaled radius options.                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 1.1.2     | - `Preview Ghost Color` now defaults to `#FFFFFF40` (RGBA 1, 1, 1, 0.25). <br> - Blueprint Store offer dialogs now prefill the seller's listed price. <br> - Build camera HUD distances now show one decimal place when needed. <br> - Large blueprint icons now keep extra front-visible layers so dense builds look less hollow. <br> - Homestead hammer tab now sorts saved blueprints by filename. <br> - Now the mod includes 3 blueprint samples.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 1.1.1     | ![](https://i.ibb.co/S4V2z9pS/Screenshot-2026-05-31-160539.png)<br> - Blueprint, plan, station, and store preview ghosts now preserve source piece textures while applying the configured preview color. <br> - `Preview Ghost Color` now defaults to `#FFFFFFFF`, and store preview ghosts use the same preview color option as other blueprint ghosts. <br> - Added a safe text-input visibility fallback so Homestead no longer logs repeated errors when another mod patches `TextInput.IsVisible` before its UI is ready.                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 1.1.0     | - Blueprint placement, preview, icon rendering, and store validation now ignore missing prefab entries and recipe-only prefabs without WearNTear, treating only Homestead-loadable WearNTear pieces as buildable entries. <br> - Lowered the default Preview Ghost Color alpha to 0.05 for subtler unfinished blueprint previews.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 1.0.10    | - Switched Homestead blueprints to the native `.blueprint` format with PlanBuild/Infinity Hammer-compatible metadata and simplified local blueprint handling. (No legacy support for hsbp.yml format. Regenerate your config and catalog.yml) <br> - Simplified Blueprint Store, build camera, area tool, Dvergr circlet, preview, and remote visual config options. <br> - Added comfort-scaled build camera distance, placement distance, and resource pickup range HUD support. <br> - Improved Blueprint Store upload/listing/purchase flows, icon limits, cleanup behavior, and RPC response handling. <br> - Refactored blueprint save/menu, hammer table, material escrow, price input, and store UI internals for lower duplication and easier maintenance.                                                                                                                                                                                       |
-| 1.0.9     | - Improved Blueprint Store save safety, chest cleanup, RPC handling, and purchase completion VFX behavior.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 1.0.8     | - Added compat for VeildRecipes so that blueprint icon is not veiled. <br> - Minor config cleanup.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1.0.7     | - Added compat to InventorySlots mod <br> - Reduced minimum dgree of rotation to 0.5 from 1 <br> - Fixed initial rotation offset                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 1.0.6     | - Readme Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 1.0.5     | - Removed ZoneSavior part <br> - Added exclamation mark for the withdrawls <br> - Added depth/width control with area save/dismantle                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 1.0.4     | - changed default rotation step to 22.5% <br> - Fixed blueprint store flickering for some clients <br> - HUD now shows piece rotation too                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 1.0.3     | - Various optimizations and fix for dedi <br> - Added localization file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 1.0.2     | - Fixed VFX not showing up on dedi                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1.0.1     | - Improved dedicated server compatibility for blueprint store, purchase, payout, and blueprint plan chest placement, including safer chest metadata setup and client-side placement VFX playback. <br> - Fixed blueprint store chest lookup edge cases, including purchase offer matching and registry fallback behavior, to avoid incorrect matches and large synchronous ZDO scans. <br> - Added PlayerId/SteamId-aware store identity handling for ownership, hidden listings, and debug diagnostics. <br> - Reduced server hitch risk in blueprint/store RPC paths by tightening payload handling, cooldowns, queue limits, and removing expensive fallback scans. <br> - Improved Homestead build-tool UX with throttled hammer/menu refreshes, better key hints, and reduced forced HUD rebuilds. <br> - Strengthened auto archive and zone bundle restore behavior, including safer eligibility diagnostics, creator handling, and terrain restore planning. |
-| 1.0.0     | - Initial Release                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+# Changelog
+
+## 1.1.10
+
+- Made blueprint plan confirmation safer by validating transform and placement bounds, rolling back newly created pieces and Homestead terrain changes when possible, and reporting incomplete rollback instead of silently leaving partial work.
+- Hardened Blueprint Store purchases by targeting the exact nearby purchase chest, rejecting changed prices, refunding deposits from dismantled unconfirmed purchase chests, and retrying completed blueprint saves during the current world session.
+- Strengthened validated atomic blueprint and Store catalog writes, immediate persistence for important listing and offer changes, and recovery handling for failed purchase and withdrawal transactions.
+- Prevented stale Store list, offer, preview, and plan-preview responses from replacing newer state; added request timeouts, bounded preview caches, and full-rescan recovery after blueprint directory watcher failures.
+- Simplified duplicated Store, area-tool, blueprint-save, and Build Camera session state to reduce stale state and maintenance risk.
+
+## 1.1.9
+
+- Fixed Build Camera piece placement and dismantling actions emitting player-centered gameplay noise that could alert nearby AI, remove Resting, and immediately exit Build Camera.
+
+## 1.1.8
+
+- Added InventorySlots container-preview compatibility for Homestead blueprint and plan chests, showing their virtual missing-material requirements instead of misleading chest contents.
+- Prevented InventorySlots from previewing Blueprint Store price-setting chests.
+
+## 1.1.7
+
+- Hardened Blueprint Store catalog persistence with validated writes, automatic backup recovery, and protection against corrupt or incompatible catalog versions.
+- Expired and delisted listings now clean up related offers and unreferenced blueprint files after the catalog is safely saved.
+- Fixed Store panels, locked previews, chest registries, build camera state, and blueprint caches carrying stale state across world changes.
+- Added bounds for Store request and cache data, corrected timestamp ordering across time zones, prevented stale list/icon responses, and protected material totals from integer overflow.
+- Simplified duplicated blueprint, terrain, input, Store, and session-lifecycle code to reduce maintenance risk.
+
+## 1.1.6
+
+- Added compatibility with My Little UI so Homestead blueprint store and plan chest hover hints keep their custom actions after container hover UI mods rewrite chest hover text.
+
+## 1.1.5
+
+- Fixed area repair tooltip text leaking onto veiled build pieces or empty build-menu slots when compatibility mods update the build HUD.
+
+## 1.1.4
+
+- Dvergr circlets now repair after other worn equipment instead of taking repair priority while equipped.
+- Dvergr circlets are only considered repairable at 95% durability or lower, preventing tiny light-drain ticks from keeping the repair button focused on the circlet.
+
+## 1.1.3
+
+- Added area repair with base radius and comfort-scaled radius options.
+
+## 1.1.2
+
+- `Preview Ghost Color` now defaults to `#FFFFFF40` (RGBA 1, 1, 1, 0.25).
+- Blueprint Store offer dialogs now prefill the seller's listed price.
+- Build camera HUD distances now show one decimal place when needed.
+- Large blueprint icons now keep extra front-visible layers so dense builds look less hollow.
+- Homestead hammer tab now sorts saved blueprints by filename.
+- Now the mod includes 3 blueprint samples.
+
+## 1.1.1
+
+![](https://i.ibb.co/S4V2z9pS/Screenshot-2026-05-31-160539.png)
+
+- Blueprint, plan, station, and store preview ghosts now preserve source piece textures while applying the configured preview color.
+- `Preview Ghost Color` now defaults to `#FFFFFFFF`, and store preview ghosts use the same preview color option as other blueprint ghosts.
+- Added a safe text-input visibility fallback so Homestead no longer logs repeated errors when another mod patches `TextInput.IsVisible` before its UI is ready.
+
+## 1.1.0
+
+- Blueprint placement, preview, icon rendering, and store validation now ignore missing prefab entries and recipe-only prefabs without WearNTear, treating only Homestead-loadable WearNTear pieces as buildable entries.
+- Lowered the default Preview Ghost Color alpha to 0.05 for subtler unfinished blueprint previews.
+
+## 1.0.10
+
+- Switched Homestead blueprints to the native `.blueprint` format with PlanBuild/Infinity Hammer-compatible metadata and simplified local blueprint handling. (No legacy support for hsbp.yml format. Regenerate your config and catalog.yml)
+- Simplified Blueprint Store, build camera, area tool, Dvergr circlet, preview, and remote visual config options.
+- Added comfort-scaled build camera distance, placement distance, and resource pickup range HUD support.
+- Improved Blueprint Store upload/listing/purchase flows, icon limits, cleanup behavior, and RPC response handling.
+- Refactored blueprint save/menu, hammer table, material escrow, price input, and store UI internals for lower duplication and easier maintenance.
+
+## 1.0.9
+
+- Improved Blueprint Store save safety, chest cleanup, RPC handling, and purchase completion VFX behavior.
+
+## 1.0.8
+
+- Added compat for VeildRecipes so that blueprint icon is not veiled.
+- Minor config cleanup.
+
+## 1.0.7
+
+- Added compat to InventorySlots mod.
+- Reduced minimum dgree of rotation to 0.5 from 1.
+- Fixed initial rotation offset.
+
+## 1.0.6
+
+- Readme Fix.
+
+## 1.0.5
+
+- Removed ZoneSavior part.
+- Added exclamation mark for the withdrawls.
+- Added depth/width control with area save/dismantle.
+
+## 1.0.4
+
+- Changed default rotation step to 22.5%.
+- Fixed blueprint store flickering for some clients.
+- HUD now shows piece rotation too.
+
+## 1.0.3
+
+- Various optimizations and fix for dedi.
+- Added localization file.
+
+## 1.0.2
+
+- Fixed VFX not showing up on dedi.
+
+## 1.0.1
+
+- Improved dedicated server compatibility for blueprint store, purchase, payout, and blueprint plan chest placement, including safer chest metadata setup and client-side placement VFX playback.
+- Fixed blueprint store chest lookup edge cases, including purchase offer matching and registry fallback behavior, to avoid incorrect matches and large synchronous ZDO scans.
+- Added PlayerId/SteamId-aware store identity handling for ownership, hidden listings, and debug diagnostics.
+- Reduced server hitch risk in blueprint/store RPC paths by tightening payload handling, cooldowns, queue limits, and removing expensive fallback scans.
+- Improved Homestead build-tool UX with throttled hammer/menu refreshes, better key hints, and reduced forced HUD rebuilds.
+- Strengthened auto archive and zone bundle restore behavior, including safer eligibility diagnostics, creator handling, and terrain restore planning.
+
+## 1.0.0
+
+- Initial Release.

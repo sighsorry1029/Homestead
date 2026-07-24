@@ -73,6 +73,6 @@ internal static class ZoneBlueprintStorePanelRuntime
 
     public static bool IsVisible(GameObject? panel)
     {
-        return panel != null && panel && panel.activeSelf;
+        return panel != null && panel && panel.activeInHierarchy;
     }
 }

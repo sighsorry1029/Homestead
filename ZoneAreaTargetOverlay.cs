@@ -15,10 +15,6 @@ internal sealed class ZoneAreaTargetOverlay
     private readonly Dictionary<ZDOID, bool> _nextHighlighted = [];
     private readonly List<OverlayCandidate> _candidateBuffer = [];
 
-    public ZoneAreaTargetOverlay(Transform parent, string objectPrefix)
-    {
-    }
-
     public void Draw(IReadOnlyList<ZDO> candidates, ZoneAreaSelection selection)
     {
         _nextHighlighted.Clear();
@@ -103,11 +99,6 @@ internal sealed class ZoneAreaTargetOverlay
         _highlighted.Clear();
         _nextHighlighted.Clear();
         _candidateBuffer.Clear();
-    }
-
-    public void Destroy()
-    {
-        Clear();
     }
 
     private static bool TryGetWearNTear(ZDO zdo, out WearNTear wearNTear)

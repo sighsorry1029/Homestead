@@ -7,6 +7,8 @@ namespace Homestead;
 
 internal static class ZoneBlueprintStorePurchaseAction
 {
+    private const float ConfirmChestMaxDistance = 16f;
+
     public static ZoneBlueprintStoreRpcEnvelope ExecuteBuy(ZoneBlueprintStoreBuyRequest request, Player? player, long sender)
     {
         ZoneBlueprintStoreRpcEnvelope FailBuy(string message)
@@ -86,17 +88,46 @@ internal static class ZoneBlueprintStorePurchaseAction
 
     public static ZoneBlueprintStoreRpcEnvelope ExecuteConfirmResponse(ZoneBlueprintStoreConfirmPurchaseRequest request, Player? player, long sender)
     {
-        if (!ZoneBlueprintStoreAccess.TryResolveRequester(player, sender, out long buyerPlayerId, out string buyerName, out _, out _, out string reason))
+        if (!ZoneBlueprintStoreAccess.TryResolveRequester(player, sender, out long buyerPlayerId, out string buyerName, out Vector3 position, out _, out string reason))
         {
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.ConfirmPurchase, reason);
         }
 
-        HomesteadCommandResult result = ExecuteConfirm(request.ListingId, buyerPlayerId, buyerName, sender, directChest: null, request.OfferId);
-        return ZoneBlueprintStoreDtos.Status(ZoneBlueprintStoreRpcType.ConfirmPurchase, result.Success, result.Message);
+        if (request.ChestObjectId == 0)
+        {
+            return ZoneBlueprintStoreDtos.Fail(
+                ZoneBlueprintStoreRpcType.ConfirmPurchase,
+                HomesteadLocalization.Text("hs_store_purchase_chest_missing_nearby"));
+        }
+
+        HomesteadCommandResult result = ExecuteConfirm(
+            request.ListingId,
+            buyerPlayerId,
+            buyerName,
+            sender,
+            directChest: null,
+            out ZoneBlueprintStoreRpcEnvelope? purchase,
+            request.OfferId,
+            new ZDOID(request.ChestUserId, request.ChestObjectId),
+            position);
+        return purchase ?? ZoneBlueprintStoreDtos.Status(
+            ZoneBlueprintStoreRpcType.ConfirmPurchase,
+            result.Success,
+            result.Message);
     }
 
-    public static HomesteadCommandResult ExecuteConfirm(string listingId, long buyerPlayerId, string buyerName, long targetPeer, ZoneBlueprintStoreChest? directChest, string offerId = "")
+    public static HomesteadCommandResult ExecuteConfirm(
+        string listingId,
+        long buyerPlayerId,
+        string buyerName,
+        long requesterPeer,
+        ZoneBlueprintStoreChest? directChest,
+        out ZoneBlueprintStoreRpcEnvelope? purchaseResponse,
+        string offerId = "",
+        ZDOID? requestedChestId = null,
+        Vector3? requesterPosition = null)
     {
+        purchaseResponse = null;
         buyerName = string.IsNullOrWhiteSpace(buyerName) ? HomesteadLocalization.Text("hs_common_unknown") : buyerName;
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
         ZoneBlueprintStoreListing? listing = catalog.Listings.FirstOrDefault(item => item.Active && item.ListingId == listingId);
@@ -105,7 +136,7 @@ internal static class ZoneBlueprintStorePurchaseAction
             return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_store_listing_not_found"));
         }
 
-        ZoneBlueprintStoreActor buyer = ZoneBlueprintStoreAccess.ResolveRequesterActor(null, targetPeer, buyerPlayerId);
+        ZoneBlueprintStoreActor buyer = ZoneBlueprintStoreAccess.ResolveRequesterActor(null, requesterPeer, buyerPlayerId);
         string buyerPlatformId = buyer.PlatformId;
         if (ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, buyer))
         {
@@ -113,16 +144,34 @@ internal static class ZoneBlueprintStorePurchaseAction
         }
 
         offerId = string.IsNullOrWhiteSpace(offerId) && directChest != null ? directChest.GetOfferId() : offerId;
-        ZoneBlueprintStoreChest? chest = directChest ?? ZoneBlueprintStoreChestRegistry.FindPurchaseChest(listingId, buyer, offerId);
-        ZDO? fallbackChestZdo = null;
-        if (chest == null && !ZoneBlueprintStoreChestRegistry.TryFindPurchaseChestZdo(listingId, buyer, offerId, out fallbackChestZdo))
+        ZoneBlueprintStoreChest? chest = directChest;
+        ZDO? chestZdo;
+        if (directChest != null)
+        {
+            if (!directChest.TryGetZdo(out chestZdo) ||
+                !ZoneBlueprintStoreChestRegistry.MatchesPurchaseChest(chestZdo, listingId, buyer, offerId))
+            {
+                return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_store_purchase_chest_missing_nearby"));
+            }
+        }
+        else if (!requestedChestId.HasValue ||
+                 !ZoneBlueprintStoreChestRegistry.TryFindPurchaseChest(
+                     requestedChestId.Value,
+                     listingId,
+                     buyer,
+                     offerId,
+                     out chest,
+                     out chestZdo))
         {
             return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_store_purchase_chest_missing_nearby"));
         }
 
-        if (string.IsNullOrWhiteSpace(offerId) && fallbackChestZdo != null)
+        if (directChest == null &&
+            (!requesterPosition.HasValue ||
+             !ZoneTransformPayload.IsFinite(requesterPosition.Value) ||
+             !IsChestNearby(requesterPosition.Value, chestZdo)))
         {
-            offerId = fallbackChestZdo.GetString(ZoneBlueprintStoreChest.OfferIdKey, "");
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_store_purchase_chest_missing_nearby"));
         }
 
         List<ZoneBlueprintStorePriceItem> priceItems = ZoneBlueprintStorePrices.GetListingPriceItems(listing);
@@ -137,9 +186,14 @@ internal static class ZoneBlueprintStorePurchaseAction
             priceItems = ZoneBlueprintStorePrices.NormalizePriceItems(offer.PriceItems);
         }
 
+        if (!ZoneBlueprintStoreChest.HasExpectedPurchasePrice(chestZdo, priceItems))
+        {
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_store_purchase_price_changed"));
+        }
+
         bool hasPrice = chest != null
             ? chest.CanTakePriceItems(priceItems, out string deposited)
-            : ZoneBlueprintStoreChest.CanTakePurchasePriceItems(fallbackChestZdo, priceItems, out deposited);
+            : ZoneBlueprintStoreChest.CanTakePurchasePriceItems(chestZdo, priceItems, out deposited);
         if (!hasPrice)
         {
             return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_store_deposit_price_first", deposited));
@@ -155,9 +209,34 @@ internal static class ZoneBlueprintStorePurchaseAction
             return HomesteadCommandResult.Fail(payloadReason);
         }
 
+        string purchaseMessage = HomesteadLocalization.Format(
+            "hs_store_purchased",
+            listing.Name,
+            ZoneBlueprintStorePrices.FormatPrice(priceItems));
+        ZoneBlueprintStoreRpcEnvelope preparedPurchaseResponse = ZoneBlueprintStoreRpcTransport.CreateEnvelope(
+            ZoneBlueprintStoreRpcType.PurchaseComplete,
+            new ZoneBlueprintStorePurchaseCompleteResponse
+            {
+                Success = true,
+                Message = purchaseMessage,
+                ListingId = listing.ListingId,
+                OfferId = offerId,
+                Name = listing.Name,
+                BlueprintEncoding = ZoneBlueprintNetworkPayload.GzipEncoding,
+                BlueprintPayload = purchasePayload
+            });
+
+        hasPrice = chest != null
+            ? chest.CanTakePriceItems(priceItems, out deposited)
+            : ZoneBlueprintStoreChest.CanTakePurchasePriceItems(chestZdo, priceItems, out deposited);
+        if (!hasPrice)
+        {
+            return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_store_deposit_price_first", deposited));
+        }
+
         ZoneBlueprintStoreCatalog rollbackCatalog = ZoneBlueprintStoreDraftRepository.CloneCatalog(catalog);
         ZoneBlueprintStoreEconomy.CreditSeller(catalog, listing, priceItems, incrementPurchaseCount: true);
-        ZoneBlueprintStoreNotifications.AddPurchaseNotification(catalog, listing, buyerName, priceItems, offerId);
+        ZoneBlueprintStoreNotification notification = ZoneBlueprintStoreNotifications.AddPurchaseNotification(catalog, listing, buyerName, priceItems, offerId);
         if (offer != null)
         {
             catalog.Offers.Remove(offer);
@@ -165,55 +244,70 @@ internal static class ZoneBlueprintStorePurchaseAction
 
         if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
         {
-            ZoneBlueprintStoreDraftRepository.SaveCatalog(rollbackCatalog);
-            return HomesteadCommandResult.Fail(saveReason);
+            return FailWithCatalogRecovery(saveReason, rollbackCatalog, "purchase catalog save");
         }
 
         bool tookPrice = chest != null
             ? chest.TryTakePriceItems(priceItems, out deposited)
-            : ZoneBlueprintStoreChest.TryTakePurchasePriceItems(fallbackChestZdo, priceItems, out deposited);
+            : ZoneBlueprintStoreChest.TryTakePurchasePriceItems(chestZdo, priceItems, out deposited);
         if (!tookPrice)
         {
-            ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(rollbackCatalog, out _);
-            return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_store_deposit_price_first", deposited));
+            string failure = HomesteadLocalization.Format("hs_store_deposit_price_first", deposited);
+            return FailWithCatalogRecovery(failure, rollbackCatalog, "purchase escrow take");
         }
 
-        ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
-        if (chest != null)
+        purchaseResponse = preparedPurchaseResponse;
+        try
         {
-            chest.MarkConfirmed();
-            chest.DestroyChest();
-        }
-        else
-        {
-            ZoneBlueprintStoreChest.MarkConfirmed(fallbackChestZdo);
-            if (fallbackChestZdo != null)
+            if (chest != null)
             {
-                SavedZdoHelper.Destroy(fallbackChestZdo);
-                SavedZdoHelper.FlushDestroyed();
+                chest.MarkConfirmed();
+                chest.DestroyChest();
+            }
+            else
+            {
+                ZoneBlueprintStoreChest.MarkConfirmed(chestZdo);
+                if (chestZdo != null)
+                {
+                    SavedZdoHelper.Destroy(chestZdo);
+                    SavedZdoHelper.FlushDestroyed();
+                }
             }
         }
-
-        ZoneBlueprintStoreRpcEnvelope purchase = ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.PurchaseComplete, new ZoneBlueprintStorePurchaseCompleteResponse
+        catch (Exception ex)
         {
-            Success = true,
-            Message = HomesteadLocalization.Format("hs_store_purchased", listing.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)),
-            ListingId = listing.ListingId,
-            OfferId = offerId,
-            Name = listing.Name,
-            BlueprintEncoding = ZoneBlueprintNetworkPayload.GzipEncoding,
-            BlueprintPayload = purchasePayload
-        });
-
-        if (targetPeer != 0L && ZRoutedRpc.instance != null)
-        {
-            ZoneBlueprintStoreRpcTransport.SendResponse(targetPeer, purchase);
-        }
-        else
-        {
-            ZoneBlueprintStoreRpcTransport.HandleResponse(purchase);
+            HomesteadPlugin.HomesteadLogger.LogWarning($"Blueprint store purchase completed, but chest cleanup failed: {ex}");
         }
 
-        return HomesteadCommandResult.Ok(ZoneBlueprintStoreRpcTransport.ReadPayload<ZoneBlueprintStorePurchaseCompleteResponse>(purchase).Message);
+        ZoneBlueprintStoreNotifications.PushNotification(notification);
+        return HomesteadCommandResult.Ok(purchaseMessage);
+    }
+
+    private static bool IsChestNearby(Vector3 requesterPosition, ZDO? chestZdo)
+    {
+        if (chestZdo == null)
+        {
+            return false;
+        }
+
+        Vector3 chestPosition = chestZdo.GetPosition();
+        return ZoneTransformPayload.IsFinite(chestPosition) &&
+               (chestPosition - requesterPosition).sqrMagnitude <= ConfirmChestMaxDistance * ConfirmChestMaxDistance;
+    }
+
+    private static HomesteadCommandResult FailWithCatalogRecovery(
+        string failure,
+        ZoneBlueprintStoreCatalog rollbackCatalog,
+        string operation)
+    {
+        ZoneBlueprintStoreDraftRepository.CatalogRecoveryStatus recovery =
+            ZoneBlueprintStoreDraftRepository.RestoreCatalogAfterFailedMutation(rollbackCatalog, operation);
+        string key = recovery switch
+        {
+            ZoneBlueprintStoreDraftRepository.CatalogRecoveryStatus.RestoredDurably => "hs_store_catalog_recovery_saved",
+            ZoneBlueprintStoreDraftRepository.CatalogRecoveryStatus.QueuedForRetry => "hs_store_catalog_recovery_queued",
+            _ => "hs_store_catalog_recovery_failed"
+        };
+        return HomesteadCommandResult.Fail(HomesteadLocalization.Format(key, failure));
     }
 }

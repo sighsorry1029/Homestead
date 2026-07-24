@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using BepInEx.Logging;
+using UnityEngine;
 
 namespace Homestead;
 
@@ -7,8 +9,12 @@ internal static class ZoneBlueprintStoreRpcTransport
 {
     private const string RequestRpcName = HomesteadPlugin.ModGUID + "_BlueprintStoreRequest";
     private const string ResponseRpcName = HomesteadPlugin.ModGUID + "_BlueprintStoreResponse";
+    private const int PendingPurchaseSaveLimit = 8;
+    private const float PurchaseSaveRetryIntervalSeconds = 5f;
     private static readonly ZoneRpcRegistrar RpcRegistrar = new();
+    private static readonly Queue<PendingPurchaseSave> PendingPurchaseSaves = new();
     private static ManualLogSource _logger = null!;
+    private static float _nextPurchaseSaveRetryAt;
 
     public static void Initialize(ManualLogSource logger)
     {
@@ -38,7 +44,7 @@ internal static class ZoneBlueprintStoreRpcTransport
             ZoneBlueprintStoreRpcEnvelope response;
             try
             {
-                response = ZoneBlueprintStoreRequestDispatcher.Execute(envelope, player, sender: 0L);
+                response = ExecuteRequest(envelope, player, sender: 0L);
             }
             catch (Exception ex)
             {
@@ -62,13 +68,54 @@ internal static class ZoneBlueprintStoreRpcTransport
             _logger,
             "Blueprint store RPC",
             CreateError,
-            (request, peer) => ZoneBlueprintStoreRequestDispatcher.Execute(request, player: null, sender: peer),
+            (request, peer) => ExecuteRequest(request, player: null, sender: peer),
             SendResponse);
     }
 
     private static void RPC_HandleResponse(long sender, ZPackage package)
     {
-        ZoneBlueprintRpcTransport.HandleClientResponse<ZoneBlueprintStoreRpcEnvelope>(package, _logger, "blueprint store", HandleResponse);
+        ZoneBlueprintRpcTransport.HandleClientResponse<ZoneBlueprintStoreRpcEnvelope>(sender, package, _logger, "blueprint store", HandleResponse);
+    }
+
+    internal static void Update()
+    {
+        if (PendingPurchaseSaves.Count == 0 || Time.unscaledTime < _nextPurchaseSaveRetryAt)
+        {
+            return;
+        }
+
+        _nextPurchaseSaveRetryAt = Time.unscaledTime + PurchaseSaveRetryIntervalSeconds;
+        int pendingCount = PendingPurchaseSaves.Count;
+        for (int i = 0; i < pendingCount; i++)
+        {
+            PendingPurchaseSave pending = PendingPurchaseSaves.Dequeue();
+            if (TrySavePurchasedBlueprint(pending.Payload, pending.Blueprint, out Exception? error))
+            {
+                continue;
+            }
+
+            pending.Attempts++;
+            PendingPurchaseSaves.Enqueue(pending);
+            if (pending.Attempts == 2 || pending.Attempts % 6 == 0)
+            {
+                _logger.LogWarning(
+                    $"Retry {pending.Attempts} failed while saving purchased blueprint " +
+                    $"'{pending.Payload.Name}': {error}");
+            }
+        }
+    }
+
+    internal static void ResetForWorldSession()
+    {
+        if (PendingPurchaseSaves.Count > 0)
+        {
+            _logger.LogError(
+                $"Discarding {PendingPurchaseSaves.Count} unsaved purchased blueprint payload(s) " +
+                "because the world session ended.");
+        }
+
+        PendingPurchaseSaves.Clear();
+        _nextPurchaseSaveRetryAt = 0f;
     }
 
     internal static void SendResponse(long target, ZoneBlueprintStoreRpcEnvelope response)
@@ -146,7 +193,11 @@ internal static class ZoneBlueprintStoreRpcTransport
             return;
         }
 
-        ZoneBlueprintStoreUi.SetListings(payload);
+        if (!ZoneBlueprintStoreUi.SetListings(payload))
+        {
+            return;
+        }
+
         if (payload.Notifications.Count > 0)
         {
             ZoneBlueprintStoreNotificationsUi.SetNotifications(payload.Notifications);
@@ -156,6 +207,11 @@ internal static class ZoneBlueprintStoreRpcTransport
     private static void HandlePreviewResponse(ZoneBlueprintStoreRpcEnvelope response)
     {
         ZoneBlueprintStorePreviewResponse payload = ReadPayload<ZoneBlueprintStorePreviewResponse>(response);
+        if (!ZoneBlueprintStore.TryAcceptPreviewResponse(payload.RequestId, payload.ListingId, payload.OfferId))
+        {
+            return;
+        }
+
         if (payload.Success)
         {
             if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(payload.BlueprintPayload, payload.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
@@ -180,11 +236,10 @@ internal static class ZoneBlueprintStoreRpcTransport
         {
             if (ZoneBlueprintNetworkPayload.TryDeserializeBlueprintPayload(payload.BlueprintPayload, payload.BlueprintEncoding, out ZoneBlueprintFile blueprint, out string reason))
             {
-                string path = ZoneBlueprintCommands.SaveBlueprintFromStore(payload.Name, blueprint);
-                ZoneBlueprintSaveTool.QueueMenuRefresh(blueprint.Name);
-                ZoneBlueprintStorePreviewTool.RemovePurchasePreview(payload.ListingId, payload.OfferId);
-                ZoneBlueprintStoreVisuals.PlayCompletionVfxAtPlayer();
-                ZoneBlueprintStoreVisuals.Message($"{payload.Message} Saved to {path}", MessageHud.MessageType.TopLeft);
+                if (!TrySavePurchasedBlueprint(payload, blueprint, out Exception? error))
+                {
+                    QueuePurchaseSaveRetry(payload, blueprint, error);
+                }
             }
             else
             {
@@ -195,6 +250,64 @@ internal static class ZoneBlueprintStoreRpcTransport
         }
 
         ShowStatusMessage(payload.Message, success: false);
+    }
+
+    private static bool TrySavePurchasedBlueprint(
+        ZoneBlueprintStorePurchaseCompleteResponse payload,
+        ZoneBlueprintFile blueprint,
+        out Exception? error)
+    {
+        string path;
+        try
+        {
+            path = ZoneBlueprintCommands.SaveBlueprintFromStore(payload.Name, blueprint);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+            return false;
+        }
+
+        error = null;
+        try
+        {
+            ZoneBlueprintSaveTool.QueueMenuRefresh(blueprint.Name);
+            ZoneBlueprintStorePreviewTool.RemovePurchasePreview(payload.ListingId, payload.OfferId);
+            ZoneBlueprintStoreVisuals.PlayCompletionVfxAtPlayer();
+            ZoneBlueprintStoreVisuals.Message(
+                HomesteadLocalization.Format("hs_store_purchase_saved_to_path", payload.Message, path),
+                MessageHud.MessageType.TopLeft);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning($"Purchased blueprint was saved to '{path}', but completion UI failed: {ex}");
+        }
+
+        return true;
+    }
+
+    private static void QueuePurchaseSaveRetry(
+        ZoneBlueprintStorePurchaseCompleteResponse payload,
+        ZoneBlueprintFile blueprint,
+        Exception? error)
+    {
+        _logger.LogWarning($"Failed to save purchased blueprint '{payload.Name}'; queued for retry: {error}");
+        if (PendingPurchaseSaves.Count >= PendingPurchaseSaveLimit)
+        {
+            _logger.LogError(
+                $"Purchased blueprint '{payload.Name}' could not be queued because the " +
+                $"{PendingPurchaseSaveLimit}-entry retry queue is full.");
+            ZoneBlueprintStoreVisuals.Message(
+                HomesteadLocalization.Text("hs_store_purchase_save_queue_full"),
+                MessageHud.MessageType.Center);
+            return;
+        }
+
+        PendingPurchaseSaves.Enqueue(new PendingPurchaseSave(payload, blueprint));
+        _nextPurchaseSaveRetryAt = Time.unscaledTime + PurchaseSaveRetryIntervalSeconds;
+        ZoneBlueprintStoreVisuals.Message(
+            HomesteadLocalization.Text("hs_store_purchase_save_retrying"),
+            MessageHud.MessageType.Center);
     }
 
     private static void HandleConfirmListingResponse(ZoneBlueprintStoreRpcEnvelope response)
@@ -298,6 +411,36 @@ internal static class ZoneBlueprintStoreRpcTransport
         return ZoneBlueprintRpcTransport.ReadPayload<TPayload, ZoneBlueprintStoreRpcEnvelope>(envelope);
     }
 
+    private static ZoneBlueprintStoreRpcEnvelope ExecuteRequest(
+        ZoneBlueprintStoreRpcEnvelope envelope,
+        Player? player,
+        long sender)
+    {
+        return envelope.Type switch
+        {
+            ZoneBlueprintStoreRpcType.List => ZoneBlueprintStoreListAction.Execute(ReadPayload<ZoneBlueprintStoreListRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.PriceChest => ZoneBlueprintStoreListingAction.ExecutePriceChest(ReadPayload<ZoneBlueprintStorePriceChestRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.Publish => ZoneBlueprintStoreListingAction.ExecutePublish(ReadPayload<ZoneBlueprintStorePublishRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.Preview => ZoneBlueprintStorePreviewAction.ExecutePreview(ReadPayload<ZoneBlueprintStorePreviewRequest>(envelope)),
+            ZoneBlueprintStoreRpcType.PreviewRestore => ZoneBlueprintStorePreviewAction.ExecutePreviewRestore(ReadPayload<ZoneBlueprintStorePreviewRestoreRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.Buy => ZoneBlueprintStorePurchaseAction.ExecuteBuy(ReadPayload<ZoneBlueprintStoreBuyRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.ConfirmPurchase => ZoneBlueprintStorePurchaseAction.ExecuteConfirmResponse(ReadPayload<ZoneBlueprintStoreConfirmPurchaseRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.ConfirmListing => ZoneBlueprintStoreListingAction.ExecuteConfirmListingResponse(ReadPayload<ZoneBlueprintStoreConfirmListingRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.Delist => ZoneBlueprintStoreListingAction.ExecuteDelist(ReadPayload<ZoneBlueprintStoreDelistRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.EditPrice => ZoneBlueprintStoreListingAction.ExecuteEditPrice(ReadPayload<ZoneBlueprintStoreEditPriceRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.CreateOffer => ZoneBlueprintStoreOfferAction.ExecuteCreate(ReadPayload<ZoneBlueprintStoreCreateOfferRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.ListOffers => ZoneBlueprintStoreOfferAction.ExecuteList(ReadPayload<ZoneBlueprintStoreListOffersRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.DecideOffer => ZoneBlueprintStoreOfferAction.ExecuteDecision(ReadPayload<ZoneBlueprintStoreDecideOfferRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.DeleteOffer => ZoneBlueprintStoreOfferAction.ExecuteDelete(ReadPayload<ZoneBlueprintStoreDeleteOfferRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.GetNotifications => ZoneBlueprintStoreNotificationAction.ExecuteGet(player, sender),
+            ZoneBlueprintStoreRpcType.RecentNotifications => ZoneBlueprintStoreNotificationAction.ExecuteRecent(ReadPayload<ZoneBlueprintStoreRecentNotificationsRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.ReadNotifications => ZoneBlueprintStoreNotificationAction.ExecuteRead(ReadPayload<ZoneBlueprintStoreReadNotificationsRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.SyncHidden => ZoneBlueprintStoreListAction.ExecuteHiddenState(ReadPayload<ZoneBlueprintStoreSyncHiddenRequest>(envelope), player, sender),
+            ZoneBlueprintStoreRpcType.Withdraw => ZoneBlueprintStoreWithdrawAction.Execute(ReadPayload<ZoneBlueprintStoreWithdrawRequest>(envelope), player, sender),
+            _ => ZoneBlueprintStoreDtos.Fail(envelope.Type, $"Unknown blueprint store action '{envelope.Type}'.")
+        };
+    }
+
     private static ZoneBlueprintStoreRpcEnvelope CreateError(string message)
     {
         return CreateEnvelope(ZoneBlueprintStoreRpcType.Error, new ZoneBlueprintStoreStatusResponse
@@ -305,5 +448,20 @@ internal static class ZoneBlueprintStoreRpcTransport
             Success = false,
             Message = message
         });
+    }
+
+    private sealed class PendingPurchaseSave
+    {
+        public PendingPurchaseSave(
+            ZoneBlueprintStorePurchaseCompleteResponse payload,
+            ZoneBlueprintFile blueprint)
+        {
+            Payload = payload;
+            Blueprint = blueprint;
+        }
+
+        public ZoneBlueprintStorePurchaseCompleteResponse Payload { get; }
+        public ZoneBlueprintFile Blueprint { get; }
+        public int Attempts { get; set; } = 1;
     }
 }

@@ -27,22 +27,24 @@ internal static class ZoneBlueprintStoreWithdrawAction
         }
 
         List<ZoneBlueprintStorePriceItem> payoutItems = ZoneBlueprintStorePrices.CreatePayoutItems(coins, materials);
-        List<ZoneBlueprintStoreBalance> balanceSnapshots = CloneBalances(balances);
-        ClearBalances(balances, playerName, seller.PlatformId);
-        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
-        {
-            RestoreBalances(balances, balanceSnapshots);
-            ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
-            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Withdraw, saveReason);
-        }
-
         Vector3 payoutPosition = position;
         Quaternion payoutRotation = rotation;
         if (!ZoneBlueprintStorePlacement.TryReadOptionalStoreChestTarget(request.Target, position, rotation, out bool useTarget, out payoutPosition, out payoutRotation, out reason))
         {
-            RestoreBalances(balances, balanceSnapshots);
-            ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out _);
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Withdraw, reason);
+        }
+
+        HomesteadCommandResult preflight = ZoneBlueprintStoreChestPrefab.PreflightPayoutChests(payoutItems, seller.PlatformId);
+        if (!preflight.Success)
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Withdraw, preflight.Message);
+        }
+
+        ZoneBlueprintStoreCatalog rollbackCatalog = ZoneBlueprintStoreDraftRepository.CloneCatalog(catalog);
+        ClearBalances(balances, playerName, seller.PlatformId);
+        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
+        {
+            return FailWithCatalogRecovery(saveReason, rollbackCatalog, "withdraw debit save");
         }
 
         HomesteadCommandResult payoutResult = ZoneBlueprintStoreChestPrefab.PlacePayoutChests(
@@ -57,9 +59,7 @@ internal static class ZoneBlueprintStoreWithdrawAction
             vfxExcludePeer: sender);
         if (!payoutResult.Success)
         {
-            RestoreBalances(balances, balanceSnapshots);
-            ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out _);
-            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Withdraw, payoutResult.Message);
+            return FailWithCatalogRecovery(payoutResult.Message, rollbackCatalog, "withdraw payout placement");
         }
 
         return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.WithdrawComplete, new ZoneBlueprintStoreWithdrawResponse
@@ -70,26 +70,22 @@ internal static class ZoneBlueprintStoreWithdrawAction
         });
     }
 
-    private static List<ZoneBlueprintStoreBalance> CloneBalances(IEnumerable<ZoneBlueprintStoreBalance> balances)
+    private static ZoneBlueprintStoreRpcEnvelope FailWithCatalogRecovery(
+        string failure,
+        ZoneBlueprintStoreCatalog rollbackCatalog,
+        string operation)
     {
-        return balances
-            .Select(balance => new ZoneBlueprintStoreBalance
-            {
-                SellerPlayerId = balance.SellerPlayerId,
-                SellerPlatformId = balance.SellerPlatformId,
-                SellerName = balance.SellerName,
-                Coins = balance.Coins,
-                Materials = balance.Materials?
-                    .Select(item => new ZoneBlueprintStorePriceItem
-                    {
-                        ItemName = item.ItemName,
-                        PrefabName = item.PrefabName,
-                        DisplayName = item.DisplayName,
-                        Amount = item.Amount
-                    })
-                    .ToList() ?? []
-            })
-            .ToList();
+        ZoneBlueprintStoreDraftRepository.CatalogRecoveryStatus recovery =
+            ZoneBlueprintStoreDraftRepository.RestoreCatalogAfterFailedMutation(rollbackCatalog, operation);
+        string key = recovery switch
+        {
+            ZoneBlueprintStoreDraftRepository.CatalogRecoveryStatus.RestoredDurably => "hs_store_catalog_recovery_saved",
+            ZoneBlueprintStoreDraftRepository.CatalogRecoveryStatus.QueuedForRetry => "hs_store_catalog_recovery_queued",
+            _ => "hs_store_catalog_recovery_failed"
+        };
+        return ZoneBlueprintStoreDtos.Fail(
+            ZoneBlueprintStoreRpcType.Withdraw,
+            HomesteadLocalization.Format(key, failure));
     }
 
     private static void ClearBalances(IEnumerable<ZoneBlueprintStoreBalance> balances, string sellerName, string sellerPlatformId)
@@ -103,17 +99,4 @@ internal static class ZoneBlueprintStoreWithdrawAction
         }
     }
 
-    private static void RestoreBalances(IReadOnlyList<ZoneBlueprintStoreBalance> balances, IReadOnlyList<ZoneBlueprintStoreBalance> snapshots)
-    {
-        for (int i = 0; i < balances.Count && i < snapshots.Count; i++)
-        {
-            ZoneBlueprintStoreBalance balance = balances[i];
-            ZoneBlueprintStoreBalance snapshot = snapshots[i];
-            balance.SellerPlayerId = snapshot.SellerPlayerId;
-            balance.SellerPlatformId = snapshot.SellerPlatformId;
-            balance.SellerName = snapshot.SellerName;
-            balance.Coins = snapshot.Coins;
-            balance.Materials = snapshot.Materials;
-        }
-    }
 }

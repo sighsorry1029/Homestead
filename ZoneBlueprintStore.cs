@@ -18,9 +18,12 @@ internal static class ZoneBlueprintStore
     internal const int StoreListingIconPageSize = 6;
     internal const int StoreListingMaxPageSize = 50;
 
-    private static ManualLogSource _logger = null!;
     private static bool _initialized;
     private static float _pendingListingRefreshAt = -1f;
+    private static int _nextPreviewRequestId;
+    private static int _pendingPreviewRequestId;
+    private static string _pendingPreviewListingId = "";
+    private static string _pendingPreviewOfferId = "";
 
     public static void Initialize(ManualLogSource logger)
     {
@@ -30,7 +33,6 @@ internal static class ZoneBlueprintStore
         }
 
         _initialized = true;
-        _logger = logger;
         ZoneBlueprintStoreDraftRepository.Initialize(logger);
         ZoneBlueprintStoreVisuals.Initialize(logger);
         ZoneBlueprintStoreChestPrefab.Initialize(logger);
@@ -41,6 +43,7 @@ internal static class ZoneBlueprintStore
     public static void Update()
     {
         ZoneBlueprintStoreRpcTransport.RegisterRpcs();
+        ZoneBlueprintStoreRpcTransport.Update();
         ZoneBlueprintStoreDraftRepository.Update();
         ZoneBlueprintStoreUi.Update();
         ZoneBlueprintStorePriceEditorUi.Update();
@@ -55,10 +58,13 @@ internal static class ZoneBlueprintStore
 
     public static void ResetForWorldSession()
     {
+        ZoneBlueprintStorePanelLayout.FlushPending();
+        ZoneBlueprintStoreRpcTransport.ResetForWorldSession();
         ZoneBlueprintStoreNotifications.ResetNotificationSession();
         ZoneBlueprintStoreListAction.ResetForWorldSession();
         ZoneBlueprintStoreMaintenance.ResetForWorldSession();
         _pendingListingRefreshAt = -1f;
+        CancelPendingPreview();
         ZoneBlueprintStoreUi.ResetForWorldSession();
         ZoneBlueprintStoreOffersUi.ResetForWorldSession();
         ZoneBlueprintStorePriceEditorUi.ResetForWorldSession();
@@ -71,7 +77,7 @@ internal static class ZoneBlueprintStore
         ZoneBlueprintStorePanelRuntime.ResetInputBlocks();
     }
 
-    public static void Open(Player player)
+    public static void Open()
     {
         ZoneBlueprintStorePreviewTool.DeactivateActive();
         if (ZoneBlueprintStoreUi.Open())
@@ -83,11 +89,7 @@ internal static class ZoneBlueprintStore
 
     public static void OpenSellDialog(string blueprintName)
     {
-        OpenPriceChestPreview(blueprintName, Player.m_localPlayer);
-    }
-
-    public static void OpenPriceChestPreview(string blueprintName, Player? player)
-    {
+        Player? player = Player.m_localPlayer;
         if (player == null)
         {
             return;
@@ -156,11 +158,6 @@ internal static class ZoneBlueprintStore
         }, player);
     }
 
-    public static void RequestListings()
-    {
-        ZoneBlueprintStoreUi.RequestCurrentPage();
-    }
-
     internal static void ScheduleListingRefresh()
     {
         _pendingListingRefreshAt = Time.time + ListingRefreshCoalesceDelay;
@@ -174,12 +171,7 @@ internal static class ZoneBlueprintStore
         }
 
         _pendingListingRefreshAt = -1f;
-        RequestListings();
-    }
-
-    public static void RequestListings(IReadOnlyList<string>? iconListingIds)
-    {
-        ZoneBlueprintStoreUi.RequestCurrentPage(iconListingIds);
+        ZoneBlueprintStoreUi.RequestCurrentPage();
     }
 
     internal static void RequestListingIcons(IReadOnlyList<string> iconListingIds, int requestId)
@@ -234,27 +226,53 @@ internal static class ZoneBlueprintStore
 
     public static void RequestPreview(string listingId)
     {
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewRequest { ListingId = listingId }, Player.m_localPlayer);
+        int requestId = TrackPendingPreview(listingId, "");
+        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewRequest
+        {
+            RequestId = requestId,
+            ListingId = listingId
+        }, Player.m_localPlayer);
     }
 
     public static void RequestPreviewOffer(string listingId, string offerId)
     {
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewRequest { ListingId = listingId, OfferId = offerId }, Player.m_localPlayer);
+        int requestId = TrackPendingPreview(listingId, offerId);
+        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewRequest
+        {
+            RequestId = requestId,
+            ListingId = listingId,
+            OfferId = offerId
+        }, Player.m_localPlayer);
     }
 
-    public static void RequestBuyAt(
-        string listingId,
-        Vector3 chestPosition,
-        Quaternion chestRotation,
-        Vector3 previewAnchor,
-        Quaternion previewRotation)
+    internal static bool TryAcceptPreviewResponse(int requestId, string listingId, string offerId)
     {
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.Buy, new ZoneBlueprintStoreBuyRequest
+        if (requestId <= 0 ||
+            requestId != _pendingPreviewRequestId ||
+            !string.Equals(listingId, _pendingPreviewListingId, StringComparison.Ordinal) ||
+            !string.Equals(offerId ?? "", _pendingPreviewOfferId, StringComparison.Ordinal))
         {
-            ListingId = listingId,
-            Target = ZoneTransformPayload.From(chestPosition, chestRotation),
-            PreviewAnchor = ZoneTransformPayload.From(previewAnchor, previewRotation)
-        }, Player.m_localPlayer);
+            return false;
+        }
+
+        CancelPendingPreview();
+        return true;
+    }
+
+    internal static void CancelPendingPreview()
+    {
+        _pendingPreviewRequestId = 0;
+        _pendingPreviewListingId = "";
+        _pendingPreviewOfferId = "";
+    }
+
+    private static int TrackPendingPreview(string listingId, string offerId)
+    {
+        _nextPreviewRequestId = _nextPreviewRequestId == int.MaxValue ? 1 : _nextPreviewRequestId + 1;
+        _pendingPreviewRequestId = _nextPreviewRequestId;
+        _pendingPreviewListingId = listingId ?? "";
+        _pendingPreviewOfferId = offerId ?? "";
+        return _pendingPreviewRequestId;
     }
 
     public static void RequestBuyAt(
@@ -291,11 +309,6 @@ internal static class ZoneBlueprintStore
         }, player);
     }
 
-    public static void RequestBuy(string listingId)
-    {
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.Buy, new ZoneBlueprintStoreBuyRequest { ListingId = listingId }, Player.m_localPlayer);
-    }
-
     public static void RequestWithdraw()
     {
         Player? player = Player.m_localPlayer;
@@ -308,19 +321,15 @@ internal static class ZoneBlueprintStore
         ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.Withdraw, request, player);
     }
 
-    public static void RequestConfirmPurchase(string listingId)
+    public static void RequestConfirmPurchase(string listingId, string offerId, ZDOID chestId)
     {
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.ConfirmPurchase, new ZoneBlueprintStoreConfirmPurchaseRequest { ListingId = listingId }, Player.m_localPlayer);
-    }
-
-    public static void RequestConfirmPurchase(string listingId, string offerId)
-    {
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.ConfirmPurchase, new ZoneBlueprintStoreConfirmPurchaseRequest { ListingId = listingId, OfferId = offerId }, Player.m_localPlayer);
-    }
-
-    public static void RequestConfirmListing(string listingId)
-    {
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.ConfirmListing, new ZoneBlueprintStoreConfirmListingRequest { ListingId = listingId }, Player.m_localPlayer);
+        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.ConfirmPurchase, new ZoneBlueprintStoreConfirmPurchaseRequest
+        {
+            ListingId = listingId,
+            OfferId = offerId,
+            ChestUserId = chestId.UserID,
+            ChestObjectId = chestId.ID
+        }, Player.m_localPlayer);
     }
 
     public static void RequestConfirmListing(string listingId, IReadOnlyList<ZoneBlueprintStorePriceItem> priceItems)
@@ -355,9 +364,13 @@ internal static class ZoneBlueprintStore
         }, Player.m_localPlayer);
     }
 
-    public static void RequestOfferList(string listingId)
+    public static void RequestOfferList(string listingId, int requestId)
     {
-        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.ListOffers, new ZoneBlueprintStoreListOffersRequest { ListingId = listingId }, Player.m_localPlayer);
+        ZoneBlueprintStoreRpcTransport.DispatchRequest(ZoneBlueprintStoreRpcType.ListOffers, new ZoneBlueprintStoreListOffersRequest
+        {
+            ListingId = listingId,
+            RequestId = requestId
+        }, Player.m_localPlayer);
     }
 
     public static void RequestOfferDecision(string listingId, string offerId, string decision)
@@ -381,7 +394,19 @@ internal static class ZoneBlueprintStore
 
     internal static HomesteadCommandResult ConfirmPurchaseLocal(string listingId, long buyerPlayerId, string buyerName, ZoneBlueprintStoreChest chest)
     {
-        return ZoneBlueprintStorePurchaseAction.ExecuteConfirm(listingId, buyerPlayerId, buyerName, targetPeer: 0L, directChest: chest);
+        HomesteadCommandResult result = ZoneBlueprintStorePurchaseAction.ExecuteConfirm(
+            listingId,
+            buyerPlayerId,
+            buyerName,
+            requesterPeer: 0L,
+            directChest: chest,
+            out ZoneBlueprintStoreRpcEnvelope? purchase);
+        if (purchase != null)
+        {
+            ZoneBlueprintStoreRpcTransport.HandleResponse(purchase);
+        }
+
+        return result;
     }
 
     internal static HomesteadCommandResult ConfirmListingLocal(

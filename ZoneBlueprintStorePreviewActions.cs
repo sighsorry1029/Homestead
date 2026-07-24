@@ -20,16 +20,17 @@ internal static class ZoneBlueprintStorePreviewAction
     {
         if (!ZoneBlueprintStoreBlueprints.TryLoadListingBlueprint(request.ListingId, out ZoneBlueprintStoreListing listing, out ZoneBlueprintFile blueprint, out string reason))
         {
-            return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewResponse { Success = false, Message = reason, ListingId = request.ListingId });
+            return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewResponse { RequestId = request.RequestId, Success = false, Message = reason, ListingId = request.ListingId, OfferId = request.OfferId });
         }
 
         if (!ZoneBlueprintNetworkPayload.TryCreatePreviewPayload(blueprint, out byte[] previewPayload, out reason))
         {
-            return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewResponse { Success = false, Message = reason, ListingId = request.ListingId });
+            return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewResponse { RequestId = request.RequestId, Success = false, Message = reason, ListingId = request.ListingId, OfferId = request.OfferId });
         }
 
         return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.Preview, new ZoneBlueprintStorePreviewResponse
         {
+            RequestId = request.RequestId,
             Success = true,
             ListingId = listing.ListingId,
             OfferId = request.OfferId,

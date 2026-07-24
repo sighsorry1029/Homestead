@@ -41,7 +41,6 @@ internal static class ZoneBlueprintStoreDtos
                 listing,
                 playerId,
                 platformId,
-                catalog,
                 offerCounts.TryGetValue(listing.ListingId, out int offerCount) ? offerCount : 0);
         }
 
@@ -151,7 +150,6 @@ internal static class ZoneBlueprintStoreDtos
         ZoneBlueprintStoreListing listing,
         long playerId,
         string platformId,
-        ZoneBlueprintStoreCatalog catalog,
         int offerCount)
     {
         List<ZoneBlueprintStorePriceItem> priceItems = ZoneBlueprintStorePrices.GetListingPriceItems(listing);

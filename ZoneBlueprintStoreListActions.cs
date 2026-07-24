@@ -71,7 +71,6 @@ internal static class ZoneBlueprintStoreListAction
                     listing,
                     playerId,
                     platformId,
-                    catalog,
                     offerCounts.TryGetValue(listing.ListingId, out int offerCount) ? offerCount : 0))
                 .ToList(),
             Icons = BuildListingIconDtos(responseListings, iconListingIds),

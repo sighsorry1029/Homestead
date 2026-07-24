@@ -26,6 +26,13 @@ internal readonly struct ZoneBlueprintStoreDraftLease
 
 internal static class ZoneBlueprintStoreDraftRepository
 {
+    internal enum CatalogRecoveryStatus
+    {
+        RestoredDurably,
+        QueuedForRetry,
+        QueueFailed
+    }
+
     private const int CurrentCatalogVersion = 1;
     private const string CatalogFileName = "catalog.yml";
     private const string CatalogBackupSuffix = ".bak";
@@ -38,6 +45,7 @@ internal static class ZoneBlueprintStoreDraftRepository
     private static DateTime _nextCatalogFlushUtc;
     private static bool _catalogCacheLoaded;
     private static bool _catalogDirty;
+    private static bool _flushCatalogOnNextUpdate;
 
     public static string StoreDirectory => HomesteadPlugin.BlueprintStoreStorageFullPath;
     public static string CatalogPath => Path.Combine(StoreDirectory, CatalogFileName);
@@ -53,6 +61,12 @@ internal static class ZoneBlueprintStoreDraftRepository
 
     public static void Update()
     {
+        if (_flushCatalogOnNextUpdate)
+        {
+            _flushCatalogOnNextUpdate = false;
+            _nextCatalogFlushUtc = DateTime.MinValue;
+        }
+
         Flush(force: false);
     }
 
@@ -169,6 +183,7 @@ internal static class ZoneBlueprintStoreDraftRepository
             _cachedCatalogWriteUtc = File.GetLastWriteTimeUtc(CatalogPath);
             _catalogCacheLoaded = true;
             _catalogDirty = false;
+            _flushCatalogOnNextUpdate = false;
             reason = "";
             return true;
         }
@@ -177,6 +192,30 @@ internal static class ZoneBlueprintStoreDraftRepository
             _logger?.LogWarning($"Failed to save blueprint store catalog immediately: {ex.Message}");
             reason = "Blueprint store catalog could not be saved. Try again shortly.";
             return false;
+        }
+    }
+
+    public static CatalogRecoveryStatus RestoreCatalogAfterFailedMutation(
+        ZoneBlueprintStoreCatalog catalog,
+        string operation)
+    {
+        if (TrySaveCatalogImmediate(catalog, out string immediateReason))
+        {
+            _logger?.LogInfo($"Blueprint store catalog rollback for {operation} was saved durably.");
+            return CatalogRecoveryStatus.RestoredDurably;
+        }
+
+        try
+        {
+            SaveCatalog(catalog);
+            _flushCatalogOnNextUpdate = true;
+            _logger?.LogWarning($"Blueprint store catalog rollback for {operation} could not be saved immediately; restored state is queued for retry. {immediateReason}");
+            return CatalogRecoveryStatus.QueuedForRetry;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError($"Blueprint store catalog rollback for {operation} could not be saved or queued. {immediateReason} {ex}");
+            return CatalogRecoveryStatus.QueueFailed;
         }
     }
 
@@ -198,6 +237,7 @@ internal static class ZoneBlueprintStoreDraftRepository
             WriteCatalogAtomic(_cachedCatalog);
             _cachedCatalogWriteUtc = File.GetLastWriteTimeUtc(CatalogPath);
             _catalogDirty = false;
+            _flushCatalogOnNextUpdate = false;
         }
         catch (Exception ex)
         {
@@ -227,15 +267,7 @@ internal static class ZoneBlueprintStoreDraftRepository
                     currentCatalogError);
             }
 
-            try
-            {
-                File.Replace(tempPath, CatalogPath, CatalogBackupPath);
-            }
-            catch
-            {
-                File.Copy(CatalogPath, CatalogBackupPath, overwrite: true);
-                File.Copy(tempPath, CatalogPath, overwrite: true);
-            }
+            File.Replace(tempPath, CatalogPath, CatalogBackupPath);
 
             EnsureCatalogBackup();
         }
@@ -324,14 +356,7 @@ internal static class ZoneBlueprintStoreDraftRepository
             ReadCatalogFile(recoveryPath);
             if (File.Exists(CatalogPath))
             {
-                try
-                {
-                    File.Replace(recoveryPath, CatalogPath, null);
-                }
-                catch
-                {
-                    File.Copy(recoveryPath, CatalogPath, overwrite: true);
-                }
+                File.Replace(recoveryPath, CatalogPath, null);
             }
             else
             {

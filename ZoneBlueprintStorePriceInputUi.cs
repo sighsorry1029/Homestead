@@ -171,7 +171,7 @@ internal static class ZoneBlueprintStorePriceInputUi
     private static void BackToStore()
     {
         Close();
-        ZoneBlueprintStore.Open(Player.m_localPlayer);
+        ZoneBlueprintStore.Open();
     }
 
     private static void UpdateBackButtonLabel()
@@ -222,6 +222,7 @@ internal static class ZoneBlueprintStorePriceInputUi
 
     private static void Close()
     {
+        ZoneBlueprintStorePanelLayout.CaptureAndFlush(_panel, ZoneBlueprintStorePanelKind.Form);
         if (_panel != null && _panel)
         {
             _panel.SetActive(false);

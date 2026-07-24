@@ -42,7 +42,6 @@ internal static class ZoneBlueprintStoreNotificationsUi
     private static bool _panelDragMoved;
     private static Vector2 _panelDragStartMouse;
     private static Vector2 _panelDragStartOffset;
-    private static bool _inputBlocked;
 
     public static void ResetForWorldSession()
     {
@@ -83,10 +82,6 @@ internal static class ZoneBlueprintStoreNotificationsUi
             }
 
             ResetButtonPointerState();
-            if (_inputBlocked && !IsPanelVisible())
-            {
-                SetInputBlocked(false);
-            }
         }
         else
         {
@@ -95,11 +90,6 @@ internal static class ZoneBlueprintStoreNotificationsUi
             HandleButtonPointer();
             HandlePanelPointer();
             RefreshButtonVisibility();
-        }
-
-        if (_inputBlocked && !IsPanelVisible())
-        {
-            SetInputBlocked(false);
         }
 
         if (IsPanelVisible() && Input.GetKeyDown(KeyCode.Escape))
@@ -134,10 +124,6 @@ internal static class ZoneBlueprintStoreNotificationsUi
 
         ResetButtonPointerState();
         ResetPanelPointerState();
-        if (_inputBlocked)
-        {
-            SetInputBlocked(false);
-        }
     }
 
     private static bool Merge(IEnumerable<ZoneBlueprintStoreNotificationDto>? notifications)
@@ -163,6 +149,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
             int index = Notifications.FindIndex(item => string.Equals(item.NotificationId, notification.NotificationId, StringComparison.Ordinal));
             if (index >= 0)
             {
+                notification.Read |= Notifications[index].Read;
                 Notifications[index] = notification;
             }
             else
@@ -694,11 +681,6 @@ internal static class ZoneBlueprintStoreNotificationsUi
     private static bool IsPanelVisible()
     {
         return _panel != null && _panel && _panel.activeInHierarchy;
-    }
-
-    private static void SetInputBlocked(bool blocked)
-    {
-        ZoneBlueprintStorePanelRuntime.SetInputBlocked(ref _inputBlocked, blocked);
     }
 
     private static void PruneHiddenNotifications()

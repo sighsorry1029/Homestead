@@ -45,9 +45,13 @@ internal static class ZoneBlueprintStoreOfferAction
             pending.BuyerPlayerId = buyerPlayerId;
             pending.BuyerPlatformId = buyerPlatformId;
             pending.UpdatedAt = HomesteadTimestamp.Format(utcNow);
-            ZoneBlueprintStoreNotifications.AddOfferReceivedNotification(catalog, listing, pending, buyerName, priceItems, updated: true);
-            ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
-            ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
+            ZoneBlueprintStoreNotification updatedNotification = ZoneBlueprintStoreNotifications.AddOfferReceivedNotification(catalog, listing, pending, buyerName, priceItems, updated: true);
+            if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string updateSaveReason))
+            {
+                return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.CreateOffer, updateSaveReason);
+            }
+
+            ZoneBlueprintStoreNotifications.PushNotification(updatedNotification);
             return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.CreateOffer, true, HomesteadLocalization.Format("hs_store_offer_updated_status", listing.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)), catalog, listing, buyerPlayerId, buyerPlatformId);
         }
 
@@ -64,9 +68,13 @@ internal static class ZoneBlueprintStoreOfferAction
             PriceItems = priceItems
         };
         catalog.Offers.Add(offer);
-        ZoneBlueprintStoreNotifications.AddOfferReceivedNotification(catalog, listing, offer, buyerName, priceItems, updated: false);
-        ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
-        ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
+        ZoneBlueprintStoreNotification newNotification = ZoneBlueprintStoreNotifications.AddOfferReceivedNotification(catalog, listing, offer, buyerName, priceItems, updated: false);
+        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.CreateOffer, saveReason);
+        }
+
+        ZoneBlueprintStoreNotifications.PushNotification(newNotification);
         return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.CreateOffer, true, HomesteadLocalization.Format("hs_store_offer_sent_status", listing.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)), catalog, listing, buyerPlayerId, buyerPlatformId);
     }
 
@@ -90,7 +98,8 @@ internal static class ZoneBlueprintStoreOfferAction
             {
                 Success = false,
                 Message = HomesteadLocalization.Text("hs_store_listing_not_found"),
-                ListingId = request.ListingId
+                ListingId = request.ListingId,
+                RequestId = request.RequestId
             });
         }
 
@@ -100,6 +109,7 @@ internal static class ZoneBlueprintStoreOfferAction
             Success = true,
             ListingId = listing.ListingId,
             ListingName = listing.Name,
+            RequestId = request.RequestId,
             CanManage = canManage,
             Offers = catalog.Offers
                 .Where(offer =>
@@ -114,41 +124,66 @@ internal static class ZoneBlueprintStoreOfferAction
 
     public static ZoneBlueprintStoreRpcEnvelope ExecuteDecision(ZoneBlueprintStoreDecideOfferRequest request, Player? player, long sender)
     {
-        return ExecuteSellerOfferMutation(
-            ZoneBlueprintStoreRpcType.DecideOffer,
-            request.ListingId,
-            request.OfferId,
-            player,
-            sender,
-            (catalog, listing, offer) =>
+        if (!ZoneBlueprintStoreAccess.TryResolveRequester(player, sender, out long playerId, out _, out _, out _, out string reason))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DecideOffer, reason);
+        }
+
+        string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
+        ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
+        if (!ZoneBlueprintStoreDtos.TryGetListingAndOffer(catalog, request.ListingId, request.OfferId, out ZoneBlueprintStoreListing listing, out ZoneBlueprintStoreOffer offer, out reason))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DecideOffer, reason);
+        }
+
+        if (!ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId, platformId))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DecideOffer, HomesteadLocalization.Text("hs_store_offer_manage_seller_only"));
+        }
+
+        ZoneBlueprintStoreNotification notification;
+        string decision = (request.Decision ?? "").Trim().ToLowerInvariant();
+        if (decision == "accept")
+        {
+            if (!string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Pending, StringComparison.Ordinal))
             {
-                string decision = (request.Decision ?? "").Trim().ToLowerInvariant();
-                if (decision == "accept")
-                {
-                    if (!string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Pending, StringComparison.Ordinal))
-                    {
-                        return HomesteadLocalization.Format("hs_store_offer_accept_pending_only", listing.Name);
-                    }
+                return ZoneBlueprintStoreDtos.Fail(
+                    ZoneBlueprintStoreRpcType.DecideOffer,
+                    HomesteadLocalization.Format("hs_store_offer_accept_pending_only", listing.Name));
+            }
 
-                    offer.Status = ZoneBlueprintStoreOfferStatus.Accepted;
-                    offer.UpdatedAt = HomesteadTimestamp.Now();
-                    ZoneBlueprintStoreNotifications.AddOfferDecisionNotification(catalog, listing, offer, accepted: true);
-                    return "";
-                }
+            offer.Status = ZoneBlueprintStoreOfferStatus.Accepted;
+            offer.UpdatedAt = HomesteadTimestamp.Now();
+            notification = ZoneBlueprintStoreNotifications.AddOfferDecisionNotification(catalog, listing, offer, accepted: true);
+        }
+        else if (decision == "decline")
+        {
+            offer.Status = ZoneBlueprintStoreOfferStatus.Declined;
+            offer.UpdatedAt = HomesteadTimestamp.Now();
+            notification = ZoneBlueprintStoreNotifications.AddOfferDecisionNotification(catalog, listing, offer, accepted: false);
+        }
+        else
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DecideOffer, HomesteadLocalization.Text("hs_store_offer_unknown_decision"));
+        }
 
-                if (decision == "decline")
-                {
-                    offer.Status = ZoneBlueprintStoreOfferStatus.Declined;
-                    offer.UpdatedAt = HomesteadTimestamp.Now();
-                    ZoneBlueprintStoreNotifications.AddOfferDecisionNotification(catalog, listing, offer, accepted: false);
-                    return "";
-                }
+        if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
+        {
+            return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DecideOffer, saveReason);
+        }
 
-                return HomesteadLocalization.Text("hs_store_offer_unknown_decision");
-            },
-            (listing, offer) => string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Accepted, StringComparison.Ordinal)
-                ? HomesteadLocalization.Format("hs_store_offer_accept_status", offer.BuyerName, listing.Name)
-                : HomesteadLocalization.Format("hs_store_offer_decline_status", offer.BuyerName, listing.Name));
+        ZoneBlueprintStoreNotifications.PushNotification(notification);
+        string message = string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Accepted, StringComparison.Ordinal)
+            ? HomesteadLocalization.Format("hs_store_offer_accept_status", offer.BuyerName, listing.Name)
+            : HomesteadLocalization.Format("hs_store_offer_decline_status", offer.BuyerName, listing.Name);
+        return ZoneBlueprintStoreDtos.StatusWithListingPatch(
+            ZoneBlueprintStoreRpcType.DecideOffer,
+            true,
+            message,
+            catalog,
+            listing,
+            playerId,
+            platformId);
     }
 
     public static ZoneBlueprintStoreRpcEnvelope ExecuteDelete(ZoneBlueprintStoreDeleteOfferRequest request, Player? player, long sender)
@@ -179,48 +214,5 @@ internal static class ZoneBlueprintStoreOfferAction
         }
 
         return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.DeleteOffer, true, HomesteadLocalization.Format("hs_store_offer_deleted_status", offer.BuyerName, listing.Name), catalog, listing, playerId, platformId);
-    }
-
-    private static ZoneBlueprintStoreRpcEnvelope ExecuteSellerOfferMutation(
-        string responseType,
-        string listingId,
-        string offerId,
-        Player? player,
-        long sender,
-        Func<ZoneBlueprintStoreCatalog, ZoneBlueprintStoreListing, ZoneBlueprintStoreOffer, string> mutate,
-        Func<ZoneBlueprintStoreListing, ZoneBlueprintStoreOffer, string> successMessage)
-    {
-        if (!ZoneBlueprintStoreAccess.TryResolveRequester(player, sender, out long playerId, out _, out _, out _, out string reason))
-        {
-            return ZoneBlueprintStoreDtos.Fail(responseType, reason);
-        }
-
-        string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
-        ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
-        int notificationCount = catalog.Notifications?.Count ?? 0;
-        if (!ZoneBlueprintStoreDtos.TryGetListingAndOffer(catalog, listingId, offerId, out ZoneBlueprintStoreListing listing, out ZoneBlueprintStoreOffer offer, out reason))
-        {
-            return ZoneBlueprintStoreDtos.Fail(responseType, reason);
-        }
-
-        if (!ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId, platformId))
-        {
-            return ZoneBlueprintStoreDtos.Fail(responseType, HomesteadLocalization.Text("hs_store_offer_manage_seller_only"));
-        }
-
-        string mutationReason = mutate(catalog, listing, offer);
-        if (!string.IsNullOrWhiteSpace(mutationReason))
-        {
-            return ZoneBlueprintStoreDtos.Fail(responseType, mutationReason);
-        }
-
-        ZoneBlueprintStoreDraftRepository.SaveCatalog(catalog);
-        if ((catalog.Notifications?.Count ?? 0) > notificationCount)
-        {
-            ZoneBlueprintStoreNotifications.PushLatestNotification(catalog);
-        }
-
-        string message = successMessage(listing, offer);
-        return ZoneBlueprintStoreDtos.StatusWithListingPatch(responseType, true, message, catalog, listing, playerId, platformId);
     }
 }

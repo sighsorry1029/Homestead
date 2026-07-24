@@ -199,7 +199,6 @@
         <Compile Include="ZoneBlueprintChestMapPins.cs"/>
         <Compile Include="ZoneBlueprintChestZdoRegistry.cs"/>
         <Compile Include="ZoneBlueprintDirectoryWatcher.cs"/>
-        <Compile Include="ZoneBlueprintStoreActions.cs"/>
         <Compile Include="ZoneBlueprintStoreBlueprintHelpers.cs"/>
         <Compile Include="ZoneBlueprintStore.cs"/>
         <Compile Include="ZoneBlueprintStoreChest.cs"/>

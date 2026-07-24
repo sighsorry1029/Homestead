@@ -114,28 +114,7 @@ internal static class ZoneBuildCameraDvergerLight
         }
 
         ItemDrop.ItemData? circletExtendedItem = GetCircletExtendedEquippedCirclet(player);
-        return IsDvergrCircletItem(circletExtendedItem);
-    }
-
-    private static bool IsDvergrCircletItem(ItemDrop.ItemData? item)
-    {
-        if (item == null)
-        {
-            return false;
-        }
-
-        string prefabName = item.m_dropPrefab ? item.m_dropPrefab.name : string.Empty;
-        if (prefabName.Equals("HelmetDverger", StringComparison.OrdinalIgnoreCase) ||
-            prefabName.StartsWith("HelmetDverger", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        string sharedName = item.m_shared?.m_name ?? string.Empty;
-        return sharedName.IndexOf("helmet_dverger", StringComparison.OrdinalIgnoreCase) >= 0 ||
-               (sharedName.IndexOf("dverger", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                (sharedName.IndexOf("helmet", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                 sharedName.IndexOf("circlet", StringComparison.OrdinalIgnoreCase) >= 0));
+        return ZoneDvergrCirclet.IsDvergrCircletItem(circletExtendedItem);
     }
 
     private static ItemDrop.ItemData? GetCircletExtendedEquippedCirclet(Player player)

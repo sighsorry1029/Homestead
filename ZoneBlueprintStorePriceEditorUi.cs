@@ -191,6 +191,7 @@ internal static class ZoneBlueprintStorePriceEditorUi
             return;
         }
 
+        ZoneBlueprintStorePanelLayout.CaptureAndFlush(_panel, ZoneBlueprintStorePanelKind.Form);
         if (_panel != null && _panel)
         {
             _panel.SetActive(false);

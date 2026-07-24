@@ -12,6 +12,9 @@ namespace Homestead;
 internal static class ZoneBlueprintCommands
 {
     private const int BlueprintPlanBatchSize = 250;
+    private const float MaxBlueprintHorizontalOffset = 512f;
+    private const float MaxBlueprintVerticalOffset = 512f;
+    private const float MaxBlueprintScaleComponent = 64f;
     private const float PlanGhostCleanupStartupDelaySeconds = 600f;
     private const float PlanGhostCleanupRegistryRetrySeconds = 60f;
     private const float PlanGhostCleanupIntervalSeconds = 6f * 60f * 60f;
@@ -83,7 +86,27 @@ internal static class ZoneBlueprintCommands
     internal static HomesteadCommandResult PlaceBlueprintPlanAt(string name, Player player, Vector3 anchor, Quaternion anchorRotation, Quaternion chestRotation)
     {
         ZoneBlueprintFile blueprint = LoadBlueprint(name);
+        string transformError = ValidateBlueprintTransforms(blueprint);
+        if (!string.IsNullOrWhiteSpace(transformError))
+        {
+            return HomesteadCommandResult.Fail(transformError);
+        }
+
+        if (!ZoneTransformPayload.IsFinite(anchor))
+        {
+            return HomesteadCommandResult.Fail(
+                HomesteadLocalization.Text("hs_blueprint_place_payload_missing_transform"));
+        }
+
+        anchorRotation = ZoneTransformPayload.SanitizeYawRotation(anchorRotation, Quaternion.identity);
+        chestRotation = ZoneTransformPayload.SanitizeYawRotation(chestRotation, anchorRotation);
         Vector3 chestPosition = GetPlanChestPosition(blueprint, anchor, anchorRotation, chestRotation);
+        if (!ZoneTransformPayload.IsFinite(chestPosition))
+        {
+            return HomesteadCommandResult.Fail(
+                HomesteadLocalization.Text("hs_blueprint_place_payload_missing_transform"));
+        }
+
         if (ZNet.instance != null && !ZNet.instance.IsServer())
         {
             ZoneBlueprintPlanRpc.RequestPlace(name, blueprint, anchor, anchorRotation, chestPosition, chestRotation);
@@ -101,20 +124,25 @@ internal static class ZoneBlueprintCommands
 
     internal static IEnumerator FinalizeBlueprintPlanAsync(
         string name,
+        ZoneBlueprintFile blueprint,
         Player player,
         Vector3 anchor,
         Quaternion anchorRotation,
         Dictionary<string, int> depositedMaterials,
+        Func<bool> canContinue,
+        Func<bool> tryCommit,
         Action<HomesteadCommandResult> onComplete)
     {
-        ZoneBlueprintFile blueprint;
-        try
+        if (!canContinue())
         {
-            blueprint = LoadPlanBlueprint(name);
+            onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")));
+            yield break;
         }
-        catch (Exception ex)
+
+        string transformError = ValidateBlueprintTransforms(blueprint);
+        if (!string.IsNullOrWhiteSpace(transformError))
         {
-            onComplete(HomesteadCommandResult.Fail(ex.Message));
+            onComplete(HomesteadCommandResult.Fail(transformError));
             yield break;
         }
 
@@ -125,6 +153,12 @@ internal static class ZoneBlueprintCommands
             plan = value;
             planError = error;
         });
+
+        if (!canContinue())
+        {
+            onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")));
+            yield break;
+        }
 
         if (plan == null)
         {
@@ -149,6 +183,12 @@ internal static class ZoneBlueprintCommands
         {
             string accessReason = "";
             yield return ValidateBuildAccessWithoutInventoryAsync(player, plan.Entries, value => accessReason = value);
+            if (!canContinue())
+            {
+                onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")));
+                yield break;
+            }
+
             if (!string.IsNullOrEmpty(accessReason))
             {
                 onComplete(HomesteadCommandResult.Fail(accessReason));
@@ -157,6 +197,12 @@ internal static class ZoneBlueprintCommands
 
             List<ZoneBlueprintRequirement> requirements = [];
             yield return CollectRequirementsAsync(plan.Entries, value => requirements = value);
+            if (!canContinue())
+            {
+                onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")));
+                yield break;
+            }
+
             foreach (ZoneBlueprintRequirement requirement in requirements)
             {
                 depositedMaterials.TryGetValue(requirement.ItemName, out int deposited);
@@ -172,20 +218,150 @@ internal static class ZoneBlueprintCommands
             }
         }
 
-        bool terrainApplied = false;
-        if (BlueprintConfig.ShouldApplyTerrainSupport(player) && plan.SupportContacts.Count > 0)
+        Func<int>? rollbackTerrain = null;
+        SpawnPlanResult? spawnResult = null;
+        bool spawnRollbackAttempted = false;
+        bool terrainRollbackAttempted = false;
+        bool committed = false;
+        try
         {
-            yield return HomesteadTerrainSupport.ApplyWorldSupportContactsAsync(plan.SupportContacts, result => terrainApplied = result);
-        }
+            bool terrainApplied = false;
+            if (BlueprintConfig.ShouldApplyTerrainSupport(player) && plan.SupportContacts.Count > 0)
+            {
+                bool terrainReady = false;
+                yield return HomesteadTerrainSupport.ApplyWorldSupportContactsAsync(
+                    plan.SupportContacts,
+                    canContinue,
+                    (success, changed, rollback) =>
+                    {
+                        terrainReady = success;
+                        terrainApplied = changed;
+                        rollbackTerrain = rollback;
+                    });
+                if (!terrainReady)
+                {
+                    if (!canContinue())
+                    {
+                        string cancelKey = terrainApplied
+                            ? "hs_blueprint_terrain_rollback_incomplete"
+                            : "hs_blueprint_confirmation_incomplete";
+                        onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text(cancelKey)));
+                        yield break;
+                    }
 
-        int created = 0;
-        yield return SpawnPlanAsync(plan, player, value => created = value);
-        onComplete(HomesteadCommandResult.Ok(
-            HomesteadLocalization.Format(
-                "hs_blueprint_confirmed",
-                name,
-                created,
-                terrainApplied ? HomesteadLocalization.Text("hs_common_yes") : HomesteadLocalization.Text("hs_common_no"))));
+                    string key = terrainApplied
+                        ? "hs_blueprint_terrain_rollback_incomplete"
+                        : "hs_blueprint_terrain_apply_failed";
+                    onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text(key)));
+                    yield break;
+                }
+            }
+
+            if (!canContinue())
+            {
+                int rollbackFailures = 0;
+                if (rollbackTerrain != null)
+                {
+                    rollbackFailures = rollbackTerrain();
+                    terrainRollbackAttempted = true;
+                }
+
+                string message = rollbackFailures == 0
+                    ? HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")
+                    : HomesteadLocalization.Format("hs_blueprint_confirmation_rollback_incomplete", rollbackFailures);
+                onComplete(HomesteadCommandResult.Fail(message));
+                yield break;
+            }
+
+            spawnResult = new SpawnPlanResult(plan.Entries.Count);
+            yield return SpawnPlanAsync(plan, player, spawnResult, canContinue);
+            if (!canContinue() && spawnResult.Success)
+            {
+                spawnResult.Failure = "Blueprint confirmation was canceled.";
+            }
+
+            if (!spawnResult.Success)
+            {
+                int rollbackFailures = RollbackSpawnedPlan(spawnResult);
+                spawnRollbackAttempted = true;
+                if (rollbackTerrain != null)
+                {
+                    rollbackFailures += rollbackTerrain();
+                    terrainRollbackAttempted = true;
+                }
+
+                string errorKey = rollbackFailures == 0
+                    ? "hs_blueprint_plan_spawn_failed"
+                    : "hs_blueprint_plan_spawn_rollback_incomplete";
+                onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Format(
+                    errorKey,
+                    spawnResult.CreatedCount,
+                    spawnResult.ExpectedCount,
+                    rollbackFailures)));
+                yield break;
+            }
+
+            bool chestCommitted = false;
+            try
+            {
+                chestCommitted = canContinue() && tryCommit();
+            }
+            catch (Exception ex)
+            {
+                spawnResult.Failure = $"Blueprint chest commit failed: {ex.Message}";
+            }
+
+            if (!chestCommitted)
+            {
+                if (string.IsNullOrWhiteSpace(spawnResult.Failure))
+                {
+                    spawnResult.Failure = "Blueprint chest commit was canceled.";
+                }
+
+                int rollbackFailures = RollbackSpawnedPlan(spawnResult);
+                spawnRollbackAttempted = true;
+                if (rollbackTerrain != null)
+                {
+                    rollbackFailures += rollbackTerrain();
+                    terrainRollbackAttempted = true;
+                }
+
+                string message = rollbackFailures == 0
+                    ? HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")
+                    : HomesteadLocalization.Format("hs_blueprint_confirmation_rollback_incomplete", rollbackFailures);
+                onComplete(HomesteadCommandResult.Fail(message));
+                yield break;
+            }
+
+            committed = true;
+            onComplete(HomesteadCommandResult.Ok(
+                HomesteadLocalization.Format(
+                    "hs_blueprint_confirmed",
+                    name,
+                    spawnResult.CreatedCount,
+                    terrainApplied ? HomesteadLocalization.Text("hs_common_yes") : HomesteadLocalization.Text("hs_common_no"))));
+        }
+        finally
+        {
+            if (!committed)
+            {
+                int rollbackFailures = 0;
+                if (!spawnRollbackAttempted && spawnResult != null && spawnResult.ZdosToRollback.Count > 0)
+                {
+                    rollbackFailures += RollbackSpawnedPlan(spawnResult);
+                }
+
+                if (!terrainRollbackAttempted && rollbackTerrain != null)
+                {
+                    rollbackFailures += rollbackTerrain();
+                }
+
+                if (rollbackFailures > 0)
+                {
+                    _logger.LogError($"Blueprint confirmation cleanup finished with {rollbackFailures} rollback failures.");
+                }
+            }
+        }
     }
 
     internal static List<string> GetBlueprintNames()
@@ -232,7 +408,7 @@ internal static class ZoneBlueprintCommands
         return path;
     }
 
-    internal static List<ZDO> FindBlueprintWearNTearZdos(Player player, ZoneAreaSelection selection, BlueprintAreaSaveCreatorMode creatorMode)
+    internal static List<ZDO> FindBlueprintWearNTearZdos(Player player, ZoneAreaSelection selection)
     {
         long playerId = player.GetPlayerID();
         List<ZDO> zdos = [];
@@ -257,7 +433,7 @@ internal static class ZoneBlueprintCommands
             }
 
             long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
-            if (!IsAreaSaveCreatorAllowed(playerId, creator, creatorMode))
+            if (!BlueprintConfig.AreaSaveAllowsCreator(playerId, creator))
             {
                 continue;
             }
@@ -266,21 +442,6 @@ internal static class ZoneBlueprintCommands
         }
 
         return zdos;
-    }
-
-    internal static bool IsAreaSaveCreatorAllowed(long playerId, long creator, BlueprintAreaSaveCreatorMode creatorMode)
-    {
-        if (creator == playerId)
-        {
-            return true;
-        }
-
-        return creatorMode switch
-        {
-            BlueprintAreaSaveCreatorMode.AllCreators => true,
-            BlueprintAreaSaveCreatorMode.OwnedAndCreatorless => creator == 0L,
-            _ => false
-        };
     }
 
     internal static bool IsHomesteadBlueprintChest(ZDO zdo)
@@ -374,11 +535,6 @@ internal static class ZoneBlueprintCommands
         return LoadPlanBlueprint(name);
     }
 
-    internal static BlueprintLoadPlan CreateLoadPlanForBlueprint(string name, Vector3 anchor, Quaternion anchorRotation)
-    {
-        return CreateLoadPlan(LoadPlanBlueprint(name), anchor, anchorRotation);
-    }
-
     internal static BlueprintLoadPlan CreateLoadPlanForBlueprint(ZoneBlueprintFile blueprint, Vector3 anchor, Quaternion anchorRotation)
     {
         return CreateLoadPlan(blueprint, anchor, anchorRotation);
@@ -442,23 +598,49 @@ internal static class ZoneBlueprintCommands
         return blueprintText;
     }
 
-    internal static void EnsureLocalPlanBlueprintCopy(string name, string blueprintText)
+    internal static List<ZoneBlueprintRequirement> CollectRequirements(BlueprintLoadPlan plan)
     {
-        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(blueprintText))
+        return CollectRequirements(plan.Entries);
+    }
+
+    internal static Dictionary<string, ZoneBlueprintRequirement> GetEntryRequirements(BlueprintLoadEntry entry)
+    {
+        Dictionary<string, ZoneBlueprintRequirement> requirements = [];
+        AccumulateEntryRequirements(requirements, entry);
+        return requirements;
+    }
+
+    private static void AccumulateEntryRequirements(
+        Dictionary<string, ZoneBlueprintRequirement> requirements,
+        BlueprintLoadEntry entry)
+    {
+        Piece piece = entry.Prefab.GetComponent<Piece>();
+        if (piece == null)
         {
             return;
         }
 
-        ZoneBlueprintFile blueprint = ZoneBlueprintFileFormat.Deserialize(blueprintText, name);
-        blueprint.Name = name;
-        string path = GetPlanGhostBlueprintPath(name);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        ZoneBlueprintFileFormat.WriteFile(path, blueprint);
-    }
+        foreach (Piece.Requirement requirement in piece.m_resources)
+        {
+            if (!requirement.m_resItem || requirement.m_amount <= 0)
+            {
+                continue;
+            }
 
-    internal static List<ZoneBlueprintRequirement> CollectRequirements(BlueprintLoadPlan plan)
-    {
-        return CollectRequirements(plan.Entries);
+            string itemName = requirement.m_resItem.m_itemData.m_shared.m_name;
+            if (!requirements.TryGetValue(itemName, out ZoneBlueprintRequirement aggregate))
+            {
+                aggregate = new ZoneBlueprintRequirement
+                {
+                    ItemName = itemName,
+                    PrefabName = Utils.GetPrefabName(requirement.m_resItem.gameObject),
+                    DisplayName = requirement.m_resItem.m_itemData.m_shared.m_name
+                };
+                requirements[itemName] = aggregate;
+            }
+
+            aggregate.Amount = ZoneMaterialEscrow.AddAmountsSaturating(aggregate.Amount, requirement.GetAmount(0));
+        }
     }
 
     internal static List<ZoneBlueprintCraftingStationRequirement> CollectCraftingStations(BlueprintLoadPlan plan)
@@ -542,9 +724,17 @@ internal static class ZoneBlueprintCommands
             positions.Add(loadEntry.Position);
         }
 
-        List<Vector3> supportContacts = blueprint.TerrainContacts
-            .Select(contact => ToWorldTerrainContact(contact, anchor, anchorRotation))
-            .ToList();
+        List<Vector3> supportContacts = new(blueprint.TerrainContacts.Count);
+        foreach (ZoneBlueprintTerrainContact contact in blueprint.TerrainContacts)
+        {
+            if (!TryCreateWorldTerrainContact(contact, anchor, anchorRotation, out Vector3 worldContact))
+            {
+                throw new InvalidOperationException(
+                    HomesteadLocalization.Format("hs_blueprint_terrain_contact_invalid", blueprint.Name));
+            }
+
+            supportContacts.Add(worldContact);
+        }
 
         return new BlueprintLoadPlan(entries, positions, supportContacts);
     }
@@ -580,7 +770,15 @@ internal static class ZoneBlueprintCommands
         List<Vector3> supportContacts = new(blueprint.TerrainContacts.Count);
         foreach (ZoneBlueprintTerrainContact contact in blueprint.TerrainContacts)
         {
-            supportContacts.Add(ToWorldTerrainContact(contact, anchor, anchorRotation));
+            if (!TryCreateWorldTerrainContact(contact, anchor, anchorRotation, out Vector3 worldContact))
+            {
+                onComplete(
+                    null,
+                    HomesteadLocalization.Format("hs_blueprint_terrain_contact_invalid", blueprint.Name));
+                yield break;
+            }
+
+            supportContacts.Add(worldContact);
             processedSinceYield++;
             if (processedSinceYield >= BlueprintPlanBatchSize)
             {
@@ -602,6 +800,21 @@ internal static class ZoneBlueprintCommands
     {
         loadEntry = null;
         error = "";
+        if (!TryCreateWorldEntryTransform(
+                entry,
+                anchor,
+                anchorRotation,
+                out Vector3 position,
+                out Quaternion rotation,
+                out Vector3 scale))
+        {
+            error = HomesteadLocalization.Format(
+                "hs_blueprint_entry_transform_invalid",
+                blueprint.Name,
+                entry.Prefab);
+            return false;
+        }
+
         GameObject prefab = ZNetScene.instance.GetPrefab(entry.Prefab);
         if (!prefab)
         {
@@ -614,15 +827,6 @@ internal static class ZoneBlueprintCommands
             return true;
         }
 
-        if (entry.LocalPos.Length < 3 || entry.LocalRot.Length < 4 || entry.Scale.Length < 3)
-        {
-            error = $"Blueprint '{blueprint.Name}' contains an invalid transform for '{entry.Prefab}'.";
-            return false;
-        }
-
-        Vector3 position = anchor + anchorRotation * FromVector(entry.LocalPos);
-        Quaternion rotation = anchorRotation * FromQuaternion(entry.LocalRot);
-        Vector3 scale = FromVector(entry.Scale);
         loadEntry = new BlueprintLoadEntry(entry, prefab, position, rotation, scale);
         return true;
     }
@@ -635,7 +839,7 @@ internal static class ZoneBlueprintCommands
     internal static bool IsLoadableBlueprintEntry(ZoneBlueprintEntry entry, out bool missingPrefab)
     {
         missingPrefab = false;
-        if (entry.LocalPos.Length < 3 || entry.LocalRot.Length < 4 || entry.Scale.Length < 3)
+        if (!TryNormalizeBlueprintEntryTransform(entry, out _, out _, out _))
         {
             return false;
         }
@@ -650,6 +854,161 @@ internal static class ZoneBlueprintCommands
         return prefab && prefab.GetComponent<WearNTear>() != null && HasBuildRecipe(prefab);
     }
 
+    internal static string ValidateBlueprintTransforms(ZoneBlueprintFile blueprint)
+    {
+        foreach (ZoneBlueprintEntry entry in blueprint.Entries)
+        {
+            if (!TryNormalizeBlueprintEntryTransform(entry, out _, out _, out _))
+            {
+                return HomesteadLocalization.Format(
+                    "hs_blueprint_entry_transform_invalid",
+                    blueprint.Name,
+                    entry.Prefab);
+            }
+        }
+
+        foreach (ZoneBlueprintTerrainContact contact in blueprint.TerrainContacts)
+        {
+            if (!TryReadBlueprintTerrainContact(contact, out _))
+            {
+                return HomesteadLocalization.Format("hs_blueprint_terrain_contact_invalid", blueprint.Name);
+            }
+        }
+
+        return "";
+    }
+
+    private static bool TryCreateWorldEntryTransform(
+        ZoneBlueprintEntry entry,
+        Vector3 anchor,
+        Quaternion anchorRotation,
+        out Vector3 position,
+        out Quaternion rotation,
+        out Vector3 scale)
+    {
+        position = default;
+        rotation = default;
+        scale = default;
+        if (!ZoneTransformPayload.IsFinite(anchor) ||
+            !TryNormalizeQuaternion(anchorRotation, out Quaternion normalizedAnchorRotation) ||
+            !TryNormalizeBlueprintEntryTransform(entry, out Vector3 localPosition, out Quaternion localRotation, out scale))
+        {
+            return false;
+        }
+
+        position = anchor + normalizedAnchorRotation * localPosition;
+        Quaternion worldRotation = normalizedAnchorRotation * localRotation;
+        Vector3 worldOffset = position - anchor;
+        return ZoneTransformPayload.IsFinite(position) &&
+               IsWithinBlueprintOffset(worldOffset) &&
+               TryNormalizeQuaternion(worldRotation, out rotation);
+    }
+
+    private static bool TryNormalizeBlueprintEntryTransform(
+        ZoneBlueprintEntry entry,
+        out Vector3 localPosition,
+        out Quaternion localRotation,
+        out Vector3 scale)
+    {
+        localPosition = default;
+        localRotation = default;
+        scale = default;
+        if (entry.LocalPos == null ||
+            entry.LocalRot == null ||
+            entry.Scale == null ||
+            entry.LocalPos.Length < 3 ||
+            entry.LocalRot.Length < 4 ||
+            entry.Scale.Length < 3)
+        {
+            return false;
+        }
+
+        localPosition = FromVector(entry.LocalPos);
+        scale = FromVector(entry.Scale);
+        if (!ZoneTransformPayload.IsFinite(localPosition) ||
+            !IsWithinBlueprintOffset(localPosition) ||
+            !ZoneTransformPayload.IsFinite(scale) ||
+            Mathf.Abs(scale.x) > MaxBlueprintScaleComponent ||
+            Mathf.Abs(scale.y) > MaxBlueprintScaleComponent ||
+            Mathf.Abs(scale.z) > MaxBlueprintScaleComponent ||
+            !TryNormalizeQuaternion(FromQuaternion(entry.LocalRot), out localRotation))
+        {
+            return false;
+        }
+
+        entry.LocalRot[0] = localRotation.x;
+        entry.LocalRot[1] = localRotation.y;
+        entry.LocalRot[2] = localRotation.z;
+        entry.LocalRot[3] = localRotation.w;
+        return true;
+    }
+
+    private static bool TryCreateWorldTerrainContact(
+        ZoneBlueprintTerrainContact contact,
+        Vector3 anchor,
+        Quaternion anchorRotation,
+        out Vector3 worldContact)
+    {
+        worldContact = default;
+        if (!ZoneTransformPayload.IsFinite(anchor) ||
+            !TryNormalizeQuaternion(anchorRotation, out Quaternion normalizedAnchorRotation) ||
+            !TryReadBlueprintTerrainContact(contact, out Vector3 localContact))
+        {
+            return false;
+        }
+
+        worldContact = anchor + normalizedAnchorRotation * localContact;
+        return ZoneTransformPayload.IsFinite(worldContact) &&
+               IsWithinBlueprintOffset(worldContact - anchor);
+    }
+
+    private static bool TryReadBlueprintTerrainContact(
+        ZoneBlueprintTerrainContact contact,
+        out Vector3 localContact)
+    {
+        localContact = new Vector3(contact.LocalX, contact.LocalY, contact.LocalZ);
+        return ZoneTransformPayload.IsFinite(localContact) && IsWithinBlueprintOffset(localContact);
+    }
+
+    private static bool IsWithinBlueprintOffset(Vector3 offset)
+    {
+        if (Mathf.Abs(offset.y) > MaxBlueprintVerticalOffset)
+        {
+            return false;
+        }
+
+        float horizontalSquared = offset.x * offset.x + offset.z * offset.z;
+        return ZoneTransformPayload.IsFinite(horizontalSquared) &&
+               horizontalSquared <= MaxBlueprintHorizontalOffset * MaxBlueprintHorizontalOffset;
+    }
+
+    private static bool TryNormalizeQuaternion(Quaternion value, out Quaternion normalized)
+    {
+        normalized = default;
+        if (!ZoneTransformPayload.IsFinite(value))
+        {
+            return false;
+        }
+
+        float magnitudeSquared =
+            value.x * value.x +
+            value.y * value.y +
+            value.z * value.z +
+            value.w * value.w;
+        if (!ZoneTransformPayload.IsFinite(magnitudeSquared) || magnitudeSquared < 0.0001f)
+        {
+            return false;
+        }
+
+        float inverseMagnitude = 1f / Mathf.Sqrt(magnitudeSquared);
+        normalized = new Quaternion(
+            value.x * inverseMagnitude,
+            value.y * inverseMagnitude,
+            value.z * inverseMagnitude,
+            value.w * inverseMagnitude);
+        return ZoneTransformPayload.IsFinite(normalized);
+    }
+
     private static void LogMissingPrefabOnce(string blueprintName, string prefabName)
     {
         string key = $"{blueprintName}\n{prefabName}";
@@ -659,21 +1018,37 @@ internal static class ZoneBlueprintCommands
         }
     }
 
-    private static Vector3 ToWorldTerrainContact(ZoneBlueprintTerrainContact contact, Vector3 anchor, Quaternion anchorRotation)
-    {
-        return anchor + anchorRotation * new Vector3(contact.LocalX, contact.LocalY, contact.LocalZ);
-    }
-
-    private static IEnumerator SpawnPlanAsync(BlueprintLoadPlan plan, Player player, Action<int> onComplete)
+    private static IEnumerator SpawnPlanAsync(
+        BlueprintLoadPlan plan,
+        Player player,
+        SpawnPlanResult result,
+        Func<bool> canContinue)
     {
         long playerId = player.GetPlayerID();
         string playerName = player.GetPlayerName();
-        int created = 0;
         int processedSinceYield = 0;
 
         foreach (BlueprintLoadEntry item in plan.Entries)
         {
-            created += TrySpawnPlanEntry(item, playerId, playerName) ? 1 : 0;
+            if (!canContinue())
+            {
+                result.Failure = "Blueprint confirmation was canceled.";
+                break;
+            }
+
+            if (!TrySpawnPlanEntry(item, playerId, playerName, out ZDO? zdo, out string failure))
+            {
+                if (zdo != null)
+                {
+                    result.ZdosToRollback.Add(zdo);
+                }
+
+                result.Failure = failure;
+                break;
+            }
+
+            result.CreatedCount++;
+            result.ZdosToRollback.Add(zdo!);
 
             processedSinceYield++;
             if (processedSinceYield >= BlueprintPlanBatchSize)
@@ -682,48 +1057,99 @@ internal static class ZoneBlueprintCommands
                 yield return null;
             }
         }
-
-        onComplete(created);
     }
 
-    private static bool TrySpawnPlanEntry(BlueprintLoadEntry item, long playerId, string playerName)
+    private static bool TrySpawnPlanEntry(
+        BlueprintLoadEntry item,
+        long playerId,
+        string playerName,
+        out ZDO? zdo,
+        out string failure)
     {
-        ZDO? zdo = InitBlueprintZdo(item.Prefab, item.Position, item.Rotation, item.Scale);
-        if (zdo == null)
+        zdo = null;
+        failure = "";
+        try
         {
+            if (ZDOMan.instance == null || !item.Prefab || ZNetScene.instance == null)
+            {
+                failure = $"Could not initialize '{item.Entry.Prefab}'.";
+                return false;
+            }
+
+            int prefabHash = StringExtensionMethods.GetStableHashCode(item.Prefab.name);
+            zdo = ZDOMan.instance.CreateNewZDO(item.Position, prefabHash);
+            if (zdo == null)
+            {
+                failure = $"Could not initialize '{item.Entry.Prefab}'.";
+                return false;
+            }
+
+            zdo.SetPrefab(prefabHash);
+            zdo.SetRotation(item.Rotation);
+
+            ZNetView prefabView = item.Prefab.GetComponent<ZNetView>();
+            if (prefabView != null)
+            {
+                zdo.Persistent = prefabView.m_persistent;
+                zdo.Distant = prefabView.m_distant;
+                zdo.Type = prefabView.m_type;
+            }
+
+            zdo.Set(ZDOVars.s_scaleHash, item.Scale);
+            ApplyBlueprintText(item, zdo);
+            zdo.Set(ZDOVars.s_creator, playerId);
+            zdo.Set(ZDOVars.s_creatorName, playerName);
+            zdo.Set(BlueprintPlacedHash, true);
+            GameObject spawned = ZNetScene.instance.CreateObject(zdo);
+            if (!spawned)
+            {
+                failure = $"Could not create '{item.Entry.Prefab}'.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            failure = ex.Message;
             return false;
         }
-
-        ApplyBlueprintText(item, zdo);
-        zdo.Set(ZDOVars.s_creator, playerId);
-        zdo.Set(ZDOVars.s_creatorName, playerName);
-        zdo.Set(BlueprintPlacedHash, true);
-        ZNetScene.instance.CreateObject(zdo);
-        return true;
     }
 
-    private static ZDO? InitBlueprintZdo(GameObject prefab, Vector3 position, Quaternion rotation, Vector3 scale)
+    private static int RollbackSpawnedPlan(SpawnPlanResult result)
     {
-        if (ZDOMan.instance == null || !prefab)
+        int failures = 0;
+        for (int index = result.ZdosToRollback.Count - 1; index >= 0; index--)
         {
-            return null;
+            ZDO zdo = result.ZdosToRollback[index];
+            try
+            {
+                SavedZdoHelper.Destroy(zdo);
+            }
+            catch (Exception ex)
+            {
+                failures++;
+                _logger.LogError($"Failed to roll back blueprint plan object {zdo.m_uid}: {ex}");
+            }
         }
 
-        int prefabHash = StringExtensionMethods.GetStableHashCode(prefab.name);
-        ZDO zdo = ZDOMan.instance.CreateNewZDO(position, prefabHash);
-        zdo.SetPrefab(prefabHash);
-        zdo.SetRotation(rotation);
-
-        ZNetView prefabView = prefab.GetComponent<ZNetView>();
-        if (prefabView != null)
+        try
         {
-            zdo.Persistent = prefabView.m_persistent;
-            zdo.Distant = prefabView.m_distant;
-            zdo.Type = prefabView.m_type;
+            SavedZdoHelper.FlushDestroyed();
+        }
+        catch (Exception ex)
+        {
+            failures++;
+            _logger.LogError($"Failed to flush rolled-back blueprint plan objects: {ex}");
         }
 
-        zdo.Set(ZDOVars.s_scaleHash, scale);
-        return zdo;
+        if (!string.IsNullOrWhiteSpace(result.Failure))
+        {
+            _logger.LogWarning(
+                $"Blueprint plan spawn stopped after {result.CreatedCount}/{result.ExpectedCount} objects: {result.Failure}");
+        }
+
+        return failures;
     }
 
     private static void ApplyBlueprintText(BlueprintLoadEntry item, ZDO zdo)
@@ -736,12 +1162,26 @@ internal static class ZoneBlueprintCommands
         zdo.Set(ZDOVars.s_text, item.Entry.Text);
     }
 
+    private sealed class SpawnPlanResult
+    {
+        public SpawnPlanResult(int expectedCount)
+        {
+            ExpectedCount = expectedCount;
+        }
+
+        public int ExpectedCount { get; }
+        public int CreatedCount { get; set; }
+        public string Failure { get; set; } = "";
+        public List<ZDO> ZdosToRollback { get; } = [];
+        public bool Success => CreatedCount == ExpectedCount && string.IsNullOrWhiteSpace(Failure);
+    }
+
     private static List<ZoneBlueprintRequirement> CollectRequirements(IEnumerable<BlueprintLoadEntry> entries)
     {
         Dictionary<string, ZoneBlueprintRequirement> requirements = [];
         foreach (BlueprintLoadEntry entry in entries)
         {
-            AccumulateRequirements(requirements, entry);
+            AccumulateEntryRequirements(requirements, entry);
         }
 
         return requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList();
@@ -754,7 +1194,7 @@ internal static class ZoneBlueprintCommands
 
         foreach (BlueprintLoadEntry entry in entries)
         {
-            AccumulateRequirements(requirements, entry);
+            AccumulateEntryRequirements(requirements, entry);
 
             processedSinceYield++;
             if (processedSinceYield >= BlueprintPlanBatchSize)
@@ -765,37 +1205,6 @@ internal static class ZoneBlueprintCommands
         }
 
         onComplete(requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList());
-    }
-
-    private static void AccumulateRequirements(Dictionary<string, ZoneBlueprintRequirement> requirements, BlueprintLoadEntry entry)
-    {
-        Piece piece = entry.Prefab.GetComponent<Piece>();
-        if (piece == null)
-        {
-            return;
-        }
-
-        foreach (Piece.Requirement requirement in piece.m_resources)
-        {
-            if (!requirement.m_resItem || requirement.m_amount <= 0)
-            {
-                continue;
-            }
-
-            string itemName = requirement.m_resItem.m_itemData.m_shared.m_name;
-            if (!requirements.TryGetValue(itemName, out ZoneBlueprintRequirement aggregate))
-            {
-                aggregate = new ZoneBlueprintRequirement
-                {
-                    ItemName = itemName,
-                    PrefabName = Utils.GetPrefabName(requirement.m_resItem.gameObject),
-                    DisplayName = requirement.m_resItem.m_itemData.m_shared.m_name
-                };
-                requirements[itemName] = aggregate;
-            }
-
-            aggregate.Amount = ZoneMaterialEscrow.AddAmountsSaturating(aggregate.Amount, requirement.GetAmount(0));
-        }
     }
 
     private static IEnumerator ValidateBuildAccessWithoutInventoryAsync(Player player, IEnumerable<BlueprintLoadEntry> entries, Action<string> onComplete)
@@ -931,6 +1340,16 @@ internal static class ZoneBlueprintCommands
 
     private static ZoneBlueprintFile LoadPlanBlueprint(string name)
     {
+        if (ZNet.instance != null && !ZNet.instance.IsServer())
+        {
+            if (ZoneBlueprintPlanRpc.TryGetCachedPreview(name, out ZoneBlueprintFile serverPreview))
+            {
+                return serverPreview;
+            }
+
+            throw new FileNotFoundException($"Homestead server blueprint preview is not cached: {name}");
+        }
+
         string planGhostPath = GetPlanGhostBlueprintPath(name);
         if (File.Exists(planGhostPath))
         {
@@ -955,7 +1374,16 @@ internal static class ZoneBlueprintCommands
             _logger.LogWarning($"Failed to render Homestead blueprint icon '{name}' immediately: {ex.Message}");
         }
 
-        ZoneBlueprintSaveToolMenu.RefreshAfterBlueprintSaved(name, blueprint, iconReady);
+        try
+        {
+            ZoneBlueprintSaveToolMenu.RefreshAfterBlueprintSaved(name, blueprint, iconReady);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                $"Saved Homestead blueprint '{name}', but its menu refresh failed: {ex.Message}");
+        }
+
         return path;
     }
 
@@ -995,6 +1423,12 @@ internal static class ZoneBlueprintCommands
         if (blueprint.Entries.Count == 0)
         {
             return HomesteadLocalization.Text("hs_blueprint_no_entries");
+        }
+
+        string transformError = ValidateBlueprintTransforms(blueprint);
+        if (!string.IsNullOrWhiteSpace(transformError))
+        {
+            return transformError;
         }
 
         if (ZNetScene.instance == null)

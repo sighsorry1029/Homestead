@@ -51,12 +51,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
     private string _lockedPreviewColorSignature = "";
     private PreviewMode _mode;
 
-    public static void Activate(string listingId, string name, ZoneBlueprintFile blueprint, bool allowPurchase)
-    {
-        EnsureInstance();
-        _instance?.ActivateInternal(PreviewMode.Purchase, listingId, "", name, blueprint, allowPurchase);
-    }
-
     public static void Activate(string listingId, string offerId, string name, ZoneBlueprintFile blueprint, bool allowPurchase)
     {
         EnsureInstance();
@@ -65,12 +59,14 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
 
     public static void ActivateListing(string name, ZoneBlueprintFile blueprint)
     {
+        ZoneBlueprintStore.CancelPendingPreview();
         EnsureInstance();
         _instance?.ActivateInternal(PreviewMode.Listing, "", "", name, blueprint, allowPurchase: false);
     }
 
     public static void DeactivateActive()
     {
+        ZoneBlueprintStore.CancelPendingPreview();
         if (_instance?._placementLocked == true)
         {
             return;
@@ -138,11 +134,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _instance.RemoveLockedPreview(ListingPreviewKey(listingId));
     }
 
-    public static void RemovePurchasePreview(string listingId)
-    {
-        RemovePurchasePreview(listingId, "");
-    }
-
     public static void RemovePurchasePreview(string listingId, string offerId)
     {
         if (_instance == null || !_instance || string.IsNullOrWhiteSpace(listingId))
@@ -186,18 +177,17 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         string mode,
         string listingId,
         string blueprintName,
-        Transform owner,
         out GameObject? root,
         out Material? material)
     {
         root = null;
         material = null;
-        if (_instance == null || !_instance || owner == null)
+        if (_instance == null || !_instance)
         {
             return false;
         }
 
-        return _instance.TryTransferPreviewToChestInternal(mode, listingId, blueprintName, owner, out root, out material);
+        return _instance.TryTransferPreviewToChestInternal(mode, listingId, blueprintName, out root, out material);
     }
 
     private static void EnsureInstance()
@@ -359,11 +349,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _lockedPreviews[key] = new LockedPreview
         {
             Root = _previewRoot,
-            Material = _lockedPreviewMaterial,
-            Mode = _mode == PreviewMode.Purchase ? ZoneBlueprintStoreChest.ModePurchase : ZoneBlueprintStoreChest.ModePrice,
-            ListingId = _mode == PreviewMode.Purchase ? _listingId : "",
-            OfferId = _mode == PreviewMode.Purchase ? _offerId : "",
-            BlueprintName = _name
+            Material = _lockedPreviewMaterial
         };
 
         _previewRoot = null;
@@ -400,7 +386,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _lockedPreviews.Remove(pendingKey);
         string finalKey = ListingPreviewKey(listingId);
         RemoveLockedPreview(finalKey);
-        preview.ListingId = listingId;
         _lockedPreviews[finalKey] = preview;
     }
 
@@ -408,7 +393,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         string mode,
         string listingId,
         string blueprintName,
-        Transform owner,
         out GameObject? root,
         out Material? material)
     {
@@ -767,10 +751,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
     {
         public GameObject? Root;
         public Material? Material;
-        public string Mode = "";
-        public string ListingId = "";
-        public string OfferId = "";
-        public string BlueprintName = "";
     }
 }
 
