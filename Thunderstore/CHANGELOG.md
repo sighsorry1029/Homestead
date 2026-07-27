@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.11
+## 1.2.0
 
 - Added snap-aware X/Z placement rotation that preserves native piece snapping, while deferring ordinary-piece rotation step, random rotation correction, and X/Z rotation to ComfyGizmo when it is loaded.
 - Moved the Area Save/Dismantle uniform-scale modifier into Area Tools; placement nudging now uses arrows and PgUp/PgDn directly, and Position Adjust is client-only.
