@@ -98,26 +98,27 @@ internal static class ZoneBuildKeyHints
             buildCameraCondition = GetCachedBuildCameraConditionText(player);
         }
 
-        GetPlacementAdjustHintKeys(out string adjustKey0, out string adjustKey1, out float adjustHintWidth);
         SetHint(
             _offsetHint,
-            showBuildHints && (PlacementControlConfig.PlacementAdjustEnabled || zoneToolActive),
+            showBuildHints && PlacementControlConfig.PlacementAdjustEnabled,
             HomesteadLocalization.Text("hs_keyhint_adjust_offset"),
-            adjustKey0,
-            adjustKey1,
-            adjustHintWidth);
+            "Arrows",
+            "PgUp/PgDn",
+            104f);
 
         SetHint(
             _gridHint,
             showBuildHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !zoneToolActive,
-            ZoneGridSnap.IsActive ? HomesteadLocalization.Text("hs_keyhint_grid_on") : HomesteadLocalization.Text("hs_keyhint_grid_off"),
+            ZoneGridSnap.IsActive
+                ? HomesteadLocalization.Format("hs_keyhint_grid_on", PlacementControlConfig.GridSnapSize)
+                : HomesteadLocalization.Text("hs_keyhint_grid_off"),
             FormatShortcut(PlacementControlConfig.GridSnapToggleHotkey),
             "",
             102f);
 
         if (ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive)
         {
-            string scaleKey = string.IsNullOrWhiteSpace(PlacementControlConfig.AreaUniformScaleInputLabel) ? "" : "+" + PlacementControlConfig.PlacementAdjustModifierLabel;
+            string scaleKey = BlueprintConfig.AreaToolUniformScaleModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolUniformScaleModifierLabel;
             string depthKey = BlueprintConfig.AreaToolDepthModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolDepthModifierLabel;
             string widthKey = BlueprintConfig.AreaToolWidthModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolWidthModifierLabel;
             string shapeKeys = string.Join("/", new[] { scaleKey, depthKey, widthKey }.Where(value => !string.IsNullOrWhiteSpace(value)));
@@ -359,21 +360,6 @@ internal static class ZoneBuildKeyHints
         }
 
         return text.Replace(" + ", "+");
-    }
-
-    private static void GetPlacementAdjustHintKeys(out string key0, out string key1, out float preferredWidth)
-    {
-        if (PlacementControlConfig.PlacementAdjustModifierKey.MainKey == KeyCode.None)
-        {
-            key0 = "Arrows";
-            key1 = "PgUp/PgDn";
-            preferredWidth = 104f;
-            return;
-        }
-
-        key0 = PlacementControlConfig.PlacementAdjustModifierLabel;
-        key1 = "+Arrows/+PgUpDn";
-        preferredWidth = 128f;
     }
 
     private sealed class HintWidgets

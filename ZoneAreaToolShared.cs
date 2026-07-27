@@ -112,9 +112,9 @@ internal static class ZoneAreaToolShared
 
     public static string FormatScaleInput()
     {
-        return string.IsNullOrWhiteSpace(PlacementControlConfig.AreaUniformScaleInputLabel)
+        return string.IsNullOrWhiteSpace(BlueprintConfig.AreaToolUniformScaleInputLabel)
             ? HomesteadLocalization.Text("hs_common_unbound")
-            : PlacementControlConfig.AreaUniformScaleInputLabel;
+            : BlueprintConfig.AreaToolUniformScaleInputLabel;
     }
 
     public static string FormatDepthInput()
@@ -129,6 +129,27 @@ internal static class ZoneAreaToolShared
         return string.IsNullOrWhiteSpace(BlueprintConfig.AreaToolWidthInputLabel)
             ? HomesteadLocalization.Text("hs_common_unbound")
             : BlueprintConfig.AreaToolWidthInputLabel;
+    }
+
+    public static string FormatCompactShapeInput()
+    {
+        string scale = FormatModifier(
+            BlueprintConfig.AreaToolUniformScaleInputLabel,
+            BlueprintConfig.AreaToolUniformScaleModifierLabel);
+        string depth = FormatModifier(
+            BlueprintConfig.AreaToolDepthInputLabel,
+            BlueprintConfig.AreaToolDepthModifierLabel);
+        string width = FormatModifier(
+            BlueprintConfig.AreaToolWidthInputLabel,
+            BlueprintConfig.AreaToolWidthModifierLabel);
+        return $"{scale}/{depth}/{width} + Wheel";
+    }
+
+    private static string FormatModifier(string inputLabel, string modifierLabel)
+    {
+        return string.IsNullOrWhiteSpace(inputLabel)
+            ? HomesteadLocalization.Text("hs_common_unbound")
+            : modifierLabel;
     }
 
     public static bool TryGetAimPoint(Player player, float maxSelectableSide, out Vector3 point)

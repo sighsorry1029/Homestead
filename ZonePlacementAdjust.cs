@@ -1,3 +1,7 @@
+using System.Collections.Generic;
+using System.Reflection;
+using System.Reflection.Emit;
+using BepInEx.Bootstrap;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
@@ -6,9 +10,12 @@ namespace Homestead;
 
 internal static class ZonePlacementAdjust
 {
+    private const string ComfyGizmoGuid = "bruce.valheim.comfymods.gizmo";
     private const float VanillaPlacementRotationStep = 22.5f;
 
     private static ManualLogSource Log = null!;
+    private static bool _axisRotationAppliedBeforeSnapThisUpdate;
+    private static bool _comfyGizmoWarningLogged;
     private static string _lastGhostName = "";
     private static float _heightOffset;
     private static Vector3 _horizontalOffset;
@@ -25,6 +32,7 @@ internal static class ZonePlacementAdjust
         [HarmonyPriority(Priority.First)]
         private static void Prefix(Player __instance)
         {
+            _axisRotationAppliedBeforeSnapThisUpdate = false;
             ApplyNativeRotationStep(__instance);
         }
 
@@ -48,13 +56,13 @@ internal static class ZonePlacementAdjust
             HandleInput(__instance);
 
             bool hasOffset = Mathf.Abs(_heightOffset) >= 0.0001f || _horizontalOffset.sqrMagnitude >= 0.0001f;
-            bool hasAxisRotation = PlacementControlConfig.HasPlacementAxisRotation;
+            bool hasAxisRotation = HasActiveAxisRotation();
             if (hasOffset)
             {
-                ApplyOffset(__instance, ghost);
+                ApplyOffset(ghost, hasAxisRotation);
             }
 
-            if (hasAxisRotation)
+            if (hasAxisRotation && !_axisRotationAppliedBeforeSnapThisUpdate)
             {
                 ApplyAxisRotation(ghost);
             }
@@ -76,9 +84,71 @@ internal static class ZonePlacementAdjust
                 _horizontalOffset,
                 _heightOffset,
                 currentYaw,
-                PlacementControlConfig.XAxisRotation,
-                PlacementControlConfig.ZAxisRotation,
+                hasAxisRotation ? PlacementControlConfig.XAxisRotation : 0f,
+                hasAxisRotation ? PlacementControlConfig.ZAxisRotation : 0f,
                 keepVisible);
+        }
+
+        [HarmonyTranspiler]
+        [HarmonyAfter(new[] { ComfyGizmoGuid })]
+        [HarmonyPriority(Priority.Last)]
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            CodeMatcher matcher = new CodeMatcher(instructions)
+                .Start()
+                .MatchStartForward(
+                    new CodeMatch(OpCodes.Ldfld, AccessTools.Field(typeof(Player), nameof(Player.m_placeRotation))),
+                    new CodeMatch(OpCodes.Conv_R4),
+                    new CodeMatch(OpCodes.Mul),
+                    new CodeMatch(OpCodes.Ldc_R4),
+                    new CodeMatch(
+                        OpCodes.Call,
+                        AccessTools.Method(
+                            typeof(Quaternion),
+                            nameof(Quaternion.Euler),
+                            new[] { typeof(float), typeof(float), typeof(float) })));
+
+            if (matcher.IsInvalid)
+            {
+                Log.LogWarning(
+                    "Could not integrate Homestead X/Z placement rotation with native snapping; using the legacy post-snap fallback.");
+                return matcher.InstructionEnumeration();
+            }
+
+            matcher.Advance(5);
+            int intermediateInstructions = 0;
+            while (matcher.IsValid &&
+                   !IsStoreLocal(matcher.Instruction) &&
+                   intermediateInstructions <= 4)
+            {
+                if (matcher.Instruction.opcode != OpCodes.Nop &&
+                    !IsQuaternionDecorator(matcher.Instruction))
+                {
+                    break;
+                }
+
+                intermediateInstructions++;
+                matcher.Advance(1);
+            }
+
+            if (matcher.IsInvalid ||
+                intermediateInstructions > 4 ||
+                !IsStoreLocal(matcher.Instruction))
+            {
+                Log.LogWarning(
+                    "Could not find the native placement rotation store; using the legacy post-snap X/Z rotation fallback.");
+                return matcher.InstructionEnumeration();
+            }
+
+            matcher.InsertAndAdvance(
+                new CodeInstruction(OpCodes.Ldarg_0),
+                new CodeInstruction(
+                    OpCodes.Call,
+                    AccessTools.Method(
+                        typeof(ZonePlacementAdjust),
+                        nameof(IntegrateAxisRotationBeforeSnap))));
+
+            return matcher.InstructionEnumeration();
         }
     }
 
@@ -133,7 +203,7 @@ internal static class ZonePlacementAdjust
 
     private static bool IsLocalPlacementContext(Player player)
     {
-        return (PlacementControlConfig.PlacementAdjustEnabled || PlacementControlConfig.HasPlacementAxisRotation) &&
+        return (PlacementControlConfig.PlacementAdjustEnabled || HasActiveAxisRotation()) &&
                Player.m_localPlayer &&
                player == Player.m_localPlayer &&
                player.InPlaceMode() &&
@@ -151,7 +221,7 @@ internal static class ZonePlacementAdjust
 
     private static void ApplyNativeRotationStep(Player player)
     {
-        if (!IsLocalPlayer(player))
+        if (!IsLocalPlayer(player) || IsComfyGizmoLoaded())
         {
             return;
         }
@@ -181,7 +251,11 @@ internal static class ZonePlacementAdjust
 
     private static void RandomizeFullCircleRotationForPiece(Player? player, Piece? piece)
     {
-        if (player == null || !IsLocalPlayer(player) || piece == null || !piece.m_randomInitBuildRotation)
+        if (player == null ||
+            !IsLocalPlayer(player) ||
+            piece == null ||
+            !piece.m_randomInitBuildRotation ||
+            IsComfyGizmoLoaded())
         {
             return;
         }
@@ -255,12 +329,13 @@ internal static class ZonePlacementAdjust
 
     private static bool UsesNonVanillaRotationStep()
     {
-        return Mathf.Abs(GetRotationStep() - VanillaPlacementRotationStep) > 0.001f;
+        return !IsComfyGizmoLoaded() &&
+               Mathf.Abs(GetRotationStep() - VanillaPlacementRotationStep) > 0.001f;
     }
 
     private static void HandleInput(Player player)
     {
-        if (!PlacementControlConfig.PlacementAdjustEnabled || ShouldBlockInput())
+        if (ShouldBlockInput())
         {
             return;
         }
@@ -272,10 +347,85 @@ internal static class ZonePlacementAdjust
         }
     }
 
-    private static void ApplyOffset(Player player, GameObject ghost)
+    private static bool IsQuaternionDecorator(CodeInstruction instruction)
+    {
+        if ((instruction.opcode != OpCodes.Call && instruction.opcode != OpCodes.Callvirt) ||
+            instruction.operand is not MethodInfo method ||
+            !method.IsStatic ||
+            method.ReturnType != typeof(Quaternion))
+        {
+            return false;
+        }
+
+        ParameterInfo[] parameters = method.GetParameters();
+        return parameters.Length == 1 &&
+               parameters[0].ParameterType == typeof(Quaternion);
+    }
+
+    private static bool IsStoreLocal(CodeInstruction instruction)
+    {
+        OpCode opcode = instruction.opcode;
+        return opcode == OpCodes.Stloc ||
+               opcode == OpCodes.Stloc_0 ||
+               opcode == OpCodes.Stloc_1 ||
+               opcode == OpCodes.Stloc_2 ||
+               opcode == OpCodes.Stloc_3 ||
+               opcode == OpCodes.Stloc_S;
+    }
+
+    private static Quaternion IntegrateAxisRotationBeforeSnap(Quaternion rotation, Player player)
+    {
+        if (!HasActiveAxisRotation() ||
+            !IsLocalPlacementContext(player) ||
+            ShouldSkipGhost(player.m_placementGhost))
+        {
+            return rotation;
+        }
+
+        _axisRotationAppliedBeforeSnapThisUpdate = true;
+        return rotation * GetAxisRotation();
+    }
+
+    private static bool HasActiveAxisRotation()
+    {
+        if (!PlacementControlConfig.HasPlacementAxisRotation)
+        {
+            return false;
+        }
+
+        if (!IsComfyGizmoLoaded())
+        {
+            return true;
+        }
+
+        if (!_comfyGizmoWarningLogged)
+        {
+            _comfyGizmoWarningLogged = true;
+            Log.LogWarning(
+                "ComfyGizmo is loaded. Homestead's ordinary-piece Rotation Step, random rotation correction, and X/Z Axis Rotation are ignored to avoid overlapping rotation systems. Rotation Step remains active for area tools and blueprints.");
+        }
+
+        return false;
+    }
+
+    private static bool IsComfyGizmoLoaded()
+    {
+        return Chainloader.PluginInfos.ContainsKey(ComfyGizmoGuid);
+    }
+
+    private static void ApplyOffset(GameObject ghost, bool hasAxisRotation)
     {
         Transform ghostTransform = ghost.transform;
-        Vector3 adjustedPosition = ghostTransform.position + ZonePlacementOffset.ToWorldOffset(ghostTransform.rotation, _horizontalOffset, _heightOffset);
+        Quaternion offsetRotation = ghostTransform.rotation;
+        if (hasAxisRotation && _axisRotationAppliedBeforeSnapThisUpdate)
+        {
+            // Preserve the previous offset frame: offsets were applied after
+            // native/third-party rotation but before Homestead's fixed X/Z tilt.
+            offsetRotation *= Quaternion.Inverse(GetAxisRotation());
+        }
+
+        Vector3 adjustedPosition = ghostTransform.position +
+                                   ZonePlacementOffset.ToWorldOffset(offsetRotation, _horizontalOffset, _heightOffset);
         ghostTransform.position = adjustedPosition;
         Physics.SyncTransforms();
     }
@@ -283,9 +433,16 @@ internal static class ZonePlacementAdjust
     private static void ApplyAxisRotation(GameObject ghost)
     {
         Transform ghostTransform = ghost.transform;
-        Quaternion axisRotation = Quaternion.Euler(PlacementControlConfig.XAxisRotation, 0f, PlacementControlConfig.ZAxisRotation);
-        ghostTransform.rotation *= axisRotation;
+        ghostTransform.rotation *= GetAxisRotation();
         Physics.SyncTransforms();
+    }
+
+    private static Quaternion GetAxisRotation()
+    {
+        return Quaternion.Euler(
+            PlacementControlConfig.XAxisRotation,
+            0f,
+            PlacementControlConfig.ZAxisRotation);
     }
 
     private static void RevalidateFinalPlacement(Player player, GameObject ghost)

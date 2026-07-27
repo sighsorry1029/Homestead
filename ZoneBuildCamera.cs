@@ -255,10 +255,10 @@ internal static class ZoneBuildCamera
 
         if (ShouldRestrictCameraEntry())
         {
-            string comfort = FormatComfortProgress();
+            int minimumComfortLevel = BuildCameraConfig.MinimumComfortLevel;
             return MeetsComfortGate()
-                ? HomesteadLocalization.Format("hs_build_camera_station_cozy", comfort)
-                : HomesteadLocalization.Format("hs_build_camera_need_cozy", comfort);
+                ? HomesteadLocalization.Format("hs_build_camera_station_cozy", minimumComfortLevel)
+                : HomesteadLocalization.Format("hs_build_camera_need_cozy", minimumComfortLevel);
         }
 
         return HomesteadLocalization.Text("hs_build_camera_station_ready");
@@ -793,10 +793,4 @@ internal static class ZoneBuildCamera
         return HomesteadLocalization.Text("hs_common_comfort");
     }
 
-    private static string FormatComfortProgress()
-    {
-        Player player = Player.m_localPlayer;
-        int current = player ? player.GetComfortLevel() : 0;
-        return $"C{current}/{BuildCameraConfig.MinimumComfortLevel}";
-    }
 }

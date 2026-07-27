@@ -156,6 +156,7 @@ internal static class BlueprintConfig
     private static ConfigEntry<float> _areaDismantleDefaultWidth = null!;
     private static ConfigEntry<float> _areaDismantleDefaultDepth = null!;
     private static ConfigEntry<string> _areaDismantlePrefabBlacklist = null!;
+    private static ConfigEntry<KeyboardShortcut> _areaToolUniformScaleModifierKey = null!;
     private static ConfigEntry<KeyboardShortcut> _areaToolDepthModifierKey = null!;
     private static ConfigEntry<KeyboardShortcut> _areaToolWidthModifierKey = null!;
     private static ConfigEntry<Color> _previewGhostColor = null!;
@@ -251,12 +252,18 @@ internal static class BlueprintConfig
     public static float AreaDismantleDefaultDepth => Mathf.Clamp(_areaDismantleDefaultDepth.Value, 1f, AreaDismantleMaxSide);
     public static Color AreaDismantleBoundaryColor => new(1f, 0.3f, 0.12f, 0.9f);
     public static HashSet<string> AreaDismantlePrefabBlacklist => ConfigValueHelpers.SplitPrefabList(_areaDismantlePrefabBlacklist.Value);
+    public static KeyboardShortcut AreaToolUniformScaleModifierKey => _areaToolUniformScaleModifierKey.Value;
+    public static string AreaToolUniformScaleModifierLabel => ConfigValueHelpers.FormatShortcut(AreaToolUniformScaleModifierKey);
+    public static string AreaToolUniformScaleInputLabel => AreaToolUniformScaleModifierKey.MainKey == KeyCode.None ? "" : $"{AreaToolUniformScaleModifierLabel}+Wheel";
     public static KeyboardShortcut AreaToolDepthModifierKey => _areaToolDepthModifierKey.Value;
     public static string AreaToolDepthModifierLabel => ConfigValueHelpers.FormatShortcut(AreaToolDepthModifierKey);
     public static string AreaToolDepthInputLabel => AreaToolDepthModifierKey.MainKey == KeyCode.None ? "" : $"{AreaToolDepthModifierLabel}+Wheel";
     public static KeyboardShortcut AreaToolWidthModifierKey => _areaToolWidthModifierKey.Value;
     public static string AreaToolWidthModifierLabel => ConfigValueHelpers.FormatShortcut(AreaToolWidthModifierKey);
     public static string AreaToolWidthInputLabel => AreaToolWidthModifierKey.MainKey == KeyCode.None ? "" : $"{AreaToolWidthModifierLabel}+Wheel";
+    public static bool IsAreaToolUniformScaleModifierHeld() => AreaToolUniformScaleModifierKey.MainKey != KeyCode.None && ConfigValueHelpers.IsShortcutHeld(AreaToolUniformScaleModifierKey, allowUnbound: false);
+    public static bool IsAreaToolDepthModifierHeld() => ConfigValueHelpers.IsShortcutHeld(AreaToolDepthModifierKey, allowUnbound: false);
+    public static bool IsAreaToolWidthModifierHeld() => ConfigValueHelpers.IsShortcutHeld(AreaToolWidthModifierKey, allowUnbound: false);
 
     public static bool ShouldApplyTerrainSupport(Player player)
     {
@@ -475,7 +482,7 @@ internal static class BlueprintConfig
             "Blueprint Store Back Hotkey",
             new KeyboardShortcut(KeyCode.Mouse3),
             new ConfigDescription(
-                "Client-only hotkey for returning from Blueprint Store sub-panels such as the offers view. Display uses the same Unity key names as Config Manager.",
+                "Client-only hotkey for returning from Blueprint Store sub-panels such as the offers view. Player-facing labels use one-based mouse button names, so Unity Mouse0 is shown as Mouse1.",
                 null,
                 new ConfigurationManagerAttributes { Order = 930 }),
             synchronizedSetting: false);
@@ -519,6 +526,12 @@ internal static class BlueprintConfig
             "piece_stuward",
             "Comma-separated additional prefab names that Area Dismantle will never dismantle. Homestead blueprint/store chests are always protected internally.");
         PruneBuiltInAreaDismantleBlacklistEntries();
+        _areaToolUniformScaleModifierKey = plugin.config(
+            "06 - Area Tools",
+            "Area Tool Uniform Scale Modifier Key",
+            new KeyboardShortcut(KeyCode.LeftAlt),
+            "Client-only modifier key held while using the mouse wheel to resize both the width and depth of Area Save and Area Dismantle rectangles. Set to None to disable uniform wheel resizing.",
+            synchronizedSetting: false);
         _areaToolDepthModifierKey = plugin.config(
             "06 - Area Tools",
             "Area Tool Depth Modifier Key",
@@ -767,7 +780,6 @@ internal static class PlacementControlConfig
     private static ConfigEntry<float> _placementRotationStep = null!;
     private static ConfigEntry<float> _placementXAxisRotation = null!;
     private static ConfigEntry<float> _placementZAxisRotation = null!;
-    private static ConfigEntry<KeyboardShortcut> _placementAdjustModifierKey = null!;
 
     public static KeyboardShortcut GridSnapToggleHotkey => _gridSnapToggleHotkey.Value;
     public static float GridSnapSize => Mathf.Round(Mathf.Clamp(_gridSnapSize.Value, 0.05f, 1f) * 20f) / 20f;
@@ -778,13 +790,6 @@ internal static class PlacementControlConfig
     public static float XAxisRotation => RoundHalfDegree(Mathf.Clamp(_placementXAxisRotation.Value, -180f, 180f));
     public static float ZAxisRotation => RoundHalfDegree(Mathf.Clamp(_placementZAxisRotation.Value, -180f, 180f));
     public static bool HasPlacementAxisRotation => Mathf.Abs(XAxisRotation) > 0.001f || Mathf.Abs(ZAxisRotation) > 0.001f;
-    public static KeyboardShortcut PlacementAdjustModifierKey => _placementAdjustModifierKey.Value;
-    public static string PlacementAdjustModifierLabel => ConfigValueHelpers.FormatShortcut(PlacementAdjustModifierKey);
-    public static bool IsAreaDepthModifierHeld() => ConfigValueHelpers.IsShortcutHeld(BlueprintConfig.AreaToolDepthModifierKey, allowUnbound: false);
-    public static bool IsAreaWidthModifierHeld() => ConfigValueHelpers.IsShortcutHeld(BlueprintConfig.AreaToolWidthModifierKey, allowUnbound: false);
-    public static bool IsAreaUniformScaleModifierHeld() => PlacementAdjustModifierKey.MainKey != KeyCode.None && ConfigValueHelpers.IsShortcutHeld(PlacementAdjustModifierKey, allowUnbound: false);
-    public static string AreaUniformScaleInputLabel => PlacementAdjustModifierKey.MainKey == KeyCode.None ? "" : $"{PlacementAdjustModifierLabel}+Wheel";
-    public static bool IsPlacementAdjustModifierHeld() => ConfigValueHelpers.IsShortcutHeld(PlacementAdjustModifierKey, allowUnbound: true);
 
     public static void Bind(HomesteadPlugin plugin)
     {
@@ -804,7 +809,8 @@ internal static class PlacementControlConfig
             "04 - Placement Controls",
             "Position Adjust",
             HomesteadPlugin.Toggle.On,
-            "If on, hammer pieces, Homestead blueprints, and area tools can be nudged with PgUp/PgDn and arrow keys.");
+            "If on, hammer pieces, Homestead blueprints, and area tools can be nudged directly with PgUp/PgDn and arrow keys without a modifier key.",
+            synchronizedSetting: false);
         _placementAdjustHeightStep = plugin.config(
             "04 - Placement Controls",
             "Position Height Step",
@@ -821,25 +827,19 @@ internal static class PlacementControlConfig
             "04 - Placement Controls",
             "Rotation Step",
             22.5f,
-            new ConfigDescription("Client-only rotation step in degrees shared by Area Save, Area Dismantle, blueprint yaw rotation, and placement rotation controls. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(0.5f, 90f)),
+            new ConfigDescription("Client-only rotation step in degrees shared by Area Save, Area Dismantle, blueprint yaw rotation, and ordinary hammer placement. While ComfyGizmo is loaded, ordinary hammer placement and its random rotation correction are left to ComfyGizmo; area and blueprint rotation remain unchanged. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(0.5f, 90f)),
             synchronizedSetting: false);
         _placementXAxisRotation = plugin.config(
             "04 - Placement Controls",
             "X Axis Rotation",
             0f,
-            new ConfigDescription("Client-only default X-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
+            new ConfigDescription("Client-only default X-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Ignored while ComfyGizmo is loaded. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
             synchronizedSetting: false);
         _placementZAxisRotation = plugin.config(
             "04 - Placement Controls",
             "Z Axis Rotation",
             0f,
-            new ConfigDescription("Client-only default Z-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
-            synchronizedSetting: false);
-        _placementAdjustModifierKey = plugin.config(
-            "04 - Placement Controls",
-            "Position Adjust Modifier Key",
-            new KeyboardShortcut(KeyCode.LeftAlt),
-            "Client-only modifier key held while using PgUp/PgDn and arrow keys for placement offsets. Set to None to allow the old unmodified keys.",
+            new ConfigDescription("Client-only default Z-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Ignored while ComfyGizmo is loaded. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
             synchronizedSetting: false);
     }
 
@@ -995,6 +995,22 @@ internal static class ConfigValueHelpers
         if (key == KeyCode.None)
         {
             return "";
+        }
+
+        string mouseButton = key switch
+        {
+            KeyCode.Mouse0 => "Mouse1",
+            KeyCode.Mouse1 => "Mouse2",
+            KeyCode.Mouse2 => "Mouse3",
+            KeyCode.Mouse3 => "Mouse4",
+            KeyCode.Mouse4 => "Mouse5",
+            KeyCode.Mouse5 => "Mouse6",
+            KeyCode.Mouse6 => "Mouse7",
+            _ => ""
+        };
+        if (mouseButton.Length > 0)
+        {
+            return mouseButton;
         }
 
         return key.ToString()

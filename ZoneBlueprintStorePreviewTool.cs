@@ -259,8 +259,11 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             return;
         }
 
-        ZonePlacementInput.ApplyYawScroll(ref _yaw);
-        ZonePlacementInput.ApplyOffset(ref _horizontalOffset, ref _heightOffset);
+        if (!ZoneAreaToolShared.ShouldBlockInput())
+        {
+            ZonePlacementInput.ApplyYawScroll(ref _yaw);
+            ZonePlacementInput.ApplyOffset(ref _horizontalOffset, ref _heightOffset);
+        }
 
         if (TryGetAimPoint(player, out Vector3 point) && _previewRoot != null)
         {

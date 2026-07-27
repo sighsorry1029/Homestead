@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.11
+
+- Added snap-aware X/Z placement rotation that preserves native piece snapping, while deferring ordinary-piece rotation step, random rotation correction, and X/Z rotation to ComfyGizmo when it is loaded.
+- Moved the Area Save/Dismantle uniform-scale modifier into Area Tools; placement nudging now uses arrows and PgUp/PgDn directly, and Position Adjust is client-only.
+- Simplified Area Save/Dismantle piece descriptions and aligned displayed mouse button numbers with Valheim's one-based labels.
+- Improved key hints with the active Grid Size, clearer Build Camera comfort requirements, and one-based Blueprint Store back-button labels.
+- Prevented Blueprint Store preview placement input while menus or text fields are active.
+
 ## 1.1.10
 
 - Made blueprint plan confirmation safer by validating transform and placement bounds, rolling back newly created pieces and Homestead terrain changes when possible, and reporting incomplete rollback instead of silently leaving partial work.

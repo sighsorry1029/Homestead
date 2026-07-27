@@ -178,21 +178,21 @@ internal sealed class ZoneAreaToolController
         }
 
         float delta = scroll > 0f ? _options.SizeStep : -_options.SizeStep;
-        if (PlacementControlConfig.IsAreaDepthModifierHeld())
+        if (BlueprintConfig.IsAreaToolDepthModifierHeld())
         {
             ZoneAreaToolShared.ResizeDepth(ref _depth, delta, _options.MinSide, _options.MaxSide());
             ClearTargetOverlay();
             return;
         }
 
-        if (PlacementControlConfig.IsAreaWidthModifierHeld())
+        if (BlueprintConfig.IsAreaToolWidthModifierHeld())
         {
             ZoneAreaToolShared.ResizeWidth(ref _width, delta, _options.MinSide, _options.MaxSide());
             ClearTargetOverlay();
             return;
         }
 
-        if (PlacementControlConfig.IsAreaUniformScaleModifierHeld())
+        if (BlueprintConfig.IsAreaToolUniformScaleModifierHeld())
         {
             ZoneAreaToolShared.ResizeUniform(ref _width, ref _depth, delta, _options.MinSide, _options.MaxSide());
             ClearTargetOverlay();

@@ -22,7 +22,7 @@ internal static class ZonePlacementInput
 
     public static bool ApplyOffset(ref Vector3 horizontalOffset, ref float heightOffset)
     {
-        if (!PlacementControlConfig.IsPlacementAdjustModifierHeld())
+        if (!PlacementControlConfig.PlacementAdjustEnabled)
         {
             return false;
         }

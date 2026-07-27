@@ -137,14 +137,14 @@ internal static class ZoneBlueprintToolPieceFactory
 
     private static string FormatAreaSaveDescription()
     {
-        return HomesteadLocalization.Format("hs_area_save_desc", "Wheel", ZoneAreaToolShared.FormatScaleInput(), ZoneAreaToolShared.FormatDepthInput(), ZoneAreaToolShared.FormatWidthInput(), "Mouse0") +
+        return HomesteadLocalization.Format("hs_area_save_desc", ZoneAreaToolShared.FormatCompactShapeInput()) +
                "\n" +
                HomesteadLocalization.Text("hs_area_save_color_hint");
     }
 
     private static string FormatAreaDismantleDescription()
     {
-        return HomesteadLocalization.Format("hs_area_dismantle_desc", "Wheel", ZoneAreaToolShared.FormatScaleInput(), ZoneAreaToolShared.FormatDepthInput(), ZoneAreaToolShared.FormatWidthInput(), "Mouse0");
+        return HomesteadLocalization.Format("hs_area_dismantle_desc", ZoneAreaToolShared.FormatCompactShapeInput());
     }
 
     private static string SanitizePrefabName(string name)

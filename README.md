@@ -82,9 +82,9 @@ Area Save and Area Dismantle use the same rectangle controls:
 
 - `Wheel`: rotate the area.
 - `Alt + Wheel`: scale width and depth together.
-- `Mouse3 + Wheel`: adjust depth.
-- `Mouse4 + Wheel`: adjust width.
-- Placement-adjust modifier + arrows/PgUp/PgDn: nudge the tool or preview.
+- `Mouse4 + Wheel`: adjust depth.
+- `Mouse5 + Wheel`: adjust width.
+- `Arrows` / `PgUp` / `PgDn`: nudge the tool or preview without a modifier key.
 
 Area Dismantle is intentionally conservative:
 
