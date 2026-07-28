@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using BepInEx.Bootstrap;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
@@ -12,12 +13,12 @@ namespace Homestead;
 
 internal static class AzuCraftyBoxesCompat
 {
+    private const string PluginGuid = "Azumatt.AzuCraftyBoxes";
     private const string ApiTypeName = "AzuCraftyBoxes.API";
     private const string PluginTypeName = "AzuCraftyBoxes.AzuCraftyBoxesPlugin";
     private const string MiscFunctionsTypeName = "AzuCraftyBoxes.Util.Functions.MiscFunctions";
     private const string BoxesTypeName = "AzuCraftyBoxes.Util.Functions.Boxes";
     private const float FallbackRange = 20f;
-    private const float PatchRetryIntervalSeconds = 2f;
     private static readonly HashSet<string> ProtectedContainerPrefabs = new(StringComparer.OrdinalIgnoreCase)
     {
         ZoneBlueprintPlanChestPrefab.PrefabName,
@@ -28,7 +29,6 @@ internal static class AzuCraftyBoxesCompat
 
     private static bool _initialized;
     private static ManualLogSource? _logger;
-    private static Harmony? _harmony;
     private static Type? _apiType;
     private static Type? _pluginType;
     private static Type? _miscFunctionsType;
@@ -41,23 +41,12 @@ internal static class AzuCraftyBoxesCompat
     private static MethodInfo? _shouldPrevent;
     private static MethodInfo? _checkAndDecrement;
     private static FieldInfo? _rangeField;
-    private static bool _pullFilterPatchApplied;
-    private static bool _loggedPullFilterPatchFailure;
-    private static float _nextPatchRetryAt;
+
     internal static void Initialize(ManualLogSource logger, Harmony harmony)
     {
         _logger = logger;
-        _harmony = harmony;
-        EnsureInitialized(force: true);
-        TryPatchPullFilter();
-    }
-
-    internal static void Update()
-    {
-        if (!_pullFilterPatchApplied && Time.realtimeSinceStartup >= _nextPatchRetryAt)
-        {
-            TryPatchPullFilter();
-        }
+        EnsureInitialized();
+        TryPatchPullFilter(harmony);
     }
 
     internal static bool IsLoaded
@@ -142,7 +131,7 @@ internal static class AzuCraftyBoxesCompat
             return;
         }
 
-        EnsureInitialized(force: _apiType == null || _boxesType == null);
+        EnsureInitialized();
         bool touchedRegistry = false;
         touchedRegistry |= InvokeStaticVoid(_apiRemoveContainer, container);
         touchedRegistry |= InvokeStaticVoid(_boxesRemoveContainer, container);
@@ -154,18 +143,30 @@ internal static class AzuCraftyBoxesCompat
         }
     }
 
-    private static void EnsureInitialized(bool force = false)
+    private static void EnsureInitialized()
     {
-        if (_initialized && !force)
+        if (_initialized)
         {
             return;
         }
 
         _initialized = true;
-        _apiType = FindType(ApiTypeName);
-        _pluginType = FindType(PluginTypeName);
-        _miscFunctionsType = FindType(MiscFunctionsTypeName);
-        _boxesType = FindType(BoxesTypeName);
+        if (!Chainloader.PluginInfos.TryGetValue(PluginGuid, out var pluginInfo))
+        {
+            return;
+        }
+
+        Assembly? assembly = pluginInfo.Instance?.GetType().Assembly;
+        if (assembly == null)
+        {
+            _logger?.LogDebug("AzuCraftyBoxes is installed, but its plugin instance is not available.");
+            return;
+        }
+
+        _apiType = assembly.GetType(ApiTypeName, throwOnError: false);
+        _pluginType = assembly.GetType(PluginTypeName, throwOnError: false);
+        _miscFunctionsType = assembly.GetType(MiscFunctionsTypeName, throwOnError: false);
+        _boxesType = assembly.GetType(BoxesTypeName, throwOnError: false);
         _queryFrameType = _boxesType?.GetNestedType("QueryFrame", BindingFlags.Public | BindingFlags.NonPublic);
         _getNearbyContainersDefinition = _apiType?.GetMethods(BindingFlags.Public | BindingFlags.Static)
             .FirstOrDefault(method => method.Name == "GetNearbyContainers" && method.IsGenericMethodDefinition);
@@ -177,15 +178,9 @@ internal static class AzuCraftyBoxesCompat
         _rangeField = _pluginType?.GetField("mRange", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
     }
 
-    private static void TryPatchPullFilter()
+    private static void TryPatchPullFilter(Harmony harmony)
     {
-        if (_pullFilterPatchApplied || _harmony == null)
-        {
-            return;
-        }
-
-        EnsureInitialized(force: _boxesType == null);
-        _nextPatchRetryAt = Time.realtimeSinceStartup + PatchRetryIntervalSeconds;
+        EnsureInitialized();
         if (_boxesType == null)
         {
             return;
@@ -207,28 +202,18 @@ internal static class AzuCraftyBoxesCompat
         MethodInfo? prefix = typeof(AzuCraftyBoxesCompat).GetMethod(nameof(CanItemBePulledPrefix), BindingFlags.NonPublic | BindingFlags.Static);
         if (target == null || prefix == null)
         {
-            if (!_loggedPullFilterPatchFailure)
-            {
-                _loggedPullFilterPatchFailure = true;
-                _logger?.LogDebug("AzuCraftyBoxes CanItemBePulled patch target is not available yet.");
-            }
-
+            _logger?.LogDebug("AzuCraftyBoxes CanItemBePulled patch target is not available.");
             return;
         }
 
         try
         {
-            _harmony.Patch(target, prefix: new HarmonyMethod(prefix));
-            _pullFilterPatchApplied = true;
+            harmony.Patch(target, prefix: new HarmonyMethod(prefix));
             _logger?.LogInfo("AzuCraftyBoxes pull filter patched for Homestead blueprint containers.");
         }
         catch (Exception ex)
         {
-            if (!_loggedPullFilterPatchFailure)
-            {
-                _loggedPullFilterPatchFailure = true;
-                _logger?.LogDebug($"Could not patch AzuCraftyBoxes pull filter: {ex.Message}");
-            }
+            _logger?.LogDebug($"Could not patch AzuCraftyBoxes pull filter: {ex.Message}");
         }
     }
 
@@ -256,8 +241,16 @@ internal static class AzuCraftyBoxesCompat
 
     private static string NormalizePrefabName(string prefabName)
     {
-        int index = prefabName.IndexOfAny(['(', ' ']);
-        return index < 0 ? prefabName : prefabName.Substring(0, index);
+        for (int index = 0; index < prefabName.Length; index++)
+        {
+            char character = prefabName[index];
+            if (character == '(' || character == ' ')
+            {
+                return prefabName.Substring(0, index);
+            }
+        }
+
+        return prefabName;
     }
 
     private static bool InvokeStaticVoid(MethodInfo? method, Container container)
@@ -389,13 +382,6 @@ internal static class AzuCraftyBoxesCompat
         {
             return amount;
         }
-    }
-
-    private static Type? FindType(string fullName)
-    {
-        return AppDomain.CurrentDomain.GetAssemblies()
-            .Select(assembly => assembly.GetType(fullName, throwOnError: false))
-            .FirstOrDefault(type => type != null);
     }
 
     private static string InvokeString(object target, string methodName)

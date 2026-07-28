@@ -22,7 +22,7 @@ internal static class ZoneBlueprintDirectoryWatcher
     public static void Update(Action<IReadOnlyList<string>, IReadOnlyList<string>> applyChanges)
     {
         Ensure();
-        if (TryConsumeChanges(out List<string> blueprintChanges, out List<string> iconInvalidations))
+        if (TryConsumeChanges(out IReadOnlyList<string> blueprintChanges, out IReadOnlyList<string> iconInvalidations))
         {
             applyChanges(blueprintChanges, iconInvalidations);
         }
@@ -51,9 +51,8 @@ internal static class ZoneBlueprintDirectoryWatcher
             _watcherFaulted = false;
             DisposeWatcher();
             _rescanAfterWatcherReconnect = true;
-            QueueFullRescan();
             _nextRetryAt = now + WatcherRetrySeconds;
-            HomesteadPlugin.HomesteadLogger.LogDebug("Homestead blueprint directory watcher stopped unexpectedly; scheduled a full rescan and watcher restart.");
+            HomesteadPlugin.HomesteadLogger.LogDebug("Homestead blueprint directory watcher stopped unexpectedly; scheduled a watcher restart and post-reconnect full rescan.");
             return;
         }
 
@@ -109,16 +108,22 @@ internal static class ZoneBlueprintDirectoryWatcher
         {
             DisposeWatcher();
             _rescanAfterWatcherReconnect = true;
-            QueueFullRescan();
             _nextRetryAt = now + WatcherRetrySeconds;
             HomesteadPlugin.HomesteadLogger.LogDebug($"Could not watch Homestead blueprint directory yet: {ex.Message}");
         }
     }
 
-    private static bool TryConsumeChanges(out List<string> blueprintChanges, out List<string> iconInvalidations)
+    private static bool TryConsumeChanges(
+        out IReadOnlyList<string> blueprintChanges,
+        out IReadOnlyList<string> iconInvalidations)
     {
-        blueprintChanges = [];
-        iconInvalidations = [];
+        blueprintChanges = Array.Empty<string>();
+        iconInvalidations = Array.Empty<string>();
+        if (!_changePending)
+        {
+            return false;
+        }
+
         lock (ChangeLock)
         {
             if (!_changePending)
@@ -127,8 +132,16 @@ internal static class ZoneBlueprintDirectoryWatcher
             }
 
             _changePending = false;
-            blueprintChanges.AddRange(PendingBlueprintChanges);
-            iconInvalidations.AddRange(PendingIconInvalidations);
+            if (PendingBlueprintChanges.Count > 0)
+            {
+                blueprintChanges = new List<string>(PendingBlueprintChanges);
+            }
+
+            if (PendingIconInvalidations.Count > 0)
+            {
+                iconInvalidations = new List<string>(PendingIconInvalidations);
+            }
+
             PendingBlueprintChanges.Clear();
             PendingIconInvalidations.Clear();
         }

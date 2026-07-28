@@ -27,6 +27,7 @@ internal static class ZoneBlueprintChestLifecycle
         }
 
         ZoneBlueprintChestZdoRegistry.Refresh(zdo);
+        ZoneBlueprintChestMapPins.Track(zdo);
     }
 
     public static void Touch(ZNetView? nview)
@@ -92,6 +93,7 @@ internal static class ZoneBlueprintChestLifecycle
 
         zdo.Set(OwnerPlatformIdKey, HomesteadPlayerIdentity.NormalizePlatformId(ownerPlatformId));
         ZoneBlueprintChestZdoRegistry.Refresh(zdo);
+        ZoneBlueprintChestMapPins.Track(zdo, refreshExisting: true);
     }
 
     public static string GetOwnerPlatformId(ZDO? zdo)

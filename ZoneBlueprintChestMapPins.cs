@@ -20,6 +20,8 @@ internal static class ZoneBlueprintChestMapPins
     private static readonly List<Minimap.PinData> ActivePins = [];
     private static readonly List<ZDO> ScanBuffer = [];
     private static ManualLogSource? _logger;
+    private static ZDOMan? _trackedZdoMan;
+    private static bool _worldScanCompleted;
     private static bool _largeMapOpen;
     private static bool _pinsDirty;
 
@@ -32,18 +34,23 @@ internal static class ZoneBlueprintChestMapPins
     {
         ClearPins(Minimap.instance);
         KnownChestIds.Clear();
+        ScanBuffer.Clear();
+        _trackedZdoMan = null;
+        _worldScanCompleted = false;
         _largeMapOpen = false;
         _pinsDirty = false;
     }
 
-    public static void Track(ZDO? zdo)
+    public static void Track(ZDO? zdo, bool refreshExisting = false)
     {
         if (zdo == null || !zdo.IsValid() || !IsChestPrefab(zdo.GetPrefab()))
         {
             return;
         }
 
-        if (KnownChestIds.Add(zdo.m_uid) && _largeMapOpen)
+        EnsureTrackedWorld();
+        bool added = KnownChestIds.Add(zdo.m_uid);
+        if (_largeMapOpen && (added || refreshExisting))
         {
             _pinsDirty = true;
         }
@@ -58,13 +65,18 @@ internal static class ZoneBlueprintChestMapPins
             return;
         }
 
+        EnsureTrackedWorld();
         string ownerPlatformId = HomesteadPlayerIdentity.ResolveLocalPlatformId(Player.m_localPlayer.GetPlayerID());
         if (string.IsNullOrWhiteSpace(ownerPlatformId))
         {
             return;
         }
 
-        ScanKnownChests();
+        if (!_worldScanCompleted)
+        {
+            ScanKnownChests();
+            _worldScanCompleted = true;
+        }
 
         List<ZDOID>? stale = null;
         foreach (ZDOID id in KnownChestIds)
@@ -90,6 +102,20 @@ internal static class ZoneBlueprintChestMapPins
 
         _pinsDirty = false;
         ApplyPinSizes();
+    }
+
+    private static void EnsureTrackedWorld()
+    {
+        ZDOMan? current = ZDOMan.instance;
+        if (_trackedZdoMan == current)
+        {
+            return;
+        }
+
+        KnownChestIds.Clear();
+        ScanBuffer.Clear();
+        _trackedZdoMan = current;
+        _worldScanCompleted = false;
     }
 
     private static void ScanKnownChests()

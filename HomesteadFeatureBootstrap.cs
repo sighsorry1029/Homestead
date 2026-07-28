@@ -65,7 +65,6 @@ internal static class HomesteadFeatureBootstrap
         ZoneGridSnap.Update();
         ZoneDvergrCirclet.Update();
         VeiledRecipesCompat.Update();
-        AzuCraftyBoxesCompat.Update();
         ZoneWorldEditTerrainCompat.Update();
     }
 

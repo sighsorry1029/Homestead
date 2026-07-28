@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+- Reduced AzuCraftyBoxes compatibility overhead by resolving the installed plugin once, removing repeated assembly searches when absent, and avoiding a helper-array allocation in protected-container checks.
+- Prevented blueprint directory watcher failures from repeatedly rescanning every blueprint; recovery now performs one full rescan after a successful reconnect, while idle watcher updates no longer allocate change lists or enter a lock.
+- Limited blueprint chest map discovery to once per world and incrementally tracked newly created chests and owner changes for later map refreshes.
+
 ## 1.2.0
 
 - Added snap-aware X/Z placement rotation that preserves native piece snapping, while deferring ordinary-piece rotation step, random rotation correction, and X/Z rotation to ComfyGizmo when it is loaded.
