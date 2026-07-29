@@ -1388,7 +1388,7 @@ internal static class ZoneBlueprintPlanChestPrefab
             return HomesteadCommandResult.Fail(limitReason);
         }
 
-        GameObject? prefab = GetPrefab();
+        GameObject? prefab = ZoneChestPlacement.GetRegisteredNetworkPrefab(PrefabName, PrefabHash);
         if (!prefab)
         {
             return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_chest_prefab_not_ready"));
@@ -1398,17 +1398,17 @@ internal static class ZoneBlueprintPlanChestPrefab
         try
         {
             chest = Object.Instantiate(prefab, chestPosition, chestRotation);
+            ZDO zdo = ZoneChestPlacement.RequireValidNetworkedSpawn(
+                chest,
+                PrefabHash,
+                "Blueprint plan chest");
             Piece piece = chest.GetComponent<Piece>();
             if (piece != null)
             {
                 piece.SetCreator(playerId);
             }
 
-            ZNetView nview = chest.GetComponent<ZNetView>();
-            if (nview != null && nview.IsValid())
-            {
-                ZoneBlueprintChestLifecycle.SetOwnerPlatformId(nview.GetZDO(), ownerPlatformId);
-            }
+            ZoneBlueprintChestLifecycle.SetOwnerPlatformId(zdo, ownerPlatformId);
 
             ZoneBlueprintPlanAnchor planAnchor = chest.GetComponent<ZoneBlueprintPlanAnchor>() ?? chest.AddComponent<ZoneBlueprintPlanAnchor>();
             planAnchor.SetPlan(blueprintName, anchor, anchorRotation);
@@ -1420,6 +1420,7 @@ internal static class ZoneBlueprintPlanChestPrefab
         }
         catch (Exception ex)
         {
+            _logger?.LogError($"Failed to create networked Homestead blueprint plan chest: {ex}");
             ZoneChestPlacement.DestroySpawned(chest);
             return HomesteadCommandResult.Fail(HomesteadLocalization.Format("hs_blueprint_chest_place_failed", ex.Message));
         }

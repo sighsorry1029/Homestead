@@ -238,16 +238,6 @@ internal static class ZoneBlueprintChestCommands
         {
             throw new InvalidOperationException("Server RPC is not ready.");
         }
-
-        if (ZNet.instance.IsServer() && Player.m_localPlayer == null)
-        {
-            return;
-        }
-
-        if (!ZNet.instance.LocalPlayerIsAdminOrHost())
-        {
-            throw new InvalidOperationException("Admin only.");
-        }
     }
 
     private static bool IsAuthorizedSender(long sender)

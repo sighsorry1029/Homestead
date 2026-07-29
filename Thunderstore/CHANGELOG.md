@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2
+
+- Hardened Blueprint Store purchase, price, payout, and blueprint plan chest placement by repairing missing current-scene prefab registrations, validating the spawned network view and ZDO, and rolling back invalid spawns instead of reporting false success.
+- Fixed `hs_clearchests dry` and cleanup requests from dedicated-server administrators being rejected by an unreliable client-side admin check; the server remains authoritative for command permission.
+
 ## 1.2.1
 
 - Reduced AzuCraftyBoxes compatibility overhead by resolving the installed plugin once, removing repeated assembly searches when absent, and avoiding a helper-array allocation in protected-container checks.
