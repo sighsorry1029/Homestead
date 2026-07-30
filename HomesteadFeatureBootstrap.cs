@@ -30,6 +30,7 @@ internal static class HomesteadFeatureBootstrap
         RegisterSessionResetters();
 
         harmony.PatchAll(Assembly.GetExecutingAssembly());
+        ZoneBuildCameraFirstPersonCompat.Initialize(logger, harmony);
         VeiledRecipesCompat.Initialize(logger);
         AzuCraftyBoxesCompat.Initialize(logger, harmony);
         ZoneWorldEditTerrainCompat.Initialize(logger, harmony);
@@ -71,6 +72,7 @@ internal static class HomesteadFeatureBootstrap
     public static void Shutdown()
     {
         ZoneSessionResetRegistry.ResetForWorldSession("shutdown");
+        ZoneBuildCameraFirstPersonCompat.Shutdown();
         ZoneBlueprintChestMapPins.Shutdown();
         ZoneBlueprintChestZdoRegistry.Shutdown();
         ZoneBlueprintStoreDraftRepository.Flush(force: true);

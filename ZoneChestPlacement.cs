@@ -8,6 +8,18 @@ namespace Homestead;
 
 internal static class ZoneChestPlacement
 {
+    public static GameObject? GetCanonicalNetworkChestBasePrefab(string prefabName)
+    {
+        ZNetScene? scene = ZNetScene.instance;
+        if (scene == null)
+        {
+            return null;
+        }
+
+        GameObject? prefab = scene.GetPrefab(prefabName);
+        return IsExpectedNetworkChestPrefab(prefab, prefabName) ? prefab : null;
+    }
+
     public static GameObject? GetRegisteredNetworkPrefab(string prefabName, int prefabHash)
     {
         ZNetScene? scene = ZNetScene.instance;
@@ -17,7 +29,7 @@ internal static class ZoneChestPlacement
         }
 
         GameObject? registered = scene.GetPrefab(prefabHash);
-        if (IsExpectedNetworkPrefab(registered, prefabName))
+        if (IsExpectedNetworkChestPrefab(registered, prefabName))
         {
             return registered;
         }
@@ -28,14 +40,14 @@ internal static class ZoneChestPlacement
         }
 
         GameObject? cached = PrefabManager.Instance.GetPrefab(prefabName);
-        if (!IsExpectedNetworkPrefab(cached, prefabName))
+        if (!IsExpectedNetworkChestPrefab(cached, prefabName))
         {
             return null;
         }
 
         PrefabManager.Instance.RegisterToZNetScene(cached);
         registered = scene.GetPrefab(prefabHash);
-        return IsExpectedNetworkPrefab(registered, prefabName) ? registered : null;
+        return IsExpectedNetworkChestPrefab(registered, prefabName) ? registered : null;
     }
 
     public static ZDO RequireValidNetworkedSpawn(GameObject? chest, int expectedPrefabHash, string label)
@@ -133,11 +145,13 @@ internal static class ZoneChestPlacement
         Object.Destroy(chest);
     }
 
-    private static bool IsExpectedNetworkPrefab(GameObject? prefab, string expectedName)
+    private static bool IsExpectedNetworkChestPrefab(GameObject? prefab, string expectedName)
     {
         return prefab != null &&
                prefab &&
                string.Equals(prefab.name, expectedName, StringComparison.Ordinal) &&
-               prefab.GetComponent<ZNetView>() != null;
+               prefab.GetComponent<ZNetView>() != null &&
+               prefab.GetComponent<Container>() != null &&
+               prefab.GetComponent<Piece>() != null;
     }
 }

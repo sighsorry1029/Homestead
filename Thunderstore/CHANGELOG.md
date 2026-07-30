@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.3
+
+- Fixed Blueprint Store purchase, price, payout, and blueprint plan chests cloning an unrelated mod's identically named child object by creating them only from the canonical chest prefabs registered in the current `ZNetScene`.
+- Added Build Camera compatibility with FirstPersonMode and Immersive First Person, suspending their camera overrides only while Build Camera is active and preserving the user's first-person state afterward.
+
 ## 1.2.2
 
 - Hardened Blueprint Store purchase, price, payout, and blueprint plan chest placement by repairing missing current-scene prefab registrations, validating the spawned network view and ZDO, and rolling back invalid spawns instead of reporting false success.

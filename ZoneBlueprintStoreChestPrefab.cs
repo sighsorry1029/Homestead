@@ -71,8 +71,7 @@ internal static class ZoneBlueprintStoreChestPrefab
         }
 
         _initialized = true;
-        PrefabManager.OnVanillaPrefabsAvailable += RegisterPrefab;
-        RegisterPrefab();
+        PrefabManager.OnPrefabsRegistered += RegisterPrefab;
     }
 
     private static bool TryValidatePlacement(
@@ -438,7 +437,9 @@ internal static class ZoneBlueprintStoreChestPrefab
 
     private static GameObject? GetPrefab(ChestPrefabDefinition definition)
     {
-        return PrefabManager.Instance.GetPrefab(definition.PrefabName) ?? ZNetScene.instance?.GetPrefab(definition.PrefabName);
+        return ZoneChestPlacement.GetRegisteredNetworkPrefab(
+            definition.PrefabName,
+            definition.PrefabHash);
     }
 
     private static void RegisterPrefab()
@@ -451,23 +452,26 @@ internal static class ZoneBlueprintStoreChestPrefab
 
     private static void RegisterPrefab(ChestPrefabDefinition definition)
     {
-        if (definition.Registered)
+        GameObject? existing = ZoneChestPlacement.GetRegisteredNetworkPrefab(
+            definition.PrefabName,
+            definition.PrefabHash);
+        if (existing)
         {
             return;
         }
 
         if (PrefabManager.Instance.GetPrefab(definition.PrefabName))
         {
-            definition.Registered = true;
             return;
         }
 
-        if (!PrefabManager.Instance.GetPrefab(definition.BasePrefabName) && !(ZNetScene.instance?.GetPrefab(definition.BasePrefabName)))
+        GameObject? basePrefab = ZoneChestPlacement.GetCanonicalNetworkChestBasePrefab(definition.BasePrefabName);
+        if (!basePrefab)
         {
             return;
         }
 
-        GameObject prefab = PrefabManager.Instance.CreateClonedPrefab(definition.PrefabName, definition.BasePrefabName);
+        GameObject prefab = PrefabManager.Instance.CreateClonedPrefab(definition.PrefabName, basePrefab);
         if (!prefab)
         {
             return;
@@ -476,7 +480,6 @@ internal static class ZoneBlueprintStoreChestPrefab
         ConfigurePrefab(prefab, definition);
         PrefabManager.Instance.AddPrefab(prefab);
         PrefabManager.Instance.RegisterToZNetScene(prefab);
-        definition.Registered = true;
         _logger?.LogInfo($"Registered Homestead blueprint store chest prefab: {definition.PrefabName}.");
     }
 
@@ -546,7 +549,6 @@ internal static class ZoneBlueprintStoreChestPrefab
         public int Height { get; }
         public Container.PrivacySetting Privacy { get; }
         public int PrefabHash { get; }
-        public bool Registered { get; set; }
     }
 
     private sealed class StoreChestPlacementRequest

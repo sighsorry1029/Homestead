@@ -1352,7 +1352,6 @@ internal static class ZoneBlueprintPlanChestPrefab
 
     private static ManualLogSource? _logger;
     private static bool _initialized;
-    private static bool _registered;
 
     public static void Initialize(ManualLogSource logger)
     {
@@ -1363,8 +1362,7 @@ internal static class ZoneBlueprintPlanChestPrefab
         }
 
         _initialized = true;
-        PrefabManager.OnVanillaPrefabsAvailable += RegisterPrefab;
-        RegisterPrefab();
+        PrefabManager.OnPrefabsRegistered += RegisterPrefab;
     }
 
     public static HomesteadCommandResult PlacePlanChest(string blueprintName, Player player, Vector3 anchor, Quaternion anchorRotation, Vector3 chestPosition, Quaternion chestRotation)
@@ -1448,7 +1446,7 @@ internal static class ZoneBlueprintPlanChestPrefab
 
     private static GameObject? GetPrefab()
     {
-        return PrefabManager.Instance.GetPrefab(PrefabName) ?? ZNetScene.instance?.GetPrefab(PrefabName);
+        return ZoneChestPlacement.GetRegisteredNetworkPrefab(PrefabName, PrefabHash);
     }
 
     internal static Sprite? GetIcon()
@@ -1465,23 +1463,24 @@ internal static class ZoneBlueprintPlanChestPrefab
 
     private static void RegisterPrefab()
     {
-        if (_registered)
+        GameObject? existing = ZoneChestPlacement.GetRegisteredNetworkPrefab(PrefabName, PrefabHash);
+        if (existing)
         {
             return;
         }
 
         if (PrefabManager.Instance.GetPrefab(PrefabName))
         {
-            _registered = true;
             return;
         }
 
-        if (!PrefabManager.Instance.GetPrefab(BasePrefabName) && !(ZNetScene.instance?.GetPrefab(BasePrefabName)))
+        GameObject? basePrefab = ZoneChestPlacement.GetCanonicalNetworkChestBasePrefab(BasePrefabName);
+        if (!basePrefab)
         {
             return;
         }
 
-        GameObject prefab = PrefabManager.Instance.CreateClonedPrefab(PrefabName, BasePrefabName);
+        GameObject prefab = PrefabManager.Instance.CreateClonedPrefab(PrefabName, basePrefab);
         if (!prefab)
         {
             return;
@@ -1490,7 +1489,6 @@ internal static class ZoneBlueprintPlanChestPrefab
         ConfigurePrefab(prefab);
         PrefabManager.Instance.AddPrefab(prefab);
         PrefabManager.Instance.RegisterToZNetScene(prefab);
-        _registered = true;
         _logger?.LogInfo("Registered Homestead blueprint chest prefab.");
     }
 
