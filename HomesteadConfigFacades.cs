@@ -296,7 +296,7 @@ internal static class BlueprintConfig
             "Terrain Support",
             BlueprintTerrainSupportMode.Off,
             new ConfigDescription(
-                "Controls native blueprint terrain support. Off only places WearNTear. On restores saved terrain support contacts for everyone. AdminDebug restores terrain support only when the placing player is admin and has debug/no-cost build enabled.",
+                "Controls native blueprint terrain support. Off only places WearNTear. On restores saved support contacts for future blueprint confirmations and replaces overlapping height edits within the support/feather footprint. Completed blueprints are not changed retroactively. AdminDebug uses the same terrain behavior only when the placing player is admin and has debug/no-cost build enabled.",
                 null,
                 new ConfigurationManagerAttributes { Order = 930 }));
         _chestConfirmHotkey = plugin.config(
@@ -327,7 +327,7 @@ internal static class BlueprintConfig
         _terrainSupportFeatherWidth = plugin.config(
             "07 - Blueprint",
             "Blueprint Terrain Support Feather Width",
-            6f,
+            4f,
             new ConfigDescription(
                 "Meters around blueprint terrain support contact footprints that blend back to native terrain. Set to 0 to only change exact contact cells.",
                 new AcceptableValueRange<float>(0f, 64f),

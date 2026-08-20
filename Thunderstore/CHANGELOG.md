@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.4
+
+- Changed `Terrain Support = On` so future blueprint confirmations can restore saved support heights over existing terrain height edits within the blueprint support/feather footprint while preserving edits outside that footprint and existing terrain paint.
+- Changed the default `Blueprint Terrain Support Feather Width` from 6m to 4m.
+
 ## 1.2.3
 
 - Fixed Blueprint Store purchase, price, payout, and blueprint plan chests cloning an unrelated mod's identically named child object by creating them only from the canonical chest prefabs registered in the current `ZNetScene`.

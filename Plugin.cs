@@ -19,7 +19,7 @@ namespace Homestead;
 public partial class HomesteadPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Homestead";
-    internal const string ModVersion = "1.2.3";
+    internal const string ModVersion = "1.2.4";
     internal const string Author = "sighsorry";
     internal const string ModGUID = $"{Author}.{ModName}";
     internal const string DataStorageFolder = "Homestead";

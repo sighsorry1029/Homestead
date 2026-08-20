@@ -231,6 +231,8 @@ internal static class ZoneBlueprintCommands
                 bool terrainReady = false;
                 yield return HomesteadTerrainSupport.ApplyWorldSupportContactsAsync(
                     plan.SupportContacts,
+                    player.GetPlayerID(),
+                    noCost,
                     canContinue,
                     (success, changed, rollback) =>
                     {

@@ -12,6 +12,9 @@ namespace Homestead;
 internal static class HomesteadTerrainSupport
 {
     private const float SupportFillClearance = 0.05f;
+    private const float SupportHeightEpsilon = 0.01f;
+    private const float SupportInfluenceEpsilon = 0.0001f;
+    private const float HeightEditEpsilon = 0.0001f;
     private const int TerrainApplyNodeBatchSize = 1024;
     private static readonly int SupportFillBaseLayerHash = StringExtensionMethods.GetStableHashCode(HomesteadPlugin.ModGUID + ".terrain_base_v1");
 
@@ -39,6 +42,8 @@ internal static class HomesteadTerrainSupport
 
     public static IEnumerator ApplyWorldSupportContactsAsync(
         IEnumerable<Vector3> supportContacts,
+        long playerId,
+        bool ignoreWardAccess,
         Func<bool> canContinue,
         Action<bool, bool, Func<int>?> onComplete)
     {
@@ -90,6 +95,8 @@ internal static class HomesteadTerrainSupport
                 target,
                 supportHeights,
                 supportCells,
+                playerId,
+                ignoreWardAccess,
                 canContinue,
                 (success, changed) =>
                 {
@@ -131,7 +138,7 @@ internal static class HomesteadTerrainSupport
                 committedTargets.Add(target);
                 try
                 {
-                    PersistSupportFillBaseLayer(target.Compiler, target.Width, target.WorldHeights, target.Paints);
+                    PersistSupportFillBaseLayer(target);
                 }
                 finally
                 {
@@ -335,12 +342,18 @@ internal static class HomesteadTerrainSupport
             }
 
             compiler.CheckLoad();
-            if (!IsCompilerReady(compiler) || HasCompilerEdits(compiler))
+            int width = heightmap.m_width + 1;
+            int nodeCount = width * width;
+            if (!IsCompilerReady(compiler))
             {
-                throw new InvalidOperationException($"Terrain compiler for zone {zone} contains existing player edits.");
+                throw new InvalidOperationException($"Terrain compiler for zone {zone} is not network ready.");
             }
 
-            int width = heightmap.m_width + 1;
+            if (!TryValidateCompilerBuffers(compiler, nodeCount, out string bufferReason))
+            {
+                throw new InvalidOperationException($"Terrain compiler for zone {zone} {bufferReason}");
+            }
+
             ZDO zdo = compiler.m_nview.GetZDO();
             byte[] existingPayload = zdo.GetByteArray(SupportFillBaseLayerHash);
             float[] worldHeights;
@@ -425,17 +438,30 @@ internal static class HomesteadTerrainSupport
         return true;
     }
 
-    private static bool HasCompilerEdits(TerrainComp compiler)
+    private static bool TryValidateCompilerBuffers(TerrainComp compiler, int expectedLength, out string reason)
     {
-        return compiler.m_modifiedHeight == null ||
-               compiler.m_levelDelta == null ||
-               compiler.m_smoothDelta == null ||
-               compiler.m_modifiedPaint == null ||
-               compiler.m_paintMask == null ||
-               compiler.m_modifiedHeight.Any(modified => modified) ||
-               compiler.m_modifiedPaint.Any(modified => modified) ||
-               compiler.m_levelDelta.Any(delta => Mathf.Abs(delta) > 0.0001f) ||
-               compiler.m_smoothDelta.Any(delta => Mathf.Abs(delta) > 0.0001f);
+        reason = "";
+        if (compiler.m_modifiedHeight == null ||
+            compiler.m_levelDelta == null ||
+            compiler.m_smoothDelta == null ||
+            compiler.m_modifiedPaint == null ||
+            compiler.m_paintMask == null)
+        {
+            reason = "has unavailable terrain edit buffers.";
+            return false;
+        }
+
+        if (compiler.m_modifiedHeight.Length != expectedLength ||
+            compiler.m_levelDelta.Length != expectedLength ||
+            compiler.m_smoothDelta.Length != expectedLength ||
+            compiler.m_modifiedPaint.Length != expectedLength ||
+            compiler.m_paintMask.Length != expectedLength)
+        {
+            reason = "has invalid terrain edit buffer lengths.";
+            return false;
+        }
+
+        return true;
     }
 
     private static int RollbackTerrainSupport(IReadOnlyList<TerrainSupportTarget> targets)
@@ -500,6 +526,8 @@ internal static class HomesteadTerrainSupport
         TerrainSupportTarget target,
         Dictionary<long, float> supportHeights,
         List<TerrainSupportCell> supportCells,
+        long playerId,
+        bool ignoreWardAccess,
         Func<bool> canContinue,
         Action<bool, bool> onComplete)
     {
@@ -518,20 +546,40 @@ internal static class HomesteadTerrainSupport
                 Vector3 node = VertexToWorld(heightmap, x, z);
                 float baseHeight = target.WorldHeights[index];
                 float desired = baseHeight;
+                bool influenced = false;
 
                 if (supportHeights.TryGetValue(PackCell(Mathf.RoundToInt(node.x), Mathf.RoundToInt(node.z)), out float targetHeight))
                 {
                     desired = targetHeight;
+                    influenced = true;
                 }
-                else if (TryGetFeatheredSupportHeight(node, baseHeight, supportIndex, featherWidth, out float featheredHeight))
+                else if (TryGetFeatheredSupportHeight(node, baseHeight, supportIndex, featherWidth, out float featheredHeight, out float featherWeight) &&
+                         featherWeight > SupportInfluenceEpsilon)
                 {
                     desired = featheredHeight;
+                    influenced = true;
                 }
 
-                if (Mathf.Abs(baseHeight - desired) > 0.01f)
+                if (influenced)
                 {
-                    target.WorldHeights[index] = desired;
-                    changed = true;
+                    if (!ignoreWardAccess && !HasTerrainEditAccess(node, playerId))
+                    {
+                        HomesteadPlugin.HomesteadLogger.LogWarning("Failed to apply Homestead terrain support: ward/access blocked terrain support.");
+                        onComplete(false, false);
+                        yield break;
+                    }
+
+                    if (target.HasStagedHeightEdit(index))
+                    {
+                        target.ClearStagedHeightEdit(index);
+                        changed = true;
+                    }
+
+                    if (Mathf.Abs(baseHeight - desired) > SupportHeightEpsilon)
+                    {
+                        target.WorldHeights[index] = desired;
+                        changed = true;
+                    }
                 }
 
                 processed++;
@@ -558,9 +606,10 @@ internal static class HomesteadTerrainSupport
         onComplete(true, changed);
     }
 
-    private static bool TryGetFeatheredSupportHeight(Vector3 node, float baseHeight, TerrainSupportCellIndex supportIndex, float featherWidth, out float height)
+    private static bool TryGetFeatheredSupportHeight(Vector3 node, float baseHeight, TerrainSupportCellIndex supportIndex, float featherWidth, out float height, out float weight)
     {
         height = baseHeight;
+        weight = 0f;
         if (featherWidth <= 0f)
         {
             return false;
@@ -573,9 +622,37 @@ internal static class HomesteadTerrainSupport
         }
 
         float distance = Mathf.Sqrt(bestDistanceSqr);
-        float weight = 1f - Mathf.Clamp01(distance / featherWidth);
+        weight = 1f - Mathf.Clamp01(distance / featherWidth);
         weight = weight * weight * (3f - 2f * weight);
         height = Mathf.Lerp(baseHeight, nearest.Height, weight);
+        return true;
+    }
+
+    private static bool HasTerrainEditAccess(Vector3 point, long playerId)
+    {
+        List<PrivateArea> areas = PrivateArea.m_allAreas;
+        for (int i = 0; i < areas.Count; i++)
+        {
+            PrivateArea area = areas[i];
+            if (!area || !area.IsEnabled() || !area.IsInside(point, 0f))
+            {
+                continue;
+            }
+
+            Piece piece = area.m_piece ? area.m_piece : area.GetComponent<Piece>();
+            if (piece != null && piece.GetCreator() == playerId)
+            {
+                continue;
+            }
+
+            if (area.IsPermitted(playerId))
+            {
+                continue;
+            }
+
+            return false;
+        }
+
         return true;
     }
 
@@ -799,8 +876,9 @@ internal static class HomesteadTerrainSupport
         return true;
     }
 
-    private static void PersistSupportFillBaseLayer(TerrainComp compiler, int width, float[] worldHeights, Color[] paints)
+    private static void PersistSupportFillBaseLayer(TerrainSupportTarget target)
     {
+        TerrainComp compiler = target.Compiler;
         if (!IsCompilerReady(compiler))
         {
             throw new InvalidOperationException("Target terrain compiler is not network ready.");
@@ -816,7 +894,8 @@ internal static class HomesteadTerrainSupport
             throw new InvalidOperationException("Target terrain compiler ownership could not be acquired.");
         }
 
-        compiler.m_nview.GetZDO().Set(SupportFillBaseLayerHash, SerializeBaseLayer(compiler.m_hmap, width, worldHeights, paints));
+        target.ApplyStagedHeightEditsToCompiler();
+        compiler.m_nview.GetZDO().Set(SupportFillBaseLayerHash, SerializeBaseLayer(compiler.m_hmap, target.Width, target.WorldHeights, target.Paints));
         PersistCompiler(
             compiler,
             compiler.m_hmap.transform.position,
@@ -1119,6 +1198,9 @@ internal static class HomesteadTerrainSupport
             WorldHeights = worldHeights;
             Paints = paints;
             Snapshot = snapshot;
+            StagedModifiedHeight = compiler.m_modifiedHeight.ToArray();
+            StagedLevelDelta = compiler.m_levelDelta.ToArray();
+            StagedSmoothDelta = compiler.m_smoothDelta.ToArray();
         }
 
         public Heightmap Heightmap { get; }
@@ -1127,6 +1209,30 @@ internal static class HomesteadTerrainSupport
         public float[] WorldHeights { get; }
         public Color[] Paints { get; }
         public TerrainCompilerSnapshot Snapshot { get; }
+        private bool[] StagedModifiedHeight { get; }
+        private float[] StagedLevelDelta { get; }
+        private float[] StagedSmoothDelta { get; }
+
+        public bool HasStagedHeightEdit(int index)
+        {
+            return StagedModifiedHeight[index] ||
+                   Mathf.Abs(StagedLevelDelta[index]) > HeightEditEpsilon ||
+                   Mathf.Abs(StagedSmoothDelta[index]) > HeightEditEpsilon;
+        }
+
+        public void ClearStagedHeightEdit(int index)
+        {
+            StagedModifiedHeight[index] = false;
+            StagedLevelDelta[index] = 0f;
+            StagedSmoothDelta[index] = 0f;
+        }
+
+        public void ApplyStagedHeightEditsToCompiler()
+        {
+            StagedModifiedHeight.CopyTo(Compiler.m_modifiedHeight, 0);
+            StagedLevelDelta.CopyTo(Compiler.m_levelDelta, 0);
+            StagedSmoothDelta.CopyTo(Compiler.m_smoothDelta, 0);
+        }
     }
 
     private sealed class TerrainCompilerSnapshot
