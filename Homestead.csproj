@@ -189,11 +189,13 @@
         <Compile Include="ZoneBlueprintRpcTransport.cs"/>
         <Compile Include="ZoneBlueprintPlanRpc.cs"/>
         <Compile Include="ZoneBlueprintPlacementTool.cs"/>
+        <Compile Include="ZoneBlueprintSnapResolver.cs"/>
         <Compile Include="ZoneBlueprintChestCommands.cs"/>
         <Compile Include="ZoneBlueprintChestInventoryScroll.cs"/>
         <Compile Include="ZoneBlueprintPlanChest.cs"/>
         <Compile Include="ZoneBlueprintPreviewBuilder.cs"/>
         <Compile Include="ZoneBlueprintSaveTool.cs"/>
+        <Compile Include="ZoneBlueprintSnapPointTool.cs"/>
         <Compile Include="ZoneBlueprintChestVfx.cs"/>
         <Compile Include="ZoneChestPlacement.cs"/>
         <Compile Include="ZoneBlueprintChestLifecycle.cs"/>
@@ -263,6 +265,18 @@
         <Content Include="Thunderstore\CHANGELOG.md"/>
         <Content Include="Thunderstore\icon.png"/>
         <Content Include="Thunderstore\manifest.json"/>
+        <EmbeddedResource Include="samples\sample_001.blueprint">
+            <LogicalName>Homestead.Samples.sample_001.blueprint</LogicalName>
+        </EmbeddedResource>
+        <EmbeddedResource Include="samples\sample_002.blueprint">
+            <LogicalName>Homestead.Samples.sample_002.blueprint</LogicalName>
+        </EmbeddedResource>
+        <EmbeddedResource Include="samples\sample_003.blueprint">
+            <LogicalName>Homestead.Samples.sample_003.blueprint</LogicalName>
+        </EmbeddedResource>
+        <EmbeddedResource Include="samples\sample_snap.blueprint">
+            <LogicalName>Homestead.Samples.sample_snap.blueprint</LogicalName>
+        </EmbeddedResource>
         <EmbeddedResource Include="translations\English.yml"/>
         <EmbeddedResource Include="translations\Korean.yml"/>
         <Content Include="UpdateManifest.ps1"/>

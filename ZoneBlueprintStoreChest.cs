@@ -200,7 +200,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
         ZDO zdo = _nview.GetZDO();
         ZoneBlueprintStoreActor actor = ZoneBlueprintStoreIdentity.Actor(player.GetPlayerID(), HomesteadPlayerIdentity.ResolveLocalPlatformId(player.GetPlayerID()));
-        string ownerPlatformId = ZoneBlueprintChestLifecycle.GetOwnerPlatformId(zdo);
         string listingId = zdo.GetString(ListingIdKey, "");
         if (string.IsNullOrWhiteSpace(listingId))
         {
@@ -211,7 +210,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         if (IsPriceMode())
         {
             long seller = zdo.GetLong(SellerPlayerIdKey, 0L);
-            if (seller != 0L && !actor.MatchesStored(seller, ownerPlatformId, BlueprintConfig.StoreIdentityMode))
+            if (seller != 0L && !actor.MatchesPlayer(seller))
             {
                 player.Message(MessageHud.MessageType.Center, HomesteadLocalization.Text("hs_store_other_seller"));
                 return true;
@@ -236,7 +235,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         }
 
         long buyer = zdo.GetLong(BuyerPlayerIdKey, 0L);
-        if (buyer != 0L && !actor.MatchesStored(buyer, ownerPlatformId, BlueprintConfig.StoreIdentityMode))
+        if (buyer != 0L && !actor.MatchesPlayer(buyer))
         {
             player.Message(MessageHud.MessageType.Center, HomesteadLocalization.Text("hs_store_other_buyer"));
             return true;

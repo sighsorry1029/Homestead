@@ -129,9 +129,15 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         _instance?.QueueIconRenderInternal(blueprintName, blueprint);
     }
 
-    public static bool TryGetSelectedBlueprint(string name, Player player, out ZoneBlueprintFile blueprint, out string reason)
+    public static bool TryGetSelectedBlueprint(
+        string name,
+        Player player,
+        out ZoneBlueprintFile blueprint,
+        out IReadOnlyCollection<ZDOID> selectedZdos,
+        out string reason)
     {
         blueprint = null!;
+        selectedZdos = Array.Empty<ZDOID>();
         reason = "";
 
         if (_instance?._selection == null)
@@ -147,6 +153,7 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         }
 
         SaveSelection selection = _instance._selection;
+        selectedZdos = selection.Zdos;
         List<ZDO> zdos = [];
         foreach (ZDOID id in selection.Zdos)
         {
@@ -163,13 +170,15 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
             return false;
         }
 
+        List<Vector3> snapPointPositions = ZoneBlueprintSnapPointTool.CollectWorldPositionsForSelection(selection.Zdos);
         blueprint = ZoneBlueprintCommands.CaptureBlueprintFromZdos(
             name,
             player,
             selection.Anchor,
             selection.AnchorRotation,
             zdos,
-            selection.Radius);
+            selection.Radius,
+            snapPointPositions);
         return true;
     }
 
@@ -283,7 +292,7 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
     private void SaveSelectionFromUi()
     {
         Player player = Player.m_localPlayer;
-        if (player == null)
+        if (player == null || _selection == null)
         {
             return;
         }
@@ -806,6 +815,7 @@ internal static class ZoneBlueprintSaveToolMenu
     private static readonly HashSet<string> PendingBlueprintPieceNameSet = new(StringComparer.OrdinalIgnoreCase);
     private static Piece? _toolPiece;
     private static Piece? _dismantleToolPiece;
+    private static Piece? _snapPointToolPiece;
     private static Piece? _storeToolPiece;
     private static int _lastStoreListFrame = -1;
     private static int _storeListIntentFrame = -1;
@@ -834,6 +844,7 @@ internal static class ZoneBlueprintSaveToolMenu
         _ = HomesteadCategory;
         EnsureToolPiece();
         EnsureDismantleToolPiece();
+        EnsureSnapPointToolPiece();
         EnsureStoreToolPiece();
     }
 
@@ -968,6 +979,7 @@ internal static class ZoneBlueprintSaveToolMenu
         Stopwatch timer = Stopwatch.StartNew();
         EnsureToolPiece();
         EnsureDismantleToolPiece();
+        EnsureSnapPointToolPiece();
         EnsureStoreToolPiece();
         bool tableChanged = false;
         bool visibleSelectionChanged = false;
@@ -979,6 +991,11 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_dismantleToolPiece != null && _dismantleToolPiece)
         {
             tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, _dismantleToolPiece, HomesteadCategory, CategoryLabel);
+        }
+
+        if (_snapPointToolPiece != null && _snapPointToolPiece)
+        {
+            tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, _snapPointToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         if (_storeToolPiece != null && _storeToolPiece)
@@ -1296,6 +1313,7 @@ internal static class ZoneBlueprintSaveToolMenu
         RefreshBlueprintPieces(processNow: true);
         EnsureToolPiece();
         EnsureDismantleToolPiece();
+        EnsureSnapPointToolPiece();
         EnsureStoreToolPiece();
 
         if (_toolPiece != null && _toolPiece)
@@ -1306,6 +1324,11 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_dismantleToolPiece != null && _dismantleToolPiece)
         {
             ZoneBlueprintHammerTable.EnsurePiece(table, _dismantleToolPiece, HomesteadCategory, CategoryLabel);
+        }
+
+        if (_snapPointToolPiece != null && _snapPointToolPiece)
+        {
+            ZoneBlueprintHammerTable.EnsurePiece(table, _snapPointToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         if (_storeToolPiece != null && _storeToolPiece)
@@ -1343,6 +1366,11 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintHammerTable.EnsurePieceVisible(table, _dismantleToolPiece, HomesteadCategory, CategoryLabel);
         }
 
+        if (_snapPointToolPiece != null && _snapPointToolPiece)
+        {
+            ZoneBlueprintHammerTable.EnsurePieceVisible(table, _snapPointToolPiece, HomesteadCategory, CategoryLabel);
+        }
+
         if (_storeToolPiece != null && _storeToolPiece)
         {
             ZoneBlueprintHammerTable.EnsurePieceVisible(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
@@ -1373,6 +1401,7 @@ internal static class ZoneBlueprintSaveToolMenu
         List<Piece> pieces = [];
         AddMenuPiece(pieces, _toolPiece);
         AddMenuPiece(pieces, _dismantleToolPiece);
+        AddMenuPiece(pieces, _snapPointToolPiece);
         AddMenuPiece(pieces, _storeToolPiece);
         foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
         {
@@ -1465,7 +1494,7 @@ internal static class ZoneBlueprintSaveToolMenu
 
         List<Piece> availablePieces = table.m_availablePieces[availableIndex];
         Piece? selectedPiece = GetMarker(table.GetSelectedPiece()) != null ? table.GetSelectedPiece() : null;
-        List<Piece> sorted = new(availablePieces.Count + BlueprintPieces.Count + 3);
+        List<Piece> sorted = new(availablePieces.Count + BlueprintPieces.Count + 4);
         foreach (Piece piece in availablePieces)
         {
             if (IsRepairPiece(piece))
@@ -1600,6 +1629,19 @@ internal static class ZoneBlueprintSaveToolMenu
 
         _dismantleToolPiece = ZoneBlueprintToolPieceFactory.CreateAreaDismantle(HomesteadCategory);
         RegisterWithJotunn(_dismantleToolPiece.gameObject);
+    }
+
+    private static void EnsureSnapPointToolPiece()
+    {
+        if (_snapPointToolPiece != null && _snapPointToolPiece)
+        {
+            ZoneBlueprintToolPieceFactory.RefreshBlueprintSnapPoint(_snapPointToolPiece);
+            RegisterWithJotunn(_snapPointToolPiece.gameObject);
+            return;
+        }
+
+        _snapPointToolPiece = ZoneBlueprintToolPieceFactory.CreateBlueprintSnapPoint(HomesteadCategory);
+        RegisterWithJotunn(_snapPointToolPiece.gameObject);
     }
 
     private static void EnsureStoreToolPiece()
@@ -1790,6 +1832,7 @@ internal static class ZoneBlueprintSaveToolMenu
     {
         ZoneBlueprintSaveTool.Deactivate();
         ZoneAreaDismantleTool.Deactivate();
+        ZoneBlueprintSnapPointTool.Deactivate();
         ZoneBlueprintPlacementTool.Deactivate();
     }
 
@@ -1798,19 +1841,29 @@ internal static class ZoneBlueprintSaveToolMenu
         if (marker.Kind == ZoneBlueprintToolKind.AreaSave)
         {
             ZoneAreaDismantleTool.Deactivate();
+            ZoneBlueprintSnapPointTool.Deactivate();
             ZoneBlueprintPlacementTool.Deactivate();
             ZoneBlueprintSaveTool.Activate(player);
         }
         else if (marker.Kind == ZoneBlueprintToolKind.AreaDismantle)
         {
             ZoneBlueprintSaveTool.Deactivate();
+            ZoneBlueprintSnapPointTool.Deactivate();
             ZoneBlueprintPlacementTool.Deactivate();
             ZoneAreaDismantleTool.Activate(player);
+        }
+        else if (marker.Kind == ZoneBlueprintToolKind.BlueprintSnapPoint)
+        {
+            ZoneBlueprintSaveTool.Deactivate();
+            ZoneAreaDismantleTool.Deactivate();
+            ZoneBlueprintPlacementTool.Deactivate();
+            ZoneBlueprintSnapPointTool.Activate(player);
         }
         else if (marker.Kind == ZoneBlueprintToolKind.Store)
         {
             ZoneBlueprintSaveTool.Deactivate();
             ZoneAreaDismantleTool.Deactivate();
+            ZoneBlueprintSnapPointTool.Deactivate();
             ZoneBlueprintPlacementTool.Deactivate();
             ZoneBlueprintStore.Open();
         }
@@ -1818,6 +1871,7 @@ internal static class ZoneBlueprintSaveToolMenu
         {
             ZoneBlueprintSaveTool.Deactivate();
             ZoneAreaDismantleTool.Deactivate();
+            ZoneBlueprintSnapPointTool.Deactivate();
             ZoneBlueprintPlacementTool.Activate(player, marker.BlueprintName);
         }
     }
@@ -1939,6 +1993,7 @@ internal static class ZoneBlueprintSaveToolMenu
                 ZoneBlueprintStorePreviewTool.DeactivateActive();
                 ZoneBlueprintSaveTool.Deactivate();
                 ZoneAreaDismantleTool.Deactivate();
+                ZoneBlueprintSnapPointTool.Deactivate();
                 ZoneBlueprintPlacementTool.Deactivate();
                 return true;
             }

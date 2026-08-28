@@ -12,6 +12,7 @@ internal sealed class ZoneBlueprintFile
     public string SavedAt { get; set; } = "";
     public float Radius { get; set; }
     public List<ZoneBlueprintEntry> Entries { get; set; } = [];
+    public List<ZoneBlueprintSnapPoint> SnapPoints { get; set; } = [];
     public List<ZoneBlueprintTerrainContact> TerrainContacts { get; set; } = [];
 }
 
@@ -25,6 +26,13 @@ internal sealed class ZoneBlueprintEntry
 }
 
 internal sealed class ZoneBlueprintTerrainContact
+{
+    public float LocalX { get; set; }
+    public float LocalY { get; set; }
+    public float LocalZ { get; set; }
+}
+
+internal sealed class ZoneBlueprintSnapPoint
 {
     public float LocalX { get; set; }
     public float LocalY { get; set; }
@@ -75,7 +83,6 @@ internal sealed class ZoneBlueprintStoreListing
 internal sealed class ZoneBlueprintStoreBalance
 {
     public long SellerPlayerId { get; set; }
-    public string SellerPlatformId { get; set; } = "";
     public string SellerName { get; set; } = "";
     public int Coins { get; set; }
     public List<ZoneBlueprintStorePriceItem> Materials { get; set; } = [];
@@ -87,7 +94,6 @@ internal sealed class ZoneBlueprintStoreOffer
     public string ListingId { get; set; } = "";
     public string BuyerName { get; set; } = "";
     public long BuyerPlayerId { get; set; }
-    public string BuyerPlatformId { get; set; } = "";
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
     public string Status { get; set; } = ZoneBlueprintStoreOfferStatus.Pending;
@@ -106,7 +112,6 @@ internal sealed class ZoneBlueprintStoreNotification
 {
     public string NotificationId { get; set; } = "";
     public string Type { get; set; } = "";
-    public string RecipientPlatformId { get; set; } = "";
     public long RecipientPlayerId { get; set; }
     public string RecipientName { get; set; } = "";
     public string ActorName { get; set; } = "";
@@ -116,7 +121,6 @@ internal sealed class ZoneBlueprintStoreNotification
     public string Message { get; set; } = "";
     public string CreatedAt { get; set; } = "";
     public bool Read { get; set; }
-    public List<string> ReadByPlatformIds { get; set; } = [];
     public List<long> ReadByPlayerIds { get; set; } = [];
 }
 

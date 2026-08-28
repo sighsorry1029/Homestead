@@ -104,19 +104,16 @@ internal readonly struct BlueprintStoreSettings
     public BlueprintStoreSettings(
         int listingDays,
         int autoDelistMaxPurchases,
-        int maxListingsPerSteamId,
-        BlueprintStoreIdentityMode identityMode)
+        int maxListingsPerSteamId)
     {
         ListingDays = listingDays;
         AutoDelistMaxPurchases = autoDelistMaxPurchases;
         MaxListingsPerSteamId = maxListingsPerSteamId;
-        IdentityMode = identityMode;
     }
 
     public int ListingDays { get; }
     public int AutoDelistMaxPurchases { get; }
     public int MaxListingsPerSteamId { get; }
-    public BlueprintStoreIdentityMode IdentityMode { get; }
 }
 
 internal static class BlueprintConfig
@@ -134,7 +131,6 @@ internal static class BlueprintConfig
     private static ConfigEntry<int> _storeListingDays = null!;
     private static ConfigEntry<int> _storeAutoDelistMaxPurchases = null!;
     private static ConfigEntry<int> _storeMaxListingsPerSteamId = null!;
-    private static ConfigEntry<BlueprintStoreIdentityMode> _storeIdentityMode = null!;
     private static ConfigEntry<int> _chestTimeoutMinutes = null!;
     private static ConfigEntry<int> _chestMapIconSize = null!;
     private static ConfigEntry<int> _maxActiveChestsPerPlayer = null!;
@@ -142,7 +138,6 @@ internal static class BlueprintConfig
     private static ConfigEntry<float> _storeLargePanelY = null!;
     private static ConfigEntry<float> _storeFormPanelX = null!;
     private static ConfigEntry<float> _storeFormPanelY = null!;
-    private static ConfigEntry<HomesteadPlugin.Toggle> _storeAnonymousNotifications = null!;
     private static ConfigEntry<BlueprintStoreNotificationMode> _storeNotificationMode = null!;
     private static ConfigEntry<float> _storeNotificationButtonX = null!;
     private static ConfigEntry<float> _storeNotificationButtonY = null!;
@@ -180,8 +175,7 @@ internal static class BlueprintConfig
     public static int StoreListingDays => Mathf.Clamp(_storeListingDays.Value, 0, 365);
     public static int StoreAutoDelistMaxPurchases => Mathf.Clamp(_storeAutoDelistMaxPurchases.Value, 0, 100000);
     public static int StoreMaxListingsPerSteamId => Mathf.Clamp(_storeMaxListingsPerSteamId.Value, 1, 200);
-    public static BlueprintStoreIdentityMode StoreIdentityMode => _storeIdentityMode.Value;
-    public static BlueprintStoreSettings StoreSettings => new(StoreListingDays, StoreAutoDelistMaxPurchases, StoreMaxListingsPerSteamId, StoreIdentityMode);
+    public static BlueprintStoreSettings StoreSettings => new(StoreListingDays, StoreAutoDelistMaxPurchases, StoreMaxListingsPerSteamId);
     public static int ChestTimeoutMinutes => Mathf.Clamp(_chestTimeoutMinutes.Value, 0, 60);
     public static int ChestMapIconSize => Mathf.Clamp(_chestMapIconSize.Value, 0, 10);
     public static int MaxActiveChestsPerPlayer => Mathf.Clamp(_maxActiveChestsPerPlayer.Value, 0, 50);
@@ -204,7 +198,6 @@ internal static class BlueprintConfig
     public static BlueprintStoreNotificationMode StoreNotificationMode => _storeNotificationMode.Value;
     public static bool StoreNotificationsEnabled => StoreNotificationMode != BlueprintStoreNotificationMode.Off;
     public static bool StoreNotificationAutoOpen => StoreNotificationMode == BlueprintStoreNotificationMode.AutoOpenPanel;
-    public static bool StoreAnonymousNotifications => _storeAnonymousNotifications.Value.IsOn();
     public static bool StoreNotificationButtonEnabled => StoreNotificationsEnabled;
     public static Vector2 StoreNotificationButtonOffset => new(Mathf.Clamp(_storeNotificationButtonX.Value, -3000f, 3000f), Mathf.Clamp(_storeNotificationButtonY.Value, -3000f, 3000f));
     public static void SetStoreNotificationButtonOffset(Vector2 offset)
@@ -364,14 +357,6 @@ internal static class BlueprintConfig
                 "Server-synced maximum active blueprint store listings allowed for one SteamID/platform identity.",
                 new AcceptableValueRange<int>(1, 200),
                 new ConfigurationManagerAttributes { Order = 980 }));
-        _storeIdentityMode = plugin.config(
-            "08 - Blueprint Store",
-            "Blueprint Store Identity Mode",
-            BlueprintStoreIdentityMode.PlayerId,
-            new ConfigDescription(
-                "Controls how Blueprint Store ownership and offer buyer permissions are matched. PlayerId treats each Valheim character separately. SteamId treats every character on the same Steam/platform account as the same store identity.",
-                null,
-                new ConfigurationManagerAttributes { Order = 960 }));
         _chestTimeoutMinutes = plugin.config(
             "07 - Blueprint",
             "Blueprint Chest Timeout Minutes",
@@ -442,14 +427,6 @@ internal static class BlueprintConfig
                 null,
                 new ConfigurationManagerAttributes { Order = 950 }),
             synchronizedSetting: false);
-        _storeAnonymousNotifications = plugin.config(
-            "08 - Blueprint Store",
-            "Blueprint Store Anonymous Notifications",
-            HomesteadPlugin.Toggle.Off,
-            new ConfigDescription(
-                "Server-synced toggle for hiding player names in Blueprint Store notification messages. When on, notifications say Anonymous instead of the buyer, seller, or offer creator name.",
-                null,
-                new ConfigurationManagerAttributes { Order = 970 }));
         _storeNotificationButtonX = plugin.config(
             "08 - Blueprint Store",
             "Blueprint Store Notification Button X Offset",
@@ -748,7 +725,7 @@ internal static class BuildCameraConfig
         _lookAtLockHotkey = plugin.config(
             "05 - Build Camera",
             "Look At Lock Hotkey",
-            new KeyboardShortcut(KeyCode.Q),
+            new KeyboardShortcut(KeyCode.N),
             new ConfigDescription(
                 "Client-only hotkey that toggles build camera look-at lock while build camera mode is active.",
                 null,
@@ -797,7 +774,7 @@ internal static class PlacementControlConfig
             "04 - Placement Controls",
             "Grid Snap Toggle Hotkey",
             new KeyboardShortcut(KeyCode.G),
-            "Client-only hotkey that toggles grid snapping on or off while placing build pieces. The default is G.",
+            "Client-only hotkey that toggles grid snapping on or off while placing build pieces or Homestead blueprints. The default is G.",
             synchronizedSetting: false);
         _gridSnapSize = plugin.config(
             "04 - Placement Controls",

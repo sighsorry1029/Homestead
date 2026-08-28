@@ -91,7 +91,8 @@ internal static class ZoneBuildKeyHints
             return;
         }
 
-        bool zoneToolActive = ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive || ZoneBlueprintPlacementTool.IsActive;
+        bool areaToolActive = ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive;
+        bool snapPointToolActive = ZoneBlueprintSnapPointTool.IsActive;
         string buildCameraCondition = "";
         if (showBuildHints && player != null && ZoneBuildCamera.IsEnabled())
         {
@@ -100,7 +101,7 @@ internal static class ZoneBuildKeyHints
 
         SetHint(
             _offsetHint,
-            showBuildHints && PlacementControlConfig.PlacementAdjustEnabled,
+            showBuildHints && PlacementControlConfig.PlacementAdjustEnabled && !snapPointToolActive,
             HomesteadLocalization.Text("hs_keyhint_adjust_offset"),
             "Arrows",
             "PgUp/PgDn",
@@ -108,7 +109,7 @@ internal static class ZoneBuildKeyHints
 
         SetHint(
             _gridHint,
-            showBuildHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !zoneToolActive,
+            showBuildHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !areaToolActive && !snapPointToolActive,
             ZoneGridSnap.IsActive
                 ? HomesteadLocalization.Format("hs_keyhint_grid_on", PlacementControlConfig.GridSnapSize)
                 : HomesteadLocalization.Text("hs_keyhint_grid_off"),
@@ -116,7 +117,17 @@ internal static class ZoneBuildKeyHints
             "",
             102f);
 
-        if (ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive)
+        if (snapPointToolActive)
+        {
+            SetHint(
+                _toolHint,
+                showBuildHints,
+                HomesteadLocalization.Text("hs_keyhint_blueprint_snappoint"),
+                "Mouse1",
+                "",
+                170f);
+        }
+        else if (ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive)
         {
             string scaleKey = BlueprintConfig.AreaToolUniformScaleModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolUniformScaleModifierLabel;
             string depthKey = BlueprintConfig.AreaToolDepthModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolDepthModifierLabel;
@@ -129,16 +140,6 @@ internal static class ZoneBuildKeyHints
                 "Wheel",
                 shapeKeys,
                 166f);
-        }
-        else if (ZoneBlueprintPlacementTool.IsActive)
-        {
-            SetHint(
-                _toolHint,
-                showBuildHints,
-                HomesteadLocalization.Text("hs_keyhint_blueprint_place"),
-                "Wheel",
-                "Mouse0",
-                128f);
         }
         else
         {

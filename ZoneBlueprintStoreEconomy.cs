@@ -6,12 +6,11 @@ namespace Homestead;
 
 internal static class ZoneBlueprintStoreEconomy
 {
-    public static bool HasWithdrawableBalance(ZoneBlueprintStoreCatalog catalog, long playerId, string platformId)
+    public static bool HasWithdrawableBalance(ZoneBlueprintStoreCatalog catalog, long playerId)
     {
-        ZoneBlueprintStoreActor seller = ZoneBlueprintStoreIdentity.Actor(playerId, platformId);
-        return seller.IsValid &&
+        return playerId != 0L &&
                catalog.Balances.Any(balance =>
-                   seller.MatchesStored(balance.SellerPlayerId, balance.SellerPlatformId, BlueprintConfig.StoreIdentityMode) &&
+                   ZoneBlueprintStoreIdentity.MatchesPlayer(balance.SellerPlayerId, playerId) &&
                    (balance.Coins > 0 || (balance.Materials?.Any(item => item.Amount > 0) ?? false)));
     }
 
@@ -32,23 +31,16 @@ internal static class ZoneBlueprintStoreEconomy
             listing = storedListing;
         }
 
-        ZoneBlueprintStoreActor seller = ZoneBlueprintStoreIdentity.Actor(listing.SellerPlayerId, listing.SellerPlatformId);
         ZoneBlueprintStoreBalance? balance = catalog.Balances.FirstOrDefault(item =>
-            seller.MatchesStored(item.SellerPlayerId, item.SellerPlatformId, BlueprintConfig.StoreIdentityMode));
+            ZoneBlueprintStoreIdentity.MatchesPlayer(item.SellerPlayerId, listing.SellerPlayerId));
         if (balance == null)
         {
             balance = new ZoneBlueprintStoreBalance
             {
                 SellerPlayerId = listing.SellerPlayerId,
-                SellerPlatformId = HomesteadPlayerIdentity.NormalizePlatformId(listing.SellerPlatformId),
                 SellerName = listing.SellerName
             };
             catalog.Balances.Add(balance);
-        }
-
-        if (string.IsNullOrWhiteSpace(balance.SellerPlatformId))
-        {
-            balance.SellerPlatformId = HomesteadPlayerIdentity.NormalizePlatformId(listing.SellerPlatformId);
         }
 
         balance.SellerName = listing.SellerName;

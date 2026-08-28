@@ -9,50 +9,23 @@ internal static class ZoneBlueprintStoreIdentity
         return new ZoneBlueprintStoreActor(playerId, platformId);
     }
 
-    public static bool Matches(long storedPlayerId, string storedPlatformId, long playerId, string platformId, BlueprintStoreIdentityMode mode)
+    public static bool MatchesPlayer(long storedPlayerId, long playerId)
     {
-        if (playerId == 0L)
-        {
-            return false;
-        }
+        return playerId != 0L && storedPlayerId == playerId;
+    }
 
-        if (mode == BlueprintStoreIdentityMode.PlayerId)
-        {
-            return storedPlayerId == playerId;
-        }
-
+    public static bool MatchesPlatformAccount(string storedPlatformId, string platformId)
+    {
         string stored = HomesteadPlayerIdentity.NormalizePlatformId(storedPlatformId);
         string current = HomesteadPlayerIdentity.NormalizePlatformId(platformId);
-        if (!string.IsNullOrWhiteSpace(stored) &&
-            !string.IsNullOrWhiteSpace(current) &&
-            string.Equals(stored, current, StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return string.IsNullOrWhiteSpace(stored) && storedPlayerId == playerId;
+        return !string.IsNullOrWhiteSpace(stored) &&
+               !string.IsNullOrWhiteSpace(current) &&
+               string.Equals(stored, current, StringComparison.Ordinal);
     }
 
-    public static string HiddenStateKey(long playerId, string platformId, BlueprintStoreIdentityMode mode)
+    public static string PlayerKey(long playerId)
     {
-        if (mode == BlueprintStoreIdentityMode.PlayerId)
-        {
-            return playerId != 0L
-                ? "player:" + playerId
-                : HomesteadPlayerIdentity.NormalizePlatformId(platformId);
-        }
-
-        platformId = HomesteadPlayerIdentity.NormalizePlatformId(platformId);
-        return !string.IsNullOrWhiteSpace(platformId)
-            ? platformId
-            : playerId != 0L
-                ? "player:" + playerId
-                : "";
-    }
-
-    public static string HiddenStateKey(ZoneBlueprintStoreActor actor, BlueprintStoreIdentityMode mode)
-    {
-        return HiddenStateKey(actor.PlayerId, actor.PlatformId, mode);
+        return playerId != 0L ? "player:" + playerId : "";
     }
 }
 
@@ -68,13 +41,13 @@ internal readonly struct ZoneBlueprintStoreActor
     public string PlatformId { get; }
     public bool IsValid => PlayerId != 0L;
 
-    public bool MatchesStored(long storedPlayerId, string storedPlatformId, BlueprintStoreIdentityMode mode)
+    public bool MatchesPlayer(long storedPlayerId)
     {
-        return ZoneBlueprintStoreIdentity.Matches(storedPlayerId, storedPlatformId, PlayerId, PlatformId, mode);
+        return ZoneBlueprintStoreIdentity.MatchesPlayer(storedPlayerId, PlayerId);
     }
 
-    public string Key(BlueprintStoreIdentityMode mode)
+    public string Key()
     {
-        return ZoneBlueprintStoreIdentity.HiddenStateKey(this, mode);
+        return ZoneBlueprintStoreIdentity.PlayerKey(PlayerId);
     }
 }

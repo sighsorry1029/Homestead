@@ -56,7 +56,7 @@ internal static class ZoneBlueprintStoreListingAction
     {
         draft = default;
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
-        if (!ZoneBlueprintStoreAccess.CheckStoreListingLimit(catalog, sellerPlayerId, sellerPlatformId, out reason))
+        if (!ZoneBlueprintStoreAccess.CheckStoreListingLimit(catalog, sellerPlatformId, out reason))
         {
             return false;
         }
@@ -298,7 +298,7 @@ internal static class ZoneBlueprintStoreListingAction
         }
 
         string sellerPlatformId = seller.PlatformId;
-        if (!ZoneBlueprintStoreAccess.CheckStoreListingLimit(catalog, seller.PlayerId, sellerPlatformId, out string limitReason))
+        if (!ZoneBlueprintStoreAccess.CheckStoreListingLimit(catalog, sellerPlatformId, out string limitReason))
         {
             return HomesteadCommandResult.Fail(limitReason);
         }
@@ -414,7 +414,6 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Delist, reason);
         }
 
-        string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
         ZoneBlueprintStoreListing? listing = catalog.Listings.FirstOrDefault(item =>
             item.Active &&
@@ -424,7 +423,7 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Delist, HomesteadLocalization.Text("hs_store_listing_not_found"));
         }
 
-        if (!ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId, platformId))
+        if (!ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId))
         {
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Delist, HomesteadLocalization.Text("hs_store_only_seller_delist"));
         }
@@ -434,7 +433,7 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.Delist, saveReason);
         }
 
-        return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.Delist, true, HomesteadLocalization.Format("hs_store_delisted", listing.Name), catalog, listing, playerId, platformId, removeListing: true);
+        return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.Delist, true, HomesteadLocalization.Format("hs_store_delisted", listing.Name), catalog, listing, playerId, removeListing: true);
     }
 
     public static ZoneBlueprintStoreRpcEnvelope ExecuteEditPrice(ZoneBlueprintStoreEditPriceRequest request, Player? player, long sender)
@@ -449,7 +448,6 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.EditPrice, reason);
         }
 
-        string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
         ZoneBlueprintStoreListing? listing = catalog.Listings.FirstOrDefault(item =>
             item.Active &&
@@ -459,7 +457,7 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.EditPrice, HomesteadLocalization.Text("hs_store_listing_not_found"));
         }
 
-        if (!ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId, platformId))
+        if (!ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId))
         {
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.EditPrice, HomesteadLocalization.Text("hs_store_edit_price_owner_only"));
         }
@@ -470,6 +468,6 @@ internal static class ZoneBlueprintStoreListingAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.EditPrice, saveReason);
         }
 
-        return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.EditPrice, true, HomesteadLocalization.Format("hs_store_price_updated", listing.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)), catalog, listing, playerId, platformId);
+        return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.EditPrice, true, HomesteadLocalization.Format("hs_store_price_updated", listing.Name, ZoneBlueprintStorePrices.FormatPrice(priceItems)), catalog, listing, playerId);
     }
 }

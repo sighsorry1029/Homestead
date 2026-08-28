@@ -12,6 +12,7 @@ internal enum ZoneBlueprintToolKind
 {
     AreaSave,
     AreaDismantle,
+    BlueprintSnapPoint,
     Blueprint,
     Store
 }

@@ -24,7 +24,7 @@ internal static class ZoneBlueprintStoreChestRegistry
             return;
         }
 
-        Key key = new(mode, listingId, actor.Key(BlueprintConfig.StoreIdentityMode));
+        Key key = new(mode, listingId, actor.Key());
         if (!ByKey.TryGetValue(key, out HashSet<ZoneBlueprintStoreChest> chests))
         {
             chests = [];
@@ -146,7 +146,7 @@ internal static class ZoneBlueprintStoreChestRegistry
 
     private static ZoneBlueprintStoreChest? Find(string mode, string listingId, ZoneBlueprintStoreActor actor, string offerId = "")
     {
-        Key key = new(mode, listingId, actor.Key(BlueprintConfig.StoreIdentityMode));
+        Key key = new(mode, listingId, actor.Key());
         if (!ByKey.TryGetValue(key, out HashSet<ZoneBlueprintStoreChest> chests))
         {
             return FindLoadedChest(mode, listingId, actor, offerId) ?? FindZdoBackedChest(mode, listingId, actor, offerId);
@@ -222,7 +222,7 @@ internal static class ZoneBlueprintStoreChestRegistry
                chest.TryGetStoreLookup(out string currentMode, out string currentListingId, out ZoneBlueprintStoreActor currentActor) &&
                string.Equals(currentMode, mode, StringComparison.Ordinal) &&
                string.Equals(currentListingId, listingId, StringComparison.Ordinal) &&
-               actor.MatchesStored(currentActor.PlayerId, currentActor.PlatformId, BlueprintConfig.StoreIdentityMode) &&
+               actor.MatchesPlayer(currentActor.PlayerId) &&
                MatchesOfferId(mode, chest.GetOfferId(), offerId);
     }
 
@@ -242,8 +242,7 @@ internal static class ZoneBlueprintStoreChestRegistry
         long zdoPlayerId = string.Equals(mode, ZoneBlueprintStoreChest.ModePurchase, StringComparison.Ordinal)
             ? zdo.GetLong(ZoneBlueprintStoreChest.BuyerPlayerIdKey, 0L)
             : zdo.GetLong(ZoneBlueprintStoreChest.SellerPlayerIdKey, 0L);
-        string zdoPlatformId = ZoneBlueprintChestLifecycle.GetOwnerPlatformId(zdo);
-        if (!actor.MatchesStored(zdoPlayerId, zdoPlatformId, BlueprintConfig.StoreIdentityMode))
+        if (!actor.MatchesPlayer(zdoPlayerId))
         {
             return false;
         }

@@ -32,7 +32,7 @@ internal static class ZoneBlueprintStorePurchaseAction
         }
 
         string buyerPlatformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, buyerPlayerId);
-        if (ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, buyerPlayerId, buyerPlatformId))
+        if (ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, buyerPlayerId))
         {
             return FailBuy(HomesteadLocalization.Text("hs_store_use_edit_price_own_listing"));
         }
@@ -41,7 +41,7 @@ internal static class ZoneBlueprintStorePurchaseAction
         if (!string.IsNullOrWhiteSpace(request.OfferId))
         {
             ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
-            if (!ZoneBlueprintStoreDtos.TryGetAcceptedBuyerOffer(catalog, listing.ListingId, request.OfferId, buyerPlayerId, buyerPlatformId, out ZoneBlueprintStoreOffer offer, out reason))
+            if (!ZoneBlueprintStoreDtos.TryGetAcceptedBuyerOffer(catalog, listing.ListingId, request.OfferId, buyerPlayerId, out ZoneBlueprintStoreOffer offer, out reason))
             {
                 return FailBuy(reason);
             }
@@ -178,7 +178,7 @@ internal static class ZoneBlueprintStorePurchaseAction
         ZoneBlueprintStoreOffer? offer = null;
         if (!string.IsNullOrWhiteSpace(offerId))
         {
-            if (!ZoneBlueprintStoreDtos.TryGetAcceptedBuyerOffer(catalog, listing.ListingId, offerId, buyerPlayerId, buyerPlatformId, out offer, out string offerReason))
+            if (!ZoneBlueprintStoreDtos.TryGetAcceptedBuyerOffer(catalog, listing.ListingId, offerId, buyerPlayerId, out offer, out string offerReason))
             {
                 return HomesteadCommandResult.Fail(offerReason);
             }

@@ -56,7 +56,7 @@ internal static class ZoneBlueprintStoreUi
     private static float _nextWithdrawBlinkAt;
     private static float _activeListRequestExpiresAt;
     private static string _loadedHiddenListingsPath = "";
-    private static string HiddenListingsPath => Path.Combine(HomesteadPlugin.DataStorageFullPath, GetHiddenListingsFileName());
+    private static string HiddenListingsPath => Path.Combine(HomesteadPlugin.BlueprintStoreStorageFullPath, GetHiddenListingsFileName());
 
     public static bool Open()
     {
@@ -836,29 +836,7 @@ internal static class ZoneBlueprintStoreUi
     private static string GetHiddenListingsFileName()
     {
         long playerId = Player.m_localPlayer != null ? Player.m_localPlayer.GetPlayerID() : 0L;
-        if (BlueprintConfig.StoreIdentityMode == BlueprintStoreIdentityMode.PlayerId && playerId != 0L)
-        {
-            return $"BlueprintStore.hidden.player_{playerId}.txt";
-        }
-
-        if (BlueprintConfig.StoreIdentityMode == BlueprintStoreIdentityMode.SteamId)
-        {
-            string platformId = playerId != 0L ? HomesteadPlayerIdentity.ResolveLocalPlatformId(playerId) : "";
-            platformId = HomesteadPlayerIdentity.NormalizePlatformId(platformId);
-            if (!string.IsNullOrWhiteSpace(platformId))
-            {
-                return $"BlueprintStore.hidden.{SanitizeFileToken(platformId)}.txt";
-            }
-        }
-
-        return "BlueprintStore.hidden.txt";
-    }
-
-    private static string SanitizeFileToken(string value)
-    {
-        char[] invalid = Path.GetInvalidFileNameChars();
-        string text = new(value.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray());
-        return string.IsNullOrWhiteSpace(text) ? "unknown" : text;
+        return playerId != 0L ? $"BlueprintStore.hidden.player_{playerId}.txt" : "BlueprintStore.hidden.txt";
     }
 
     private static Image CreateImage(Transform parent, string name, Vector2 anchoredPosition, Vector2 size)

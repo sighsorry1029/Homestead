@@ -127,7 +127,6 @@ internal static class ZoneBlueprintStoreNotifications
     private static ZoneBlueprintStoreNotification AddStoreNotification(
         ZoneBlueprintStoreCatalog catalog,
         long recipientPlayerId,
-        string recipientPlatformId,
         string recipientName,
         string actorName,
         ZoneBlueprintStoreListing listing,
@@ -141,7 +140,6 @@ internal static class ZoneBlueprintStoreNotifications
             NotificationId = CreateNotificationId(),
             Type = type,
             RecipientPlayerId = recipientPlayerId,
-            RecipientPlatformId = HomesteadPlayerIdentity.NormalizePlatformId(recipientPlatformId),
             RecipientName = recipientName ?? "",
             ActorName = actorName ?? "",
             ListingId = listing.ListingId,
@@ -168,7 +166,6 @@ internal static class ZoneBlueprintStoreNotifications
         return AddStoreNotification(
             catalog,
             listing.SellerPlayerId,
-            listing.SellerPlatformId,
             listing.SellerName,
             displayBuyerName,
             listing,
@@ -176,7 +173,6 @@ internal static class ZoneBlueprintStoreNotifications
             ZoneBlueprintStoreNotificationType.OfferReceived,
             FormatActorNotification(
                 updated ? "hs_store_notification_offer_updated" : "hs_store_notification_offer_received",
-                updated ? "hs_store_notification_offer_updated_anonymous" : "hs_store_notification_offer_received_anonymous",
                 buyerName,
                 listing.Name,
                 ZoneBlueprintStorePrices.FormatPrice(priceItems)));
@@ -192,7 +188,6 @@ internal static class ZoneBlueprintStoreNotifications
         return AddStoreNotification(
             catalog,
             offer.BuyerPlayerId,
-            offer.BuyerPlatformId,
             offer.BuyerName,
             displaySellerName,
             listing,
@@ -201,38 +196,26 @@ internal static class ZoneBlueprintStoreNotifications
             accepted
                 ? FormatActorNotification(
                     "hs_store_notification_offer_accepted",
-                    "hs_store_notification_offer_accepted_anonymous",
                     listing.SellerName,
                     listing.Name,
                     ZoneBlueprintStorePrices.FormatPrice(offer.PriceItems))
                 : FormatActorNotification(
                     "hs_store_notification_offer_declined",
-                    "hs_store_notification_offer_declined_anonymous",
                     listing.SellerName,
                     listing.Name));
     }
 
     private static string NotificationActorName(string actorName)
     {
-        if (BlueprintConfig.StoreAnonymousNotifications)
-        {
-            return HomesteadLocalization.Text("hs_store_notification_anonymous");
-        }
-
         return string.IsNullOrWhiteSpace(actorName) ? HomesteadLocalization.Text("hs_common_unknown") : actorName;
     }
 
-    private static string FormatActorNotification(string normalToken, string anonymousToken, string actorName, params object[] values)
+    private static string FormatActorNotification(string token, string actorName, params object[] values)
     {
-        if (BlueprintConfig.StoreAnonymousNotifications)
-        {
-            return HomesteadLocalization.Format(anonymousToken, values);
-        }
-
         object[] args = new object[values.Length + 1];
         args[0] = NotificationActorName(actorName);
         Array.Copy(values, 0, args, 1, values.Length);
-        return HomesteadLocalization.Format(normalToken, args);
+        return HomesteadLocalization.Format(token, args);
     }
 
     public static ZoneBlueprintStoreNotification AddPublicNewListingNotification(
@@ -247,7 +230,6 @@ internal static class ZoneBlueprintStoreNotifications
             NotificationId = CreateNotificationId(),
             Type = ZoneBlueprintStoreNotificationType.NewListing,
             RecipientPlayerId = 0L,
-            RecipientPlatformId = "",
             RecipientName = "",
             ActorName = displayActorName,
             ListingId = listing.ListingId,
@@ -255,7 +237,6 @@ internal static class ZoneBlueprintStoreNotifications
             OfferId = "",
             Message = FormatActorNotification(
                 "hs_store_notification_new_listing",
-                "hs_store_notification_new_listing_anonymous",
                 actorName,
                 listing.Name,
                 ZoneBlueprintStorePrices.FormatPrice(ZoneBlueprintStorePrices.GetListingPriceItems(listing))),
@@ -281,7 +262,6 @@ internal static class ZoneBlueprintStoreNotifications
             NotificationId = CreateNotificationId(),
             Type = ZoneBlueprintStoreNotificationType.BlueprintPurchased,
             RecipientPlayerId = listing.SellerPlayerId,
-            RecipientPlatformId = HomesteadPlayerIdentity.NormalizePlatformId(listing.SellerPlatformId),
             RecipientName = listing.SellerName ?? "",
             ActorName = displayBuyerName,
             ListingId = listing.ListingId,
@@ -289,7 +269,6 @@ internal static class ZoneBlueprintStoreNotifications
             OfferId = offerId ?? "",
             Message = FormatActorNotification(
                 "hs_store_notification_purchased",
-                "hs_store_notification_purchased_anonymous",
                 buyerName,
                 listing.Name,
                 ZoneBlueprintStorePrices.FormatPrice(priceItems)),
@@ -323,11 +302,6 @@ internal static class ZoneBlueprintStoreNotifications
 
     private static void PruneNotificationReadMarkers(ZoneBlueprintStoreNotification notification)
     {
-        if (notification.ReadByPlatformIds != null && notification.ReadByPlatformIds.Count > StoreNotificationReadMarkerRetainCount)
-        {
-            notification.ReadByPlatformIds.RemoveRange(0, notification.ReadByPlatformIds.Count - StoreNotificationReadMarkerRetainCount);
-        }
-
         if (notification.ReadByPlayerIds != null && notification.ReadByPlayerIds.Count > StoreNotificationReadMarkerRetainCount)
         {
             notification.ReadByPlayerIds.RemoveRange(0, notification.ReadByPlayerIds.Count - StoreNotificationReadMarkerRetainCount);
@@ -402,8 +376,7 @@ internal static class ZoneBlueprintStoreNotifications
         }
 
         long playerId = player.GetPlayerID();
-        string platformId = HomesteadPlayerIdentity.ResolveLocalPlatformId(playerId);
-        if (!IsNotificationRecipient(notification, playerId, platformId))
+        if (!IsNotificationRecipient(notification, playerId))
         {
             return false;
         }
@@ -414,47 +387,45 @@ internal static class ZoneBlueprintStoreNotifications
 
     private static bool IsPeerNotificationRecipient(ZNetPeer peer, ZoneBlueprintStoreNotification notification)
     {
-        if (!HomesteadPlayerIdentity.TryGetPeerActivity(peer, out string platformId, out long playerId, out _))
+        if (!HomesteadPlayerIdentity.TryGetPeerActivity(peer, out _, out long playerId, out _))
         {
             return false;
         }
 
-        return IsNotificationRecipient(notification, playerId, platformId);
+        return IsNotificationRecipient(notification, playerId);
     }
 
     public static List<ZoneBlueprintStoreNotificationDto> GetUnreadNotifications(
         ZoneBlueprintStoreCatalog catalog,
-        long playerId,
-        string platformId)
+        long playerId)
     {
         catalog.Notifications ??= [];
         return catalog.Notifications
-            .Where(notification => !IsNotificationRead(notification, playerId, platformId) && IsNotificationRecipient(notification, playerId, platformId))
+            .Where(notification => !IsNotificationRead(notification, playerId) && IsNotificationRecipient(notification, playerId))
             .OrderByDescending(notification => HomesteadTimestamp.ParseUtc(notification.CreatedAt))
             .ThenByDescending(notification => notification.NotificationId, StringComparer.Ordinal)
             .Take(32)
-            .Select(notification => ToNotificationDto(notification, playerId, platformId))
+            .Select(notification => ToNotificationDto(notification, playerId))
             .ToList();
     }
 
     public static List<ZoneBlueprintStoreNotificationDto> GetRecentNotifications(
         ZoneBlueprintStoreCatalog catalog,
         long playerId,
-        string platformId,
         int limit)
     {
         catalog.Notifications ??= [];
         int take = Mathf.Clamp(limit, 1, 64);
         return catalog.Notifications
-            .Where(notification => IsNotificationRecipient(notification, playerId, platformId))
+            .Where(notification => IsNotificationRecipient(notification, playerId))
             .OrderByDescending(notification => HomesteadTimestamp.ParseUtc(notification.CreatedAt))
             .ThenByDescending(notification => notification.NotificationId, StringComparer.Ordinal)
             .Take(take)
-            .Select(notification => ToNotificationDto(notification, playerId, platformId))
+            .Select(notification => ToNotificationDto(notification, playerId))
             .ToList();
     }
 
-    public static bool IsNotificationRecipient(ZoneBlueprintStoreNotification notification, long playerId, string platformId)
+    public static bool IsNotificationRecipient(ZoneBlueprintStoreNotification notification, long playerId)
     {
         if (notification == null || playerId == 0L)
         {
@@ -466,67 +437,32 @@ internal static class ZoneBlueprintStoreNotifications
             return true;
         }
 
-        return ZoneBlueprintStoreAccess.MatchesStoreIdentity(notification.RecipientPlayerId, notification.RecipientPlatformId, playerId, platformId);
+        return ZoneBlueprintStoreAccess.MatchesPlayerId(notification.RecipientPlayerId, playerId);
     }
 
     private static bool IsPublicNotification(ZoneBlueprintStoreNotification notification)
     {
         return notification != null &&
                string.Equals(notification.Type, ZoneBlueprintStoreNotificationType.NewListing, StringComparison.Ordinal) &&
-               string.IsNullOrWhiteSpace(notification.RecipientPlatformId) &&
                notification.RecipientPlayerId == 0L;
     }
 
-    private static bool IsNotificationRead(ZoneBlueprintStoreNotification notification, long playerId, string platformId)
+    private static bool IsNotificationRead(ZoneBlueprintStoreNotification notification, long playerId)
     {
         if (!IsPublicNotification(notification))
         {
             return notification.Read;
         }
 
-        if (BlueprintConfig.StoreIdentityMode == BlueprintStoreIdentityMode.PlayerId)
-        {
-            return notification.ReadByPlayerIds?.Contains(playerId) == true;
-        }
-
-        string normalizedPlatformId = HomesteadPlayerIdentity.NormalizePlatformId(platformId);
-        if (!string.IsNullOrWhiteSpace(normalizedPlatformId) &&
-            notification.ReadByPlatformIds?.Any(id => string.Equals(
-                HomesteadPlayerIdentity.NormalizePlatformId(id),
-                normalizedPlatformId,
-                StringComparison.Ordinal)) == true)
-        {
-            return true;
-        }
-
-        return string.IsNullOrWhiteSpace(normalizedPlatformId) &&
-               notification.ReadByPlayerIds?.Contains(playerId) == true;
+        return notification.ReadByPlayerIds?.Contains(playerId) == true;
     }
 
-    public static void MarkNotificationRead(ZoneBlueprintStoreNotification notification, long playerId, string platformId)
+    public static void MarkNotificationRead(ZoneBlueprintStoreNotification notification, long playerId)
     {
         if (!IsPublicNotification(notification))
         {
             notification.Read = true;
             return;
-        }
-
-        if (BlueprintConfig.StoreIdentityMode == BlueprintStoreIdentityMode.SteamId)
-        {
-            string normalizedPlatformId = HomesteadPlayerIdentity.NormalizePlatformId(platformId);
-            if (!string.IsNullOrWhiteSpace(normalizedPlatformId))
-            {
-                notification.ReadByPlatformIds ??= [];
-                if (!notification.ReadByPlatformIds.Any(id => string.Equals(
-                        HomesteadPlayerIdentity.NormalizePlatformId(id),
-                        normalizedPlatformId,
-                        StringComparison.Ordinal)))
-                {
-                    notification.ReadByPlatformIds.Add(normalizedPlatformId);
-                }
-
-                return;
-            }
         }
 
         notification.ReadByPlayerIds ??= [];
@@ -538,10 +474,10 @@ internal static class ZoneBlueprintStoreNotifications
 
     private static ZoneBlueprintStoreNotificationDto ToNotificationDto(ZoneBlueprintStoreNotification notification)
     {
-        return ToNotificationDto(notification, 0L, "");
+        return ToNotificationDto(notification, 0L);
     }
 
-    private static ZoneBlueprintStoreNotificationDto ToNotificationDto(ZoneBlueprintStoreNotification notification, long playerId, string platformId)
+    private static ZoneBlueprintStoreNotificationDto ToNotificationDto(ZoneBlueprintStoreNotification notification, long playerId)
     {
         return new ZoneBlueprintStoreNotificationDto
         {
@@ -553,7 +489,7 @@ internal static class ZoneBlueprintStoreNotifications
             OfferId = notification.OfferId,
             Message = notification.Message,
             CreatedAt = notification.CreatedAt,
-            Read = playerId != 0L ? IsNotificationRead(notification, playerId, platformId) : notification.Read
+            Read = playerId != 0L ? IsNotificationRead(notification, playerId) : notification.Read
         };
     }
 
@@ -576,11 +512,10 @@ internal static class ZoneBlueprintStoreNotificationAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.GetNotifications, reason);
         }
 
-        string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadCatalogSnapshot();
         return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.GetNotifications, new ZoneBlueprintStoreNotificationResponse
         {
-            Notifications = ZoneBlueprintStoreNotifications.GetUnreadNotifications(catalog, playerId, platformId)
+            Notifications = ZoneBlueprintStoreNotifications.GetUnreadNotifications(catalog, playerId)
         });
     }
 
@@ -591,11 +526,10 @@ internal static class ZoneBlueprintStoreNotificationAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.RecentNotifications, reason);
         }
 
-        string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadCatalogSnapshot();
         return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.RecentNotifications, new ZoneBlueprintStoreNotificationResponse
         {
-            Notifications = ZoneBlueprintStoreNotifications.GetRecentNotifications(catalog, playerId, platformId, request.Limit)
+            Notifications = ZoneBlueprintStoreNotifications.GetRecentNotifications(catalog, playerId, request.Limit)
         });
     }
 
@@ -606,7 +540,6 @@ internal static class ZoneBlueprintStoreNotificationAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.ReadNotifications, reason);
         }
 
-        string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
         HashSet<string> ids = (request.NotificationIds ?? [])
             .Where(id => !string.IsNullOrWhiteSpace(id) && id.Length <= MaxNotificationIdLength)
             .Take(MaxReadNotificationIds)
@@ -622,12 +555,12 @@ internal static class ZoneBlueprintStoreNotificationAction
         foreach (ZoneBlueprintStoreNotification notification in catalog.Notifications)
         {
             if (!ids.Contains(notification.NotificationId) ||
-                !ZoneBlueprintStoreNotifications.IsNotificationRecipient(notification, playerId, platformId))
+                !ZoneBlueprintStoreNotifications.IsNotificationRecipient(notification, playerId))
             {
                 continue;
             }
 
-            ZoneBlueprintStoreNotifications.MarkNotificationRead(notification, playerId, platformId);
+            ZoneBlueprintStoreNotifications.MarkNotificationRead(notification, playerId);
             changed = true;
         }
 

@@ -20,11 +20,9 @@ internal static class ZoneBlueprintStoreListAction
     public static ZoneBlueprintStoreRpcEnvelope Execute(ZoneBlueprintStoreListRequest request, Player? player, long sender)
     {
         long playerId = 0L;
-        string platformId = "";
         if (ZoneBlueprintStoreAccess.TryResolveRequester(player, sender, out long resolvedPlayerId, out _, out _, out _, out _))
         {
             playerId = resolvedPlayerId;
-            platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
         }
 
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
@@ -33,7 +31,7 @@ internal static class ZoneBlueprintStoreListAction
             return ZoneBlueprintStoreRpcTransport.CreateEnvelope(ZoneBlueprintStoreRpcType.List, BuildIconOnlyResponse(request, catalog));
         }
 
-        HashSet<string> hiddenListingIds = GetHiddenListingIds(playerId, platformId);
+        HashSet<string> hiddenListingIds = GetHiddenListingIds(playerId);
         List<ZoneBlueprintStoreListing> allActiveListings = catalog.Listings
             .Where(listing => listing.Active)
             .OrderByDescending(listing => HomesteadTimestamp.ParseUtc(listing.CreatedAt))
@@ -65,16 +63,15 @@ internal static class ZoneBlueprintStoreListAction
             Limit = limit,
             HiddenListings = hiddenListings,
             HasMore = limit > 0 && offset + responseListings.Count < totalListings,
-            HasWithdrawableBalance = ZoneBlueprintStoreEconomy.HasWithdrawableBalance(catalog, playerId, platformId),
+            HasWithdrawableBalance = ZoneBlueprintStoreEconomy.HasWithdrawableBalance(catalog, playerId),
             Listings = responseListings
                 .Select(listing => ZoneBlueprintStoreDtos.ToSummaryDto(
                     listing,
                     playerId,
-                    platformId,
                     offerCounts.TryGetValue(listing.ListingId, out int offerCount) ? offerCount : 0))
                 .ToList(),
             Icons = BuildListingIconDtos(responseListings, iconListingIds),
-            Notifications = request.IncludeNotifications ? ZoneBlueprintStoreNotifications.GetUnreadNotifications(catalog, playerId, platformId) : []
+            Notifications = request.IncludeNotifications ? ZoneBlueprintStoreNotifications.GetUnreadNotifications(catalog, playerId) : []
         });
     }
 
@@ -167,19 +164,18 @@ internal static class ZoneBlueprintStoreListAction
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.SyncHidden, reason);
         }
 
-        string platformId = ZoneBlueprintStoreAccess.ResolveRequesterPlatformId(player, sender, playerId);
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
         HashSet<string> activeListingIds = catalog.Listings
             .Where(listing => listing.Active && !string.IsNullOrWhiteSpace(listing.ListingId))
             .Select(listing => listing.ListingId)
             .ToHashSet(StringComparer.Ordinal);
-        SetHiddenListingIds(playerId, platformId, request.HiddenListingIds, activeListingIds);
+        SetHiddenListingIds(playerId, request.HiddenListingIds, activeListingIds);
         return ZoneBlueprintStoreDtos.Status(ZoneBlueprintStoreRpcType.SyncHidden, true, "");
     }
 
-    private static HashSet<string> GetHiddenListingIds(long playerId, string platformId)
+    private static HashSet<string> GetHiddenListingIds(long playerId)
     {
-        string key = HiddenStateKey(playerId, platformId);
+        string key = ZoneBlueprintStoreIdentity.PlayerKey(playerId);
         return !string.IsNullOrWhiteSpace(key) && HiddenListingIdsByRequester.TryGetValue(key, out HashSet<string> ids)
             ? ids
             : [];
@@ -187,11 +183,10 @@ internal static class ZoneBlueprintStoreListAction
 
     private static void SetHiddenListingIds(
         long playerId,
-        string platformId,
         IEnumerable<string>? listingIds,
         ISet<string> activeListingIds)
     {
-        string key = HiddenStateKey(playerId, platformId);
+        string key = ZoneBlueprintStoreIdentity.PlayerKey(playerId);
         if (string.IsNullOrWhiteSpace(key))
         {
             return;
@@ -228,11 +223,6 @@ internal static class ZoneBlueprintStoreListAction
         }
 
         HiddenListingIdsByRequester[key] = ids;
-    }
-
-    private static string HiddenStateKey(long playerId, string platformId)
-    {
-        return ZoneBlueprintStoreIdentity.HiddenStateKey(ZoneBlueprintStoreIdentity.Actor(playerId, platformId), BlueprintConfig.StoreIdentityMode);
     }
 
 }

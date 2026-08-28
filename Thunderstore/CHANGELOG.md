@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.5
+
+- Added a Blueprint Snap Point hammer tool, saved native snap points, vanilla source-snap cycling, and Grid Snap support during blueprint placement.
+- Simplified Blueprint Store identity to PlayerId for ownership, offers, balances, notifications, and hidden listings while keeping listing limits grouped by normalized platform account; removed Identity Mode, Anonymous Notifications, and legacy identity fields.
+- Moved persistent Homestead data to Valheim's save-data `Homestead/Blueprints`, `Homestead/PlanGhosts`, and `Homestead/Store` folders and removed the `ServerBlueprints` layer. Existing `BepInEx/config/Homestead` data is not migrated or read automatically.
+- Embedded four default blueprint samples in the DLL; non-dedicated clients install them only when their `Blueprints` folder does not yet exist, and the loose packaged sample files were removed.
+- Made the Homestead status HUD follow vanilla Ctrl+F3 visibility, changed the default Build Camera look-at-lock key to `N`, and removed the redundant blueprint placement key hint.
+
 ## 1.2.4
 
 - Changed `Terrain Support = On` so future blueprint confirmations can restore saved support heights over existing terrain height edits within the blueprint support/feather footprint while preserving edits outside that footprint and existing terrain paint.
@@ -81,9 +89,6 @@
 - Now the mod includes 3 blueprint samples.
 
 ## 1.1.1
-
-![](https://i.ibb.co/S4V2z9pS/Screenshot-2026-05-31-160539.png)
-
 - Blueprint, plan, station, and store preview ghosts now preserve source piece textures while applying the configured preview color.
 - `Preview Ghost Color` now defaults to `#FFFFFFFF`, and store preview ghosts use the same preview color option as other blueprint ghosts.
 - Added a safe text-input visibility fallback so Homestead no longer logs repeated errors when another mod patches `TextInput.IsVisible` before its UI is ready.

@@ -1,6 +1,6 @@
 # Homestead
 
-![](https://i.ibb.co/C5vLNbRs/fullshot.png) <br>
+![](https://i.ibb.co/S4V2z9pS/Screenshot-2026-05-31-160539.png) <br>
 Homestead is a Valheim building mod focused on saving, rebuilding, trading, and cleaning up player structures. It brings blueprint workflows into the hammer tab, with Area Save, Area Dismantle, a Blueprint Store, build camera controls, placement helpers, and Dvergr circlet quality-of-life features.
 
 ![](https://i.ibb.co/FL5GVNbn/01-hammertab.png) <br>
@@ -12,6 +12,9 @@ Use build camera and area save to make blueprints. <br>
 
 ![](https://i.ibb.co/Wpnhwd60/blueprintbuild.gif) <br>
 Place your blueprint and put according materials into blueprint chest and confirm it. (Stations are needed to) <br>
+
+![](https://i.ibb.co/JwDN0kMx/snappoints.gif) <br>
+You can set snappoints on the build and save those snappoints in the blueprint.
 
 ![](https://i.ibb.co/Pv4LZnKm/blueprintstore.gif) <br>
 Alt+click your blueprint and put it on the ground and put a price on your blueprint and list in on blueprint store <br>
@@ -37,6 +40,7 @@ Build camera, dvergr circlet attached to build camera, dvergr circlet light adju
 - **Build camera** for easier large-scale building from a detached view.
 - **Placement helpers** for grid snap, nudging, rotation step, and X/Z rotation offsets.
 - **Dvergr circlet controls** for light toggle, intensity, range, durability drain, and synced visuals.
+- **File location:** `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\Homestead`
 
 ## Core Flow
 
@@ -49,13 +53,7 @@ Build camera, dvergr circlet attached to build camera, dvergr circlet light adju
 5. Select the saved blueprint from the Homestead tab.
 6. Place the blueprint chest.
 7. Deposit the required materials.
-8. Confirm the build.
-
-Default confirm hotkey:
-
-```text
-Alt + E
-```
+8. Confirm the build with `Alt + E`
 
 ### Sell A Blueprint
 

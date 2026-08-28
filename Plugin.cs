@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -19,24 +20,35 @@ namespace Homestead;
 public partial class HomesteadPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Homestead";
-    internal const string ModVersion = "1.2.4";
+    internal const string ModVersion = "1.2.5";
     internal const string Author = "sighsorry";
     internal const string ModGUID = $"{Author}.{ModName}";
     internal const string DataStorageFolder = "Homestead";
     internal const string BlueprintStorageFolder = "Blueprints";
-    internal const string ServerBlueprintStorageFolder = "ServerBlueprints";
     internal const string PlanGhostStorageFolder = "PlanGhosts";
     internal const string BlueprintStoreStorageFolder = "Store";
 
     private const string ConfigFileName = $"{ModGUID}.cfg";
+    private const string BlueprintSampleResourcePrefix = "Homestead.Samples.";
     private const long ReloadDelay = TimeSpan.TicksPerSecond;
 
+    private static readonly (string FileName, int PieceCount, int SnapPointCount)[] EmbeddedBlueprintSamples =
+    [
+        ("sample_001.blueprint", 63, 0),
+        ("sample_002.blueprint", 132, 0),
+        ("sample_003.blueprint", 236, 0),
+        ("sample_snap.blueprint", 4, 9)
+    ];
+
     private static readonly string ConfigFileFullPath = Path.Combine(Paths.ConfigPath, ConfigFileName);
-    internal static readonly string DataStorageFullPath = Path.Combine(Paths.ConfigPath, DataStorageFolder);
-    internal static readonly string BlueprintStorageFullPath = Path.Combine(DataStorageFullPath, BlueprintStorageFolder);
-    internal static readonly string ServerBlueprintStorageFullPath = Path.Combine(DataStorageFullPath, ServerBlueprintStorageFolder);
-    internal static readonly string PlanGhostStorageFullPath = Path.Combine(ServerBlueprintStorageFullPath, PlanGhostStorageFolder);
-    internal static readonly string BlueprintStoreStorageFullPath = Path.Combine(ServerBlueprintStorageFullPath, BlueprintStoreStorageFolder);
+    internal static string DataStorageFullPath =>
+        Path.Combine(global::Utils.GetSaveDataPath(FileHelpers.FileSource.Local), DataStorageFolder);
+    internal static string BlueprintStorageFullPath => Path.Combine(DataStorageFullPath, BlueprintStorageFolder);
+    internal static string PlanGhostStorageFullPath => Path.Combine(DataStorageFullPath, PlanGhostStorageFolder);
+    internal static string BlueprintStoreStorageFullPath => Path.Combine(DataStorageFullPath, BlueprintStoreStorageFolder);
+    private static bool IsDedicatedServer =>
+        UnityEngine.SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null ||
+        string.Equals(Paths.ProcessName, "valheim_server", StringComparison.OrdinalIgnoreCase);
 
     internal static readonly ManualLogSource HomesteadLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
     internal static readonly ConfigSync ConfigSync = new(ModGUID)
@@ -71,7 +83,6 @@ public partial class HomesteadPlugin : BaseUnityPlugin
         BindConfiguration();
 
         HomesteadLocalization.Load(HomesteadLogger);
-        EnsureDataDirectories();
         HomesteadFeatureBootstrap.Initialize(HomesteadLogger, _harmony);
         SetupWatchers();
 
@@ -97,8 +108,6 @@ public partial class HomesteadPlugin : BaseUnityPlugin
 
     private void SetupWatchers()
     {
-        EnsureDataDirectories();
-
         _configWatcher = new FileSystemWatcher(Paths.ConfigPath, ConfigFileName);
         _configWatcher.Changed += ReadConfigValues;
         _configWatcher.Created += ReadConfigValues;
@@ -112,9 +121,118 @@ public partial class HomesteadPlugin : BaseUnityPlugin
     private static void EnsureDataDirectories()
     {
         Directory.CreateDirectory(DataStorageFullPath);
-        Directory.CreateDirectory(BlueprintStorageFullPath);
         Directory.CreateDirectory(PlanGhostStorageFullPath);
         Directory.CreateDirectory(BlueprintStoreStorageFullPath);
+    }
+
+    private static void InstallEmbeddedBlueprintSamplesIfNeeded()
+    {
+        string destinationPath = BlueprintStorageFullPath;
+        if (Directory.Exists(destinationPath))
+        {
+            return;
+        }
+
+        string stagingPath = Path.Combine(
+            DataStorageFullPath,
+            $".{BlueprintStorageFolder}.seed.{Guid.NewGuid():N}");
+
+        try
+        {
+            byte[][] payloads = LoadEmbeddedBlueprintSamples();
+            Directory.CreateDirectory(stagingPath);
+
+            for (int i = 0; i < EmbeddedBlueprintSamples.Length; i++)
+            {
+                string path = Path.Combine(stagingPath, EmbeddedBlueprintSamples[i].FileName);
+                using FileStream output = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                output.Write(payloads[i], 0, payloads[i].Length);
+            }
+
+            for (int i = 0; i < EmbeddedBlueprintSamples.Length; i++)
+            {
+                string path = Path.Combine(stagingPath, EmbeddedBlueprintSamples[i].FileName);
+                ValidateEmbeddedBlueprintSample(ZoneBlueprintFileFormat.ReadFile(path), EmbeddedBlueprintSamples[i]);
+            }
+
+            if (Directory.Exists(destinationPath))
+            {
+                return;
+            }
+
+            Directory.Move(stagingPath, destinationPath);
+            stagingPath = "";
+            HomesteadLogger.LogInfo($"Installed {EmbeddedBlueprintSamples.Length} Homestead blueprint samples in '{destinationPath}'.");
+        }
+        catch (Exception ex)
+        {
+            if (Directory.Exists(destinationPath))
+            {
+                HomesteadLogger.LogWarning($"Skipped Homestead blueprint samples because '{destinationPath}' was created by another process: {ex.Message}");
+            }
+            else
+            {
+                HomesteadLogger.LogError($"Could not install Homestead blueprint samples in '{destinationPath}': {ex}");
+            }
+        }
+        finally
+        {
+            if (!string.IsNullOrEmpty(stagingPath) && Directory.Exists(stagingPath))
+            {
+                try
+                {
+                    Directory.Delete(stagingPath, recursive: true);
+                }
+                catch (Exception ex)
+                {
+                    HomesteadLogger.LogWarning($"Could not remove temporary Homestead blueprint sample directory '{stagingPath}': {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private static byte[][] LoadEmbeddedBlueprintSamples()
+    {
+        byte[][] payloads = new byte[EmbeddedBlueprintSamples.Length][];
+        for (int i = 0; i < EmbeddedBlueprintSamples.Length; i++)
+        {
+            (string fileName, int pieceCount, int snapPointCount) = EmbeddedBlueprintSamples[i];
+            string resourceName = BlueprintSampleResourcePrefix + fileName;
+            using Stream? resource = typeof(HomesteadPlugin).Assembly.GetManifestResourceStream(resourceName);
+            if (resource == null)
+            {
+                throw new FileNotFoundException($"Embedded blueprint sample resource not found: {resourceName}", resourceName);
+            }
+
+            using MemoryStream buffer = new();
+            resource.CopyTo(buffer);
+            byte[] payload = buffer.ToArray();
+            ZoneBlueprintFile blueprint = ZoneBlueprintFileFormat.Deserialize(Encoding.UTF8.GetString(payload), Path.GetFileNameWithoutExtension(fileName));
+            ValidateEmbeddedBlueprintSample(blueprint, (fileName, pieceCount, snapPointCount));
+            payloads[i] = payload;
+        }
+
+        return payloads;
+    }
+
+    private static void ValidateEmbeddedBlueprintSample(
+        ZoneBlueprintFile blueprint,
+        (string FileName, int PieceCount, int SnapPointCount) expected)
+    {
+        string expectedName = Path.GetFileNameWithoutExtension(expected.FileName);
+        if (!string.Equals(blueprint.Name, expectedName, StringComparison.Ordinal) ||
+            blueprint.Version != 1 ||
+            blueprint.Entries.Count != expected.PieceCount ||
+            blueprint.SnapPoints.Count != expected.SnapPointCount)
+        {
+            throw new InvalidDataException($"Embedded blueprint sample '{expected.FileName}' does not match its expected structure.");
+        }
+
+        string transformError = ZoneBlueprintCommands.ValidateBlueprintTransforms(blueprint);
+        if (!string.IsNullOrEmpty(transformError))
+        {
+            throw new InvalidDataException($"Embedded blueprint sample '{expected.FileName}' is invalid: {transformError}");
+        }
     }
 
     private void BindConfiguration()
@@ -218,6 +336,19 @@ public partial class HomesteadPlugin : BaseUnityPlugin
         return config(group, name, value, new ConfigDescription(description), synchronizedSetting);
     }
 
+    [HarmonyPatch(typeof(FejdStartup), "Awake")]
+    private static class EnsureSaveDirectoriesAfterStartupArgumentsPatch
+    {
+        private static void Postfix()
+        {
+            EnsureDataDirectories();
+            if (!IsDedicatedServer)
+            {
+                InstallEmbeddedBlueprintSamplesIfNeeded();
+            }
+        }
+    }
+
 }
 
 public static class ToggleExtensions
@@ -250,12 +381,6 @@ public enum BlueprintAreaSaveCreatorMode
     AllCreators,
     OwnedAndCreatorless,
     OwnedOnly
-}
-
-public enum BlueprintStoreIdentityMode
-{
-    PlayerId,
-    SteamId
 }
 
 public enum BlueprintStoreNotificationMode

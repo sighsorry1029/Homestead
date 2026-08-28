@@ -83,6 +83,14 @@ internal static class ZoneBlueprintStorePreviewPayload
             World = source.World,
             SavedAt = source.SavedAt,
             Radius = source.Radius,
+            SnapPoints = source.SnapPoints
+                .Select(snapPoint => new ZoneBlueprintSnapPoint
+                {
+                    LocalX = snapPoint.LocalX,
+                    LocalY = snapPoint.LocalY,
+                    LocalZ = snapPoint.LocalZ
+                })
+                .ToList(),
             TerrainContacts = []
         };
 

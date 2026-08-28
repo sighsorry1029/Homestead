@@ -12,7 +12,7 @@ internal static class ZoneGridSnap
 
     internal static bool IsActive => _active;
 
-    private static Vector3 SnapPosition(Vector3 position)
+    internal static Vector3 SnapPosition(Vector3 position)
     {
         if (!_active)
         {

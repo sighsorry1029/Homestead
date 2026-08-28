@@ -80,18 +80,13 @@ internal static class ZoneBlueprintStoreAccess
 
     public static bool CheckStoreListingLimit(
         ZoneBlueprintStoreCatalog catalog,
-        long sellerPlayerId,
         string sellerPlatformId,
         out string reason)
     {
         int maxListings = BlueprintConfig.StoreSettings.MaxListingsPerSteamId;
-        ZoneBlueprintStoreActor seller = ZoneBlueprintStoreIdentity.Actor(sellerPlayerId, sellerPlatformId);
         int activeListings = catalog.Listings.Count(listing =>
             listing.Active &&
-            seller.MatchesStored(
-                listing.SellerPlayerId,
-                listing.SellerPlatformId,
-                BlueprintConfig.StoreIdentityMode));
+            ZoneBlueprintStoreIdentity.MatchesPlatformAccount(listing.SellerPlatformId, sellerPlatformId));
 
         if (activeListings >= maxListings)
         {
@@ -103,9 +98,9 @@ internal static class ZoneBlueprintStoreAccess
         return true;
     }
 
-    public static bool IsStoreListingOwner(ZoneBlueprintStoreListing listing, long playerId, string platformId)
+    public static bool IsStoreListingOwner(ZoneBlueprintStoreListing listing, long playerId)
     {
-        return IsStoreListingOwner(listing, ZoneBlueprintStoreIdentity.Actor(playerId, platformId));
+        return listing != null && ZoneBlueprintStoreIdentity.MatchesPlayer(listing.SellerPlayerId, playerId);
     }
 
     public static bool IsStoreListingOwner(ZoneBlueprintStoreListing listing, ZoneBlueprintStoreActor actor)
@@ -115,11 +110,11 @@ internal static class ZoneBlueprintStoreAccess
             return false;
         }
 
-        return actor.MatchesStored(listing.SellerPlayerId, listing.SellerPlatformId, BlueprintConfig.StoreIdentityMode);
+        return actor.MatchesPlayer(listing.SellerPlayerId);
     }
 
-    public static bool MatchesStoreIdentity(long storedPlayerId, string storedPlatformId, long playerId, string platformId)
+    public static bool MatchesPlayerId(long storedPlayerId, long playerId)
     {
-        return ZoneBlueprintStoreIdentity.Actor(playerId, platformId).MatchesStored(storedPlayerId, storedPlatformId, BlueprintConfig.StoreIdentityMode);
+        return ZoneBlueprintStoreIdentity.MatchesPlayer(storedPlayerId, playerId);
     }
 }

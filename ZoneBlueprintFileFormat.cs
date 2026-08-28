@@ -32,7 +32,8 @@ internal static class ZoneBlueprintFileFormat
     {
         Pieces,
         SnapPoints,
-        Terrain
+        Terrain,
+        Skip
     }
 
     public static ZoneBlueprintFile ReadFile(string path)
@@ -93,6 +94,24 @@ internal static class ZoneBlueprintFileFormat
                 .Append(FormatFloat(contact.LocalY))
                 .Append(';')
                 .AppendLine(FormatFloat(contact.LocalZ));
+        }
+
+        if (blueprint.SnapPoints.Count > 0)
+        {
+            builder.AppendLine(HeaderSnapPoints);
+            foreach (ZoneBlueprintSnapPoint snapPoint in blueprint.SnapPoints)
+            {
+                if (!ZoneBlueprintCommands.TryReadBlueprintSnapPoint(snapPoint, out UnityEngine.Vector3 localPoint))
+                {
+                    continue;
+                }
+
+                builder.Append(FormatFloat(localPoint.x))
+                    .Append(';')
+                    .Append(FormatFloat(localPoint.y))
+                    .Append(';')
+                    .AppendLine(FormatFloat(localPoint.z));
+            }
         }
 
         builder.AppendLine(HeaderPieces);
@@ -222,6 +241,21 @@ internal static class ZoneBlueprintFileFormat
 
             if (line.StartsWith("#", StringComparison.Ordinal))
             {
+                bool isComment = line.Length == 1 || char.IsWhiteSpace(line[1]);
+                if (!isComment)
+                {
+                    section = BlueprintSection.Skip;
+                }
+
+                continue;
+            }
+
+            if (section == BlueprintSection.SnapPoints &&
+                TryParseVector(line, out float snapX, out float snapY, out float snapZ))
+            {
+                ZoneBlueprintCommands.TryAddBlueprintSnapPoint(
+                    blueprint.SnapPoints,
+                    new UnityEngine.Vector3(snapX, snapY, snapZ));
                 continue;
             }
 

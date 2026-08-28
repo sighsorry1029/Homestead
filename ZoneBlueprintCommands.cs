@@ -15,6 +15,8 @@ internal static class ZoneBlueprintCommands
     private const float MaxBlueprintHorizontalOffset = 512f;
     private const float MaxBlueprintVerticalOffset = 512f;
     private const float MaxBlueprintScaleComponent = 64f;
+    internal const int MaxBlueprintSnapPointCount = 256;
+    private const float BlueprintSnapPointDedupeDistance = 0.01f;
     private const float PlanGhostCleanupStartupDelaySeconds = 600f;
     private const float PlanGhostCleanupRegistryRetrySeconds = 60f;
     private const float PlanGhostCleanupIntervalSeconds = 6f * 60f * 60f;
@@ -63,7 +65,12 @@ internal static class ZoneBlueprintCommands
             return HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_name_required"));
         }
 
-        if (!ZoneBlueprintSaveTool.TryGetSelectedBlueprint(name, player, out ZoneBlueprintFile blueprint, out string selectionError))
+        if (!ZoneBlueprintSaveTool.TryGetSelectedBlueprint(
+                name,
+                player,
+                out ZoneBlueprintFile blueprint,
+                out IReadOnlyCollection<ZDOID> selectedZdos,
+                out string selectionError))
         {
             return HomesteadCommandResult.Fail(selectionError);
         }
@@ -74,6 +81,7 @@ internal static class ZoneBlueprintCommands
         }
 
         string path = SaveBlueprint(name, blueprint);
+        ZoneBlueprintSnapPointTool.ConsumeForSelection(selectedZdos);
         return HomesteadCommandResult.Ok(
             HomesteadLocalization.Format("hs_blueprint_saved_to_path", name, blueprint.Entries.Count, blueprint.TerrainContacts.Count, path));
     }
@@ -476,7 +484,8 @@ internal static class ZoneBlueprintCommands
         Vector3 anchor,
         Quaternion anchorRotation,
         IEnumerable<ZDO> sourceZdos,
-        float radius)
+        float radius,
+        IEnumerable<Vector3>? worldSnapPoints = null)
     {
         Quaternion inverseAnchorRotation = Quaternion.Inverse(anchorRotation);
         List<ZoneBlueprintEntry> entries = [];
@@ -528,8 +537,38 @@ internal static class ZoneBlueprintCommands
                 .ThenBy(entry => entry.LocalPos[2])
                 .ThenBy(entry => entry.LocalPos[1])
                 .ToList(),
+            SnapPoints = CreateBlueprintSnapPoints(anchor, inverseAnchorRotation, worldSnapPoints),
             TerrainContacts = terrainContacts
         };
+    }
+
+    private static List<ZoneBlueprintSnapPoint> CreateBlueprintSnapPoints(
+        Vector3 anchor,
+        Quaternion inverseAnchorRotation,
+        IEnumerable<Vector3>? worldSnapPoints)
+    {
+        List<ZoneBlueprintSnapPoint> snapPoints = [];
+        if (worldSnapPoints == null)
+        {
+            return snapPoints;
+        }
+
+        foreach (Vector3 worldPoint in worldSnapPoints)
+        {
+            if (!ZoneTransformPayload.IsFinite(worldPoint))
+            {
+                continue;
+            }
+
+            Vector3 localPoint = inverseAnchorRotation * (worldPoint - anchor);
+            TryAddBlueprintSnapPoint(snapPoints, localPoint);
+            if (snapPoints.Count >= MaxBlueprintSnapPointCount)
+            {
+                break;
+            }
+        }
+
+        return snapPoints;
     }
 
     internal static ZoneBlueprintFile LoadBlueprintForPlan(string name)
@@ -877,7 +916,78 @@ internal static class ZoneBlueprintCommands
             }
         }
 
+        if (!TryNormalizeBlueprintSnapPoints(blueprint))
+        {
+            return HomesteadLocalization.Format(
+                "hs_blueprint_entry_transform_invalid",
+                blueprint.Name,
+                "snap point");
+        }
+
         return "";
+    }
+
+    internal static bool TryReadBlueprintSnapPoint(ZoneBlueprintSnapPoint snapPoint, out Vector3 localPoint)
+    {
+        localPoint = default;
+        if (snapPoint == null)
+        {
+            return false;
+        }
+
+        localPoint = new Vector3(snapPoint.LocalX, snapPoint.LocalY, snapPoint.LocalZ);
+        return ZoneTransformPayload.IsFinite(localPoint) && IsWithinBlueprintOffset(localPoint);
+    }
+
+    internal static bool TryAddBlueprintSnapPoint(List<ZoneBlueprintSnapPoint> snapPoints, Vector3 localPoint)
+    {
+        if (snapPoints == null ||
+            snapPoints.Count >= MaxBlueprintSnapPointCount ||
+            !ZoneTransformPayload.IsFinite(localPoint) ||
+            !IsWithinBlueprintOffset(localPoint))
+        {
+            return false;
+        }
+
+        float dedupeDistanceSquared = BlueprintSnapPointDedupeDistance * BlueprintSnapPointDedupeDistance;
+        foreach (ZoneBlueprintSnapPoint existing in snapPoints)
+        {
+            if (TryReadBlueprintSnapPoint(existing, out Vector3 existingPoint) &&
+                (existingPoint - localPoint).sqrMagnitude <= dedupeDistanceSquared)
+            {
+                return false;
+            }
+        }
+
+        snapPoints.Add(new ZoneBlueprintSnapPoint
+        {
+            LocalX = localPoint.x,
+            LocalY = localPoint.y,
+            LocalZ = localPoint.z
+        });
+        return true;
+    }
+
+    private static bool TryNormalizeBlueprintSnapPoints(ZoneBlueprintFile blueprint)
+    {
+        if (blueprint.SnapPoints == null || blueprint.SnapPoints.Count > MaxBlueprintSnapPointCount)
+        {
+            return false;
+        }
+
+        List<ZoneBlueprintSnapPoint> normalized = [];
+        foreach (ZoneBlueprintSnapPoint snapPoint in blueprint.SnapPoints)
+        {
+            if (!TryReadBlueprintSnapPoint(snapPoint, out Vector3 localPoint))
+            {
+                return false;
+            }
+
+            TryAddBlueprintSnapPoint(normalized, localPoint);
+        }
+
+        blueprint.SnapPoints = normalized;
+        return true;
     }
 
     private static bool TryCreateWorldEntryTransform(
@@ -1407,6 +1517,14 @@ internal static class ZoneBlueprintCommands
                     LocalRot = entry.LocalRot.ToArray(),
                     Scale = entry.Scale.ToArray(),
                     Text = entry.Text
+                })
+                .ToList(),
+            SnapPoints = blueprint.SnapPoints
+                .Select(snapPoint => new ZoneBlueprintSnapPoint
+                {
+                    LocalX = snapPoint.LocalX,
+                    LocalY = snapPoint.LocalY,
+                    LocalZ = snapPoint.LocalZ
                 })
                 .ToList(),
             TerrainContacts = blueprint.TerrainContacts

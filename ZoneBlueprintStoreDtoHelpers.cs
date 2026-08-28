@@ -23,7 +23,6 @@ internal static class ZoneBlueprintStoreDtos
         ZoneBlueprintStoreCatalog catalog,
         ZoneBlueprintStoreListing listing,
         long playerId,
-        string platformId,
         bool removeListing = false)
     {
         ZoneBlueprintStoreStatusResponse response = new()
@@ -40,21 +39,20 @@ internal static class ZoneBlueprintStoreDtos
             response.Listing = ToSummaryDto(
                 listing,
                 playerId,
-                platformId,
                 offerCounts.TryGetValue(listing.ListingId, out int offerCount) ? offerCount : 0);
         }
 
         return CreateEnvelope(type, response);
     }
 
-    public static bool IsOfferBuyer(ZoneBlueprintStoreOffer offer, long playerId, string platformId)
+    public static bool IsOfferBuyer(ZoneBlueprintStoreOffer offer, long playerId)
     {
         if (offer == null || playerId == 0L)
         {
             return false;
         }
 
-        return ZoneBlueprintStoreAccess.MatchesStoreIdentity(offer.BuyerPlayerId, offer.BuyerPlatformId, playerId, platformId);
+        return ZoneBlueprintStoreAccess.MatchesPlayerId(offer.BuyerPlayerId, playerId);
     }
 
     public static bool TryGetListingAndOffer(
@@ -91,7 +89,6 @@ internal static class ZoneBlueprintStoreDtos
         string listingId,
         string offerId,
         long buyerPlayerId,
-        string buyerPlatformId,
         out ZoneBlueprintStoreOffer offer,
         out string reason)
     {
@@ -111,7 +108,7 @@ internal static class ZoneBlueprintStoreDtos
             return false;
         }
 
-        if (!IsOfferBuyer(offer, buyerPlayerId, buyerPlatformId))
+        if (!IsOfferBuyer(offer, buyerPlayerId))
         {
             reason = HomesteadLocalization.Text("hs_store_offer_other_buyer");
             return false;
@@ -121,10 +118,10 @@ internal static class ZoneBlueprintStoreDtos
         return true;
     }
 
-    public static ZoneBlueprintStoreOfferDto ToOfferDto(ZoneBlueprintStoreOffer offer, bool canManage, long playerId, string platformId)
+    public static ZoneBlueprintStoreOfferDto ToOfferDto(ZoneBlueprintStoreOffer offer, bool canManage, long playerId)
     {
         List<ZoneBlueprintStorePriceItem> priceItems = ZoneBlueprintStorePrices.NormalizePriceItems(offer.PriceItems);
-        bool buyer = IsOfferBuyer(offer, playerId, platformId);
+        bool buyer = IsOfferBuyer(offer, playerId);
         bool pending = string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Pending, StringComparison.Ordinal);
         return new ZoneBlueprintStoreOfferDto
         {
@@ -149,11 +146,10 @@ internal static class ZoneBlueprintStoreDtos
     public static ZoneBlueprintStoreListingSummaryDto ToSummaryDto(
         ZoneBlueprintStoreListing listing,
         long playerId,
-        string platformId,
         int offerCount)
     {
         List<ZoneBlueprintStorePriceItem> priceItems = ZoneBlueprintStorePrices.GetListingPriceItems(listing);
-        bool owner = ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId, platformId);
+        bool owner = ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId);
         return new ZoneBlueprintStoreListingSummaryDto
         {
             ListingId = listing.ListingId,

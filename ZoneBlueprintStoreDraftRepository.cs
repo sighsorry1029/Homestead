@@ -437,7 +437,6 @@ internal static class ZoneBlueprintStoreDraftRepository
             ListingId = source.ListingId,
             BuyerName = source.BuyerName,
             BuyerPlayerId = source.BuyerPlayerId,
-            BuyerPlatformId = source.BuyerPlatformId,
             CreatedAt = source.CreatedAt,
             UpdatedAt = source.UpdatedAt,
             Status = source.Status,
@@ -451,7 +450,6 @@ internal static class ZoneBlueprintStoreDraftRepository
         {
             NotificationId = source.NotificationId,
             Type = source.Type,
-            RecipientPlatformId = source.RecipientPlatformId,
             RecipientPlayerId = source.RecipientPlayerId,
             RecipientName = source.RecipientName,
             ActorName = source.ActorName,
@@ -461,7 +459,6 @@ internal static class ZoneBlueprintStoreDraftRepository
             Message = source.Message,
             CreatedAt = source.CreatedAt,
             Read = source.Read,
-            ReadByPlatformIds = source.ReadByPlatformIds?.ToList() ?? [],
             ReadByPlayerIds = source.ReadByPlayerIds?.ToList() ?? []
         };
     }
@@ -471,7 +468,6 @@ internal static class ZoneBlueprintStoreDraftRepository
         return new ZoneBlueprintStoreBalance
         {
             SellerPlayerId = source.SellerPlayerId,
-            SellerPlatformId = source.SellerPlatformId,
             SellerName = source.SellerName,
             Coins = source.Coins,
             Materials = ClonePriceItems(source.Materials)
@@ -502,7 +498,6 @@ internal static class ZoneBlueprintStoreDraftRepository
             ReferenceEquals(source.Balances, clone.Balances) ||
             ReferenceEquals(source.Listings[0].PriceItems, clone.Listings[0].PriceItems) ||
             ReferenceEquals(source.Offers[0].PriceItems, clone.Offers[0].PriceItems) ||
-            ReferenceEquals(source.Notifications[0].ReadByPlatformIds, clone.Notifications[0].ReadByPlatformIds) ||
             ReferenceEquals(source.Notifications[0].ReadByPlayerIds, clone.Notifications[0].ReadByPlayerIds) ||
             ReferenceEquals(source.Balances[0].Materials, clone.Balances[0].Materials))
         {

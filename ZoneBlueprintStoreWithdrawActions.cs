@@ -17,7 +17,7 @@ internal static class ZoneBlueprintStoreWithdrawAction
         ZoneBlueprintStoreActor seller = ZoneBlueprintStoreAccess.ResolveRequesterActor(player, sender, playerId);
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
         List<ZoneBlueprintStoreBalance> balances = catalog.Balances
-            .Where(item => seller.MatchesStored(item.SellerPlayerId, item.SellerPlatformId, BlueprintConfig.StoreIdentityMode))
+            .Where(item => seller.MatchesPlayer(item.SellerPlayerId))
             .ToList();
         int coins = balances.Sum(item => item.Coins);
         List<ZoneBlueprintStorePriceItem> materials = ZoneBlueprintStorePrices.NormalizePriceItems(balances.SelectMany(item => item.Materials));
@@ -41,7 +41,7 @@ internal static class ZoneBlueprintStoreWithdrawAction
         }
 
         ZoneBlueprintStoreCatalog rollbackCatalog = ZoneBlueprintStoreDraftRepository.CloneCatalog(catalog);
-        ClearBalances(balances, playerName, seller.PlatformId);
+        ClearBalances(balances, playerName);
         if (!ZoneBlueprintStoreDraftRepository.TrySaveCatalogImmediate(catalog, out string saveReason))
         {
             return FailWithCatalogRecovery(saveReason, rollbackCatalog, "withdraw debit save");
@@ -88,13 +88,12 @@ internal static class ZoneBlueprintStoreWithdrawAction
             HomesteadLocalization.Format(key, failure));
     }
 
-    private static void ClearBalances(IEnumerable<ZoneBlueprintStoreBalance> balances, string sellerName, string sellerPlatformId)
+    private static void ClearBalances(IEnumerable<ZoneBlueprintStoreBalance> balances, string sellerName)
     {
         foreach (ZoneBlueprintStoreBalance balance in balances)
         {
             balance.Coins = 0;
             balance.SellerName = sellerName;
-            balance.SellerPlatformId = sellerPlatformId;
             balance.Materials = [];
         }
     }

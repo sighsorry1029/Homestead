@@ -25,6 +25,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
 
     private static ZoneBlueprintStorePreviewTool? _instance;
 
+    private readonly ZoneBlueprintSnapResolver _snapResolver = new();
     private readonly Dictionary<string, LockedPreview> _lockedPreviews = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Queue<string>> _pendingListingPreviewKeysByName = new(StringComparer.OrdinalIgnoreCase);
     private string _listingId = "";
@@ -219,6 +220,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _yaw = 0f;
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
+        _snapResolver.Reset();
         _previewRoot = ZoneBlueprintVisuals.CreateBlueprintVisualRoot(blueprint, $"HomesteadStorePreview_{name}");
         _previewRoot.transform.SetParent(transform, false);
         _chestPreviewRoot = ZoneBlueprintStoreChestPrefab.CreatePreview(GetChestPreviewMode());
@@ -265,11 +267,20 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             ZonePlacementInput.ApplyOffset(ref _horizontalOffset, ref _heightOffset);
         }
 
-        if (TryGetAimPoint(player, out Vector3 point) && _previewRoot != null)
+        if (TryGetAimPoint(player, out Vector3 point, out Piece? targetPiece, out Vector3 rawHitPoint) && _previewRoot != null)
         {
             Quaternion rotation = Quaternion.Euler(0f, _yaw, 0f);
             Quaternion chestRotation = GetAimYawRotation(player);
-            Vector3 anchor = point + ZonePlacementOffset.ToWorldOffset(rotation, _horizontalOffset, _heightOffset);
+            Vector3 anchor = ZoneGridSnap.SnapPosition(
+                point + ZonePlacementOffset.ToWorldOffset(rotation, _horizontalOffset, _heightOffset));
+            if (_blueprint != null &&
+                _snapResolver.TryResolve(player, _blueprint, rotation, anchor, targetPiece, rawHitPoint, out Vector3 snappedAnchor))
+            {
+                // The snapped preview anchor is also the exact value sent in the
+                // buy/listing RPC below; do not reapply the grid after this step.
+                anchor = snappedAnchor;
+            }
+
             _previewRoot.SetActive(true);
             _previewRoot.transform.position = anchor;
             _previewRoot.transform.rotation = rotation;
@@ -372,6 +383,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _name = "";
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
+        _snapResolver.Reset();
         _waitForPlaceRelease = false;
         _activatedFrame = -1;
         ZoneAreaToolStatusHud.Hide();
@@ -640,6 +652,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _lockedPreviewColorSignature = "";
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
+        _snapResolver.Reset();
         ZoneAreaToolStatusHud.Hide();
         ClearPreview();
     }
@@ -678,7 +691,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _lockedPreviewColorSignature = "";
     }
 
-    private static bool TryGetAimPoint(Player player, out Vector3 point)
+    private static bool TryGetAimPoint(Player player, out Vector3 point, out Piece? targetPiece, out Vector3 rawHitPoint)
     {
         Camera camera = Utils.GetMainCamera();
         if (camera != null)
@@ -686,7 +699,9 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             Ray ray = camera.ScreenPointToRay(new Vector3(Screen.width * 0.5f, Screen.height * 0.5f));
             if (Physics.Raycast(ray, out RaycastHit hit, MaxPreviewDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
-                point = hit.point;
+                rawHitPoint = hit.point;
+                targetPiece = hit.collider != null ? hit.collider.GetComponentInParent<Piece>() : null;
+                point = rawHitPoint;
                 point.y = HomesteadTerrainSupport.SampleGroundY(point.x, point.z, point.y);
 
                 return true;
@@ -694,6 +709,8 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         }
 
         point = player.transform.position + player.transform.forward * 8f;
+        rawHitPoint = point;
+        targetPiece = null;
         return true;
     }
 

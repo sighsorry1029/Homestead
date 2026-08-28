@@ -9,6 +9,7 @@ internal static class ZoneBlueprintToolPieceFactory
 {
     private const string ToolObjectName = "Homestead_BlueprintSaveTool";
     private const string DismantleToolObjectName = "Homestead_AreaDismantleTool";
+    private const string SnapPointToolObjectName = "Homestead_BlueprintSnapPointTool";
     private const string StoreToolObjectName = "Homestead_BlueprintStoreTool";
     private const string BlueprintObjectPrefix = "Homestead_Blueprint_";
 
@@ -51,6 +52,23 @@ internal static class ZoneBlueprintToolPieceFactory
     {
         piece.m_icon = ZoneBlueprintToolIcons.AreaDismantle();
         piece.m_description = FormatAreaDismantleDescription();
+    }
+
+    public static Piece CreateBlueprintSnapPoint(Piece.PieceCategory category)
+    {
+        return CreateToolPiece(
+            SnapPointToolObjectName,
+            ZoneBlueprintToolKind.BlueprintSnapPoint,
+            HomesteadLocalization.Token("hs_blueprint_snappoint_name"),
+            HomesteadLocalization.Token("hs_blueprint_snappoint_desc"),
+            category,
+            ZoneBlueprintToolIcons.BlueprintSnapPoint());
+    }
+
+    public static void RefreshBlueprintSnapPoint(Piece piece)
+    {
+        piece.m_icon = ZoneBlueprintToolIcons.BlueprintSnapPoint();
+        piece.m_description = HomesteadLocalization.Token("hs_blueprint_snappoint_desc");
     }
 
     public static Piece CreateStore(Piece.PieceCategory category)

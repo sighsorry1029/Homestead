@@ -208,6 +208,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
             RefreshText();
         }
 
+        ApplyVisibility();
         ApplyLayout();
     }
 
@@ -326,9 +327,19 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         PruneExpiredLines();
         string[] lines = [_areaLine, _placementLine, _dvergrLine, _buildCameraLine];
         _text!.text = string.Join("\n", lines.Where(line => !string.IsNullOrEmpty(line)));
-        _canvasGroup!.alpha = string.IsNullOrEmpty(_text.text) ? 0f : 1f;
+        ApplyVisibility();
         _text.transform.SetAsLastSibling();
         ApplyLayout();
+    }
+
+    private void ApplyVisibility()
+    {
+        if (_text == null || _canvasGroup == null)
+        {
+            return;
+        }
+
+        _canvasGroup.alpha = !string.IsNullOrEmpty(_text.text) && !Hud.IsUserHidden() ? 1f : 0f;
     }
 
     private void EnsureElements()
