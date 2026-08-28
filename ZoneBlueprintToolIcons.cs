@@ -8,6 +8,7 @@ internal static class ZoneBlueprintToolIcons
     private static Sprite? _areaDismantleIcon;
     private static Sprite? _blueprintSnapPointIcon;
     private static Sprite? _storeIcon;
+    private static Sprite? _dataFolderIcon;
     private static Sprite? _fallbackIcon;
 
     public static Sprite Fallback()
@@ -98,6 +99,76 @@ internal static class ZoneBlueprintToolIcons
         texture.Apply();
         _storeIcon = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), size);
         return _storeIcon;
+    }
+
+    public static Sprite DataFolder()
+    {
+        if (_dataFolderIcon != null)
+        {
+            return _dataFolderIcon;
+        }
+
+        const int size = 64;
+        Texture2D texture = new(size, size, TextureFormat.RGBA32, false)
+        {
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp
+        };
+
+        Color clear = new(0f, 0f, 0f, 0f);
+        Color panel = new(0.08f, 0.10f, 0.12f, 0.95f);
+        Color ring = new(0.22f, 0.82f, 1f, 1f);
+        Color ringSoft = new(0.22f, 0.82f, 1f, 0.34f);
+        Color folder = new(1f, 0.72f, 0.18f, 1f);
+        Color folderDark = new(0.34f, 0.19f, 0.04f, 1f);
+        Color folderLight = new(1f, 0.88f, 0.42f, 1f);
+        Vector2 center = new((size - 1) * 0.5f, (size - 1) * 0.5f);
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                Vector2 p = new(x, y);
+                float distance = Vector2.Distance(p, center);
+                Color color = clear;
+                if (distance <= 28f)
+                {
+                    color = panel;
+                }
+
+                if (distance is >= 21f and <= 25f)
+                {
+                    color = ring;
+                }
+                else if (distance is >= 17.5f and < 21f)
+                {
+                    color = Color.Lerp(color, ringSoft, 0.65f);
+                }
+
+                bool tab = x >= 17 && x <= 32 && y >= 42 && y <= 49;
+                bool back = x >= 15 && x <= 49 && y >= 23 && y <= 44;
+                bool front = x >= 12 && x <= 52 && y >= 17 && y <= 38;
+                if (tab || back || front)
+                {
+                    bool edge =
+                        tab && (x <= 19 || x >= 30 || y >= 47) ||
+                        back && (x <= 17 || x >= 47 || y >= 42) ||
+                        front && (x <= 14 || x >= 50 || y <= 19 || y >= 36);
+                    color = edge ? folderDark : folder;
+                }
+
+                if (front && y is >= 32 and <= 34 && x is >= 17 and <= 47)
+                {
+                    color = folderLight;
+                }
+
+                texture.SetPixel(x, y, color);
+            }
+        }
+
+        texture.Apply();
+        _dataFolderIcon = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), size);
+        return _dataFolderIcon;
     }
 
     public static Sprite AreaSave()

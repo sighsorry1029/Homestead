@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -817,9 +818,11 @@ internal static class ZoneBlueprintSaveToolMenu
     private static Piece? _dismantleToolPiece;
     private static Piece? _snapPointToolPiece;
     private static Piece? _storeToolPiece;
+    private static Piece? _dataFolderToolPiece;
     private static int _lastStoreListFrame = -1;
     private static int _storeListIntentFrame = -1;
     private static string _storeListIntentBlueprintName = "";
+    private static bool _dataFolderSelectionHandled;
     private static bool _initialized;
     private static bool _blueprintListDirty = true;
     private static bool _blueprintRefreshRequested;
@@ -846,6 +849,7 @@ internal static class ZoneBlueprintSaveToolMenu
         EnsureDismantleToolPiece();
         EnsureSnapPointToolPiece();
         EnsureStoreToolPiece();
+        EnsureDataFolderToolPiece();
     }
 
     private static Piece.PieceCategory HomesteadCategory
@@ -886,6 +890,7 @@ internal static class ZoneBlueprintSaveToolMenu
         HammerRefreshScheduler.Reset();
         _lastBlueprintPieceRegisterFrame = -1;
         _blueprintPiecesRegisteredThisFrame = 0;
+        _dataFolderSelectionHandled = false;
         _forceHammerRefreshOnNextTableUpdate = true;
     }
 
@@ -981,6 +986,7 @@ internal static class ZoneBlueprintSaveToolMenu
         EnsureDismantleToolPiece();
         EnsureSnapPointToolPiece();
         EnsureStoreToolPiece();
+        EnsureDataFolderToolPiece();
         bool tableChanged = false;
         bool visibleSelectionChanged = false;
         if (_toolPiece != null && _toolPiece)
@@ -1001,6 +1007,11 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_storeToolPiece != null && _storeToolPiece)
         {
             tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
+        }
+
+        if (_dataFolderToolPiece != null && _dataFolderToolPiece)
+        {
+            tableChanged |= ZoneBlueprintHammerTable.EnsurePiece(table, _dataFolderToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
@@ -1315,6 +1326,7 @@ internal static class ZoneBlueprintSaveToolMenu
         EnsureDismantleToolPiece();
         EnsureSnapPointToolPiece();
         EnsureStoreToolPiece();
+        EnsureDataFolderToolPiece();
 
         if (_toolPiece != null && _toolPiece)
         {
@@ -1334,6 +1346,11 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_storeToolPiece != null && _storeToolPiece)
         {
             ZoneBlueprintHammerTable.EnsurePiece(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
+        }
+
+        if (_dataFolderToolPiece != null && _dataFolderToolPiece)
+        {
+            ZoneBlueprintHammerTable.EnsurePiece(table, _dataFolderToolPiece, HomesteadCategory, CategoryLabel);
         }
 
         foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
@@ -1376,6 +1393,11 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintHammerTable.EnsurePieceVisible(table, _storeToolPiece, HomesteadCategory, CategoryLabel);
         }
 
+        if (_dataFolderToolPiece != null && _dataFolderToolPiece)
+        {
+            ZoneBlueprintHammerTable.EnsurePieceVisible(table, _dataFolderToolPiece, HomesteadCategory, CategoryLabel);
+        }
+
         foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
         {
             if (piece != null && piece)
@@ -1403,6 +1425,7 @@ internal static class ZoneBlueprintSaveToolMenu
         AddMenuPiece(pieces, _dismantleToolPiece);
         AddMenuPiece(pieces, _snapPointToolPiece);
         AddMenuPiece(pieces, _storeToolPiece);
+        AddMenuPiece(pieces, _dataFolderToolPiece);
         foreach (Piece piece in GetBlueprintPiecesInMenuOrder())
         {
             AddMenuPiece(pieces, piece);
@@ -1494,7 +1517,7 @@ internal static class ZoneBlueprintSaveToolMenu
 
         List<Piece> availablePieces = table.m_availablePieces[availableIndex];
         Piece? selectedPiece = GetMarker(table.GetSelectedPiece()) != null ? table.GetSelectedPiece() : null;
-        List<Piece> sorted = new(availablePieces.Count + BlueprintPieces.Count + 4);
+        List<Piece> sorted = new(availablePieces.Count + BlueprintPieces.Count + 5);
         foreach (Piece piece in availablePieces)
         {
             if (IsRepairPiece(piece))
@@ -1655,6 +1678,19 @@ internal static class ZoneBlueprintSaveToolMenu
 
         _storeToolPiece = ZoneBlueprintToolPieceFactory.CreateStore(HomesteadCategory);
         RegisterWithJotunn(_storeToolPiece.gameObject);
+    }
+
+    private static void EnsureDataFolderToolPiece()
+    {
+        if (_dataFolderToolPiece != null && _dataFolderToolPiece)
+        {
+            ZoneBlueprintToolPieceFactory.RefreshDataFolder(_dataFolderToolPiece);
+            RegisterWithJotunn(_dataFolderToolPiece.gameObject);
+            return;
+        }
+
+        _dataFolderToolPiece = ZoneBlueprintToolPieceFactory.CreateDataFolder(HomesteadCategory);
+        RegisterWithJotunn(_dataFolderToolPiece.gameObject);
     }
 
     private static Piece? EnsureBlueprintPiece(string name, ZoneBlueprintFile? loadedBlueprint = null, bool queueMissingIcon = true)
@@ -1867,12 +1903,93 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintPlacementTool.Deactivate();
             ZoneBlueprintStore.Open();
         }
-        else
+        else if (marker.Kind == ZoneBlueprintToolKind.Blueprint)
         {
             ZoneBlueprintSaveTool.Deactivate();
             ZoneAreaDismantleTool.Deactivate();
             ZoneBlueprintSnapPointTool.Deactivate();
             ZoneBlueprintPlacementTool.Activate(player, marker.BlueprintName);
+        }
+        else
+        {
+            DeactivateNormalBlueprintTools();
+        }
+    }
+
+    private static bool TryHandleDataFolderIntent(ZoneBlueprintSaveToolMarker marker, bool oncePerSelection)
+    {
+        if (marker.Kind != ZoneBlueprintToolKind.DataFolder)
+        {
+            _dataFolderSelectionHandled = false;
+            return false;
+        }
+
+        Player? player = Player.m_localPlayer;
+        if (player != null && player.m_placementGhost != null)
+        {
+            Object.Destroy(player.m_placementGhost);
+            player.m_placementGhost = null;
+        }
+
+        ZoneBlueprintStorePreviewTool.DeactivateActive();
+        DeactivateNormalBlueprintTools();
+
+        bool shouldOpen = !oncePerSelection ||
+                          (!_dataFolderSelectionHandled && IsDataFolderNavigationInputDown());
+        if (!shouldOpen)
+        {
+            return true;
+        }
+
+        _dataFolderSelectionHandled = true;
+        Hud.HidePieceSelection();
+        OpenDataFolder();
+        return true;
+    }
+
+    private static bool IsDataFolderNavigationInputDown()
+    {
+        return ZInput.GetButtonDown("JoyLStickLeft") ||
+               ZInput.GetButtonDown("JoyLStickRight") ||
+               ZInput.GetButtonDown("JoyLStickUp") ||
+               ZInput.GetButtonDown("JoyLStickDown") ||
+               ZInput.GetButtonDown("JoyDPadLeft") ||
+               ZInput.GetButtonDown("JoyDPadRight") ||
+               ZInput.GetButtonDown("JoyDPadUp") ||
+               ZInput.GetButtonDown("JoyDPadDown");
+    }
+
+    private static void OpenDataFolder()
+    {
+        string path = HomesteadPlugin.DataStorageFullPath;
+        try
+        {
+            path = Path.GetFullPath(path);
+            Directory.CreateDirectory(path);
+
+            if (Application.platform is RuntimePlatform.WindowsPlayer or RuntimePlatform.WindowsEditor)
+            {
+                Process? process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                });
+                process?.Dispose();
+            }
+            else
+            {
+                string pathWithSeparator = path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                    ? path
+                    : path + Path.DirectorySeparatorChar;
+                Application.OpenURL(new Uri(pathWithSeparator).AbsoluteUri);
+            }
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning($"Could not open Homestead data folder '{path}': {ex}");
+            Player.m_localPlayer?.Message(
+                MessageHud.MessageType.Center,
+                HomesteadLocalization.Text("hs_data_folder_open_failed"));
         }
     }
 
@@ -1962,8 +2079,14 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintSaveToolMarker? marker = GetMarker(piece);
             if (marker == null)
             {
+                _dataFolderSelectionHandled = false;
                 ZoneBlueprintStorePreviewTool.DeactivateActive();
                 return true;
+            }
+
+            if (TryHandleDataFolderIntent(marker, oncePerSelection: false))
+            {
+                return false;
             }
 
             if (TryHandleStoreListingIntent(marker) ||
@@ -1990,12 +2113,18 @@ internal static class ZoneBlueprintSaveToolMenu
             ZoneBlueprintSaveToolMarker? marker = GetMarker(__instance.m_buildPieces?.GetSelectedPiece());
             if (marker == null)
             {
+                _dataFolderSelectionHandled = false;
                 ZoneBlueprintStorePreviewTool.DeactivateActive();
                 ZoneBlueprintSaveTool.Deactivate();
                 ZoneAreaDismantleTool.Deactivate();
                 ZoneBlueprintSnapPointTool.Deactivate();
                 ZoneBlueprintPlacementTool.Deactivate();
                 return true;
+            }
+
+            if (TryHandleDataFolderIntent(marker, oncePerSelection: true))
+            {
+                return false;
             }
 
             if (TryHandleStoreListingIntent(marker))

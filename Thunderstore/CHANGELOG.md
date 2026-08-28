@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.6
+
+- Added an Open Homestead Folder action beside Blueprint Store in the Homestead hammer tab, opening the current client's resolved local data directory with mouse and gamepad support while preventing passive menu refreshes from launching it.
+
 ## 1.2.5
 
 - Added a Blueprint Snap Point hammer tool, saved native snap points, vanilla source-snap cycling, and Grid Snap support during blueprint placement.

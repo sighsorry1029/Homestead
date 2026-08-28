@@ -14,5 +14,6 @@ internal enum ZoneBlueprintToolKind
     AreaDismantle,
     BlueprintSnapPoint,
     Blueprint,
-    Store
+    Store,
+    DataFolder
 }
