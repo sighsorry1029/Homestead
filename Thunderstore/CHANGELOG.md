@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.8
+
+- Removed the explicit Infinity Hammer Remove Anything patch ordering from Blueprint Snap Point dismantling.
+
 ## 1.2.7
 
 - Changed Blueprint Snap Point authoring to follow Valheim's bound place and dismantle actions, removed redundant key text, and doubled marker visibility without changing its raycast behavior.

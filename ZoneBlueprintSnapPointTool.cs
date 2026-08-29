@@ -547,8 +547,6 @@ internal sealed class ZoneBlueprintSnapPointTool : MonoBehaviour
     }
 
     [HarmonyPatch(typeof(Player), nameof(Player.RemovePiece))]
-    [HarmonyPriority(Priority.First)]
-    [HarmonyBefore("infinity_hammer")]
     private static class PlayerRemovePiecePatch
     {
         private static bool Prefix(Player __instance, ref bool __result)
