@@ -106,6 +106,10 @@
         <Reference Include="UnityEngine.CoreModule">
             <HintPath>$(CorlibPath)\UnityEngine.CoreModule.dll</HintPath>
         </Reference>
+        <Reference Include="UnityEngine.ImageConversionModule">
+            <HintPath>$(CorlibPath)\UnityEngine.ImageConversionModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
         <Reference Include="UnityEngine.PhysicsModule">
             <HintPath>$(CorlibPath)\UnityEngine.PhysicsModule.dll</HintPath>
         </Reference>

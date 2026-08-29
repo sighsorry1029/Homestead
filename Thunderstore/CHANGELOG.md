@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.9
+
+- Replaced the assembly-qualified dynamic ImageConversion type lookup with a static Unity module reference while retaining reflection for image method compatibility.
+
 ## 1.2.8
 
 - Removed the explicit Infinity Hammer Remove Anything patch ordering from Blueprint Snap Point dismantling.

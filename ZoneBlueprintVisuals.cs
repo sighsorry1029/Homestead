@@ -18,14 +18,13 @@ internal static class ZoneBlueprintVisuals
     private static readonly Dictionary<string, Sprite?> IconCache = [];
     private static readonly Dictionary<string, IconPrefabBounds> IconPrefabBoundsCache = new(StringComparer.OrdinalIgnoreCase);
     private static int _iconCacheGeneration;
-    private static readonly Type? ImageConversionType = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
-    private static readonly MethodInfo? LoadImageMethod = ImageConversionType?.GetMethod(
+    private static readonly MethodInfo? LoadImageMethod = typeof(ImageConversion).GetMethod(
         "LoadImage",
         BindingFlags.Public | BindingFlags.Static,
         null,
         new[] { typeof(Texture2D), typeof(byte[]) },
         null);
-    private static readonly MethodInfo? EncodeToPngMethod = ImageConversionType?.GetMethod(
+    private static readonly MethodInfo? EncodeToPngMethod = typeof(ImageConversion).GetMethod(
         "EncodeToPNG",
         BindingFlags.Public | BindingFlags.Static,
         null,
