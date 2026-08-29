@@ -6,6 +6,13 @@ internal static class ZonePlacementInput
 {
     private const float InputEpsilon = 0.0001f;
 
+    public static bool IsPlaceActionDown()
+    {
+        return !Hud.InRadial() &&
+               !ZInput.GetButton("JoyAltKeys") &&
+               (ZInput.GetButtonDown("Attack") || ZInput.GetButtonDown("JoyPlace"));
+    }
+
     public static bool ApplyYawScroll(ref float yaw)
     {
         float scroll = Input.GetAxis("Mouse ScrollWheel");

@@ -117,17 +117,7 @@ internal static class ZoneBuildKeyHints
             "",
             102f);
 
-        if (snapPointToolActive)
-        {
-            SetHint(
-                _toolHint,
-                showBuildHints,
-                HomesteadLocalization.Text("hs_keyhint_blueprint_snappoint"),
-                "Mouse1",
-                "",
-                170f);
-        }
-        else if (ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive)
+        if (ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive)
         {
             string scaleKey = BlueprintConfig.AreaToolUniformScaleModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolUniformScaleModifierLabel;
             string depthKey = BlueprintConfig.AreaToolDepthModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolDepthModifierLabel;

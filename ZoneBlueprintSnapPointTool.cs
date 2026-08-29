@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using BepInEx.Logging;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
@@ -14,8 +15,8 @@ namespace Homestead;
 internal sealed class ZoneBlueprintSnapPointTool : MonoBehaviour
 {
     private const float MarkerMatchDistance = 0.025f;
-    private const float CandidateDiameter = 0.25f;
-    private const float PlacedDiameter = 0.16f;
+    private const float CandidateDiameter = 0.50f;
+    private const float PlacedDiameter = 0.32f;
 
     private static readonly Color CandidateAddColor = new(0.15f, 0.9f, 1f, 1f);
     private static readonly Color CandidateRemoveColor = new(1f, 0.3f, 0.16f, 1f);
@@ -200,10 +201,24 @@ internal sealed class ZoneBlueprintSnapPointTool : MonoBehaviour
             return;
         }
 
-        if (Input.GetMouseButtonDown(0))
+        if (ZonePlacementInput.IsPlaceActionDown())
         {
-            ToggleCandidate(player);
+            PlaceCandidate(player);
         }
+    }
+
+    private void RemoveCandidateAtAim(Player player)
+    {
+        if (!_active || ZoneAreaToolShared.ShouldBlockInput() || !TryFindCandidate(player, out Candidate candidate))
+        {
+            return;
+        }
+
+        _candidate = candidate;
+        _hasCandidate = true;
+        bool alreadyMarked = FindMarkerIndex(candidate.TargetId, candidate.LocalPosition) >= 0;
+        ShowCandidate(candidate.WorldPosition, alreadyMarked);
+        RemoveCandidate(player);
     }
 
     private bool TryFindCandidate(Player player, out Candidate candidate)
@@ -266,27 +281,15 @@ internal sealed class ZoneBlueprintSnapPointTool : MonoBehaviour
         return true;
     }
 
-    private void ToggleCandidate(Player player)
+    private void PlaceCandidate(Player player)
     {
         if (!_hasCandidate)
         {
             return;
         }
 
-        int existingIndex = FindMarkerIndex(_candidate.TargetId, _candidate.LocalPosition);
-        if (existingIndex >= 0)
+        if (FindMarkerIndex(_candidate.TargetId, _candidate.LocalPosition) >= 0)
         {
-            MarkerEntry marker = _markers[existingIndex];
-            DestroyVisual(marker.Visual);
-            _markers.RemoveAt(existingIndex);
-            if (_markers.Count == 0)
-            {
-                _placedVisualsVisible = false;
-            }
-            ShowCandidate(_candidate.WorldPosition, alreadyMarked: false);
-            player.Message(
-                MessageHud.MessageType.TopLeft,
-                HomesteadLocalization.Format("hs_blueprint_snappoint_removed", _markers.Count));
             return;
         }
 
@@ -311,6 +314,33 @@ internal sealed class ZoneBlueprintSnapPointTool : MonoBehaviour
         player.Message(
             MessageHud.MessageType.TopLeft,
             HomesteadLocalization.Format("hs_blueprint_snappoint_added", _markers.Count));
+    }
+
+    private void RemoveCandidate(Player player)
+    {
+        if (!_hasCandidate)
+        {
+            return;
+        }
+
+        int existingIndex = FindMarkerIndex(_candidate.TargetId, _candidate.LocalPosition);
+        if (existingIndex < 0)
+        {
+            return;
+        }
+
+        MarkerEntry marker = _markers[existingIndex];
+        DestroyVisual(marker.Visual);
+        _markers.RemoveAt(existingIndex);
+        if (_markers.Count == 0)
+        {
+            _placedVisualsVisible = false;
+        }
+
+        ShowCandidate(_candidate.WorldPosition, alreadyMarked: false);
+        player.Message(
+            MessageHud.MessageType.TopLeft,
+            HomesteadLocalization.Format("hs_blueprint_snappoint_removed", _markers.Count));
     }
 
     private int FindMarkerIndex(ZDOID targetId, Vector3 localPosition)
@@ -514,6 +544,24 @@ internal sealed class ZoneBlueprintSnapPointTool : MonoBehaviour
     private static bool IsFinite(float value)
     {
         return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
+    [HarmonyPatch(typeof(Player), nameof(Player.RemovePiece))]
+    [HarmonyPriority(Priority.First)]
+    [HarmonyBefore("infinity_hammer")]
+    private static class PlayerRemovePiecePatch
+    {
+        private static bool Prefix(Player __instance, ref bool __result)
+        {
+            if (__instance != Player.m_localPlayer || !IsActive)
+            {
+                return true;
+            }
+
+            _instance?.RemoveCandidateAtAim(__instance);
+            __result = false;
+            return false;
+        }
     }
 
     private readonly struct Candidate

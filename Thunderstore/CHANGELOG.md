@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.7
+
+- Changed Blueprint Snap Point authoring to follow Valheim's bound place and dismantle actions, removed redundant key text, and doubled marker visibility without changing its raycast behavior.
+- Prevented Infinity Hammer's Remove Anything compatibility patch from dismantling the underlying piece before Homestead removes a targeted blueprint snap-point marker.
+
 ## 1.2.6
 
 - Added an Open Homestead Folder action beside Blueprint Store in the Homestead hammer tab, opening the current client's resolved local data directory with mouse and gamepad support while preventing passive menu refreshes from launching it.
