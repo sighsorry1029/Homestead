@@ -365,12 +365,12 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     public bool CanTakePriceItems(IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
     {
-        return CreatePurchaseEscrow(ZoneMaterialEscrow.ToRequirements(priceItems)).HasAllRequired(out deposited);
+        return CreatePurchaseReadSession(_nview?.GetZDO(), ZoneMaterialEscrow.ToRequirements(priceItems)).HasAllRequired(out deposited);
     }
 
     internal static bool CanTakePurchasePriceItems(ZDO? zdo, IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
     {
-        return CreatePurchaseEscrow(zdo, ZoneMaterialEscrow.ToRequirements(priceItems)).HasAllRequired(out deposited);
+        return CreatePurchaseReadSession(zdo, ZoneMaterialEscrow.ToRequirements(priceItems)).HasAllRequired(out deposited);
     }
 
     internal static bool TryTakePurchasePriceItems(ZDO? zdo, IEnumerable<ZoneBlueprintStorePriceItem> priceItems, out string deposited)
@@ -837,7 +837,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     public List<ZoneBlueprintRequirement> GetMissingPurchaseRequirementList()
     {
         return IsPurchaseMode()
-            ? CreatePurchaseEscrow().GetMissingRequirements()
+            ? CreatePurchaseReadSession(_nview?.GetZDO(), GetPriceRequirements()).GetMissingRequirements()
             : [];
     }
 
@@ -1315,8 +1315,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
             return;
         }
 
-        List<ItemDrop.ItemData> items = _container.m_inventory.GetAllItems().ToList();
-        if (items.Count == 0)
+        if (_container.m_inventory.NrOfItems() == 0)
         {
             return;
         }
@@ -1338,7 +1337,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
 
     private string FormatDeposited(IEnumerable<ZoneBlueprintRequirement> requirements)
     {
-        return CreatePurchaseEscrow(requirements).FormatDeposited();
+        return CreatePurchaseReadSession(_nview?.GetZDO(), requirements).FormatDeposited();
     }
 
     private List<ZoneBlueprintStorePriceItem> GetDepositedPriceItems()
@@ -1359,13 +1358,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     private static void SetDepositedPriceItems(ZDO? zdo, IReadOnlyList<ZoneBlueprintStorePriceItem> priceItems)
     {
         zdo?.Set(PurchaseDepositPayloadKey, ZoneBlueprintStorePrices.SerializePriceItems(priceItems));
-    }
-
-    private static int GetPurchaseDeposited(ZDO? zdo, string itemName)
-    {
-        return GetDepositedPriceItems(zdo)
-            .Where(item => string.Equals(item.ItemName, itemName, StringComparison.Ordinal))
-            .Sum(item => item.Amount);
     }
 
     private void AddPurchaseDeposit(ZoneBlueprintRequirement requirement, int amount)
@@ -1414,9 +1406,16 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         return new ZoneMaterialEscrow.Session(requirements, GetPurchaseDeposited, AddPurchaseDeposit);
     }
 
-    private static ZoneMaterialEscrow.Session CreatePurchaseEscrow(ZDO? zdo, IEnumerable<ZoneBlueprintRequirement> requirements)
+    private static ZoneMaterialEscrow.Session CreatePurchaseReadSession(ZDO? zdo, IEnumerable<ZoneBlueprintRequirement> requirements)
     {
-        return new ZoneMaterialEscrow.Session(requirements, itemName => GetPurchaseDeposited(zdo, itemName), (_, _) => { });
+        // Keep this snapshot local to a read operation. Mutation sessions must
+        // observe each accepted deposit before taking the next inventory stack.
+        Dictionary<string, int> deposits = GetDepositedPriceItems(zdo)
+            .ToDictionary(item => item.ItemName, item => item.Amount, StringComparer.Ordinal);
+        return new ZoneMaterialEscrow.Session(
+            requirements,
+            itemName => deposits.TryGetValue(itemName, out int amount) ? amount : 0,
+            (_, _) => { });
     }
 
     private static string FormatShortcut(BepInEx.Configuration.KeyboardShortcut shortcut)

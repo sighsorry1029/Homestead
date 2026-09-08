@@ -79,12 +79,24 @@ internal static class ZoneBlueprintStoreDraftRepository
     public static ZoneBlueprintStoreDraftLease CreateDraft(string name, ZoneBlueprintFile blueprint)
     {
         Directory.CreateDirectory(StoreDirectory);
-        string listingId = CreateListingId(name);
-        string blueprintFile = listingId + ZoneBlueprintFileFormat.BlueprintExtension;
         blueprint.Name = name;
         blueprint.SavedAt = HomesteadTimestamp.Now();
-        ZoneBlueprintFileFormat.WriteFile(Path.Combine(StoreDirectory, blueprintFile), blueprint);
-        return new ZoneBlueprintStoreDraftLease(listingId, blueprintFile);
+        for (int attempt = 0; ; attempt++)
+        {
+            string listingId = CreateListingId(name);
+            string blueprintFile = listingId + ZoneBlueprintFileFormat.BlueprintExtension;
+            string path = Path.Combine(StoreDirectory, blueprintFile);
+            try
+            {
+                // A new draft must never replace another listing's blueprint.
+                ZoneBlueprintFileFormat.WriteNewFile(path, blueprint);
+                return new ZoneBlueprintStoreDraftLease(listingId, blueprintFile);
+            }
+            catch (IOException) when (attempt < 2 && File.Exists(path))
+            {
+                // Retry an ID collision; other write failures must reach the caller.
+            }
+        }
     }
 
     public static ZoneBlueprintStoreCatalog LoadCatalogForEdit()
@@ -816,8 +828,14 @@ internal static class ZoneBlueprintStoreDraftRepository
     {
         string safeName = new(name.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray());
         safeName = string.IsNullOrWhiteSpace(safeName) ? "blueprint" : safeName.Trim('_');
-        string id = $"{DateTime.UtcNow:yyyyMMddHHmmss}_{safeName}_{Guid.NewGuid():N}".ToLowerInvariant();
-        return id.Length <= 64 ? id : id.Substring(0, 64);
+        // Reserve 14 date characters, two separators and the complete 32-character GUID.
+        const int maxNameLength = 64 - 14 - 2 - 32;
+        if (safeName.Length > maxNameLength)
+        {
+            safeName = safeName.Substring(0, maxNameLength);
+        }
+
+        return $"{DateTime.UtcNow:yyyyMMddHHmmss}_{safeName}_{Guid.NewGuid():N}".ToLowerInvariant();
     }
 
     private sealed class UnsupportedCatalogVersionException : Exception

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 
@@ -6,12 +7,40 @@ namespace Homestead;
 
 internal static partial class ZoneDvergrCirclet
 {
+    private const int MaxParsedStateCacheEntries = 64;
+    private static readonly Dictionary<string, CircletState> ParsedStateCache = new(StringComparer.Ordinal);
+    private static float _parsedStateMaxIntensity;
+    private static float _parsedStateMaxRange;
+    private static float _parsedStateAdjustmentStep;
+    private static CircletState? _lastSerializedState;
+    private static bool _lastSerializedHasFuel;
+    private static bool _lastSerializedIncludesFuel;
+    private static string _lastSerializedText = "";
+
     private sealed class CircletState
     {
         internal bool LightOn = true;
         internal bool HasFuel = true;
         internal float IntensityMultiplier = 1f;
         internal float RangeMultiplier = 1f;
+
+        internal CircletState Copy()
+        {
+            return new CircletState
+            {
+                LightOn = LightOn,
+                HasFuel = HasFuel,
+                IntensityMultiplier = IntensityMultiplier,
+                RangeMultiplier = RangeMultiplier
+            };
+        }
+    }
+
+    private static void ResetStateCaches()
+    {
+        ParsedStateCache.Clear();
+        _lastSerializedState = null;
+        _lastSerializedText = "";
     }
 
     private static CircletState LoadState(ItemDrop.ItemData? item)
@@ -44,19 +73,33 @@ internal static partial class ZoneDvergrCirclet
 
     private static CircletState LoadStateFromString(string? serialized)
     {
+        if (string.IsNullOrWhiteSpace(serialized))
+        {
+            return new CircletState();
+        }
+
+        float maxIntensity = DvergrCircletConfig.PerItemMaxIntensityMultiplier;
+        float maxRange = DvergrCircletConfig.PerItemMaxRangeMultiplier;
+        float adjustmentStep = DvergrCircletConfig.PerItemAdjustmentStep;
+        if (!_parsedStateMaxIntensity.Equals(maxIntensity) ||
+            !_parsedStateMaxRange.Equals(maxRange) ||
+            !_parsedStateAdjustmentStep.Equals(adjustmentStep))
+        {
+            ParsedStateCache.Clear();
+            _parsedStateMaxIntensity = maxIntensity;
+            _parsedStateMaxRange = maxRange;
+            _parsedStateAdjustmentStep = adjustmentStep;
+        }
+
+        if (ParsedStateCache.TryGetValue(serialized!, out CircletState cached))
+        {
+            // Callers edit hotkey values and overwrite HasFuel from item durability.
+            // Never expose the cached snapshot to those mutations.
+            return cached.Copy();
+        }
+
         CircletState state = new();
-        if (serialized == null)
-        {
-            return state;
-        }
-
-        string text = serialized;
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return state;
-        }
-
-        foreach (string part in text.Split(';'))
+        foreach (string part in serialized!.Split(';'))
         {
             string[] pair = part.Split(new[] { '=' }, 2);
             if (pair.Length != 2)
@@ -88,6 +131,12 @@ internal static partial class ZoneDvergrCirclet
             }
         }
 
+        if (ParsedStateCache.Count >= MaxParsedStateCacheEntries)
+        {
+            ParsedStateCache.Clear();
+        }
+
+        ParsedStateCache[serialized] = state.Copy();
         return state;
     }
 
@@ -102,6 +151,16 @@ internal static partial class ZoneDvergrCirclet
     {
         state.IntensityMultiplier = ClampAndRoundIntensityMultiplier(state.IntensityMultiplier);
         state.RangeMultiplier = ClampAndRoundRangeMultiplier(state.RangeMultiplier);
+        if (_lastSerializedState != null &&
+            _lastSerializedState.LightOn == state.LightOn &&
+            _lastSerializedState.IntensityMultiplier.Equals(state.IntensityMultiplier) &&
+            _lastSerializedState.RangeMultiplier.Equals(state.RangeMultiplier) &&
+            _lastSerializedHasFuel == hasFuel &&
+            _lastSerializedIncludesFuel == includeFuel)
+        {
+            return _lastSerializedText;
+        }
+
         string serialized =
             $"on={(state.LightOn ? 1 : 0)};intensity={state.IntensityMultiplier.ToString("0.##", CultureInfo.InvariantCulture)};range={state.RangeMultiplier.ToString("0.##", CultureInfo.InvariantCulture)}";
 
@@ -110,6 +169,10 @@ internal static partial class ZoneDvergrCirclet
             serialized += $";fuel={(hasFuel ? 1 : 0)}";
         }
 
+        _lastSerializedState = state.Copy();
+        _lastSerializedHasFuel = hasFuel;
+        _lastSerializedIncludesFuel = includeFuel;
+        _lastSerializedText = serialized;
         return serialized;
     }
 

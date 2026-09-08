@@ -34,7 +34,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
     private ZoneBlueprintFile? _blueprint;
     private GameObject? _previewRoot;
     private GameObject? _chestPreviewRoot;
-    private Material? _lockedPreviewMaterial;
     private float _yaw;
     private float _heightOffset;
     private Vector3 _horizontalOffset;
@@ -44,12 +43,9 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
     private Quaternion _currentChestRotation;
     private bool _allowPurchase;
     private bool _active;
-    private bool _placementLocked;
-    private bool _lockedPreviewMaterialApplied;
     private bool _waitForPlaceRelease;
     private int _activatedFrame;
     private int _lockedPreviewSequence;
-    private string _lockedPreviewColorSignature = "";
     private PreviewMode _mode;
 
     public static void Activate(string listingId, string offerId, string name, ZoneBlueprintFile blueprint, bool allowPurchase)
@@ -68,11 +64,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
     public static void DeactivateActive()
     {
         ZoneBlueprintStore.CancelPendingPreview();
-        if (_instance?._placementLocked == true)
-        {
-            return;
-        }
-
         _instance?.Deactivate();
     }
 
@@ -212,11 +203,8 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _name = name;
         _blueprint = blueprint;
         _allowPurchase = allowPurchase;
-        _placementLocked = false;
-        _lockedPreviewMaterialApplied = false;
         _waitForPlaceRelease = true;
         _activatedFrame = Time.frameCount;
-        _lockedPreviewColorSignature = "";
         _yaw = 0f;
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
@@ -243,21 +231,15 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             return;
         }
 
-        if (!_placementLocked && !ZonePlacementInput.IsHoldingBuildTool(player))
+        if (!ZonePlacementInput.IsHoldingBuildTool(player))
         {
             Deactivate();
             return;
         }
 
-        if (!_placementLocked && Input.GetKeyDown(KeyCode.Escape))
+        if (Input.GetKeyDown(KeyCode.Escape))
         {
             Deactivate();
-            return;
-        }
-
-        if (_placementLocked)
-        {
-            UpdateLockedStatusHud();
             return;
         }
 
@@ -356,26 +338,22 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             return;
         }
 
-        ApplyLockedPreviewMaterial();
+        Material material = ZoneBlueprintGhostOwner.ApplyMaterial(_previewRoot, GetLockedPreviewColor());
         RemoveLockedPreview(key);
         _previewRoot.name = $"HomesteadStoreLockedPreview_{key}";
         _previewRoot.transform.SetParent(transform, true);
         _lockedPreviews[key] = new LockedPreview
         {
             Root = _previewRoot,
-            Material = _lockedPreviewMaterial
+            Material = material
         };
 
         _previewRoot = null;
-        _lockedPreviewMaterial = null;
-        _lockedPreviewMaterialApplied = false;
-        _lockedPreviewColorSignature = "";
     }
 
     private void FinishActivePlacementAfterLock()
     {
         _active = false;
-        _placementLocked = false;
         _allowPurchase = false;
         _blueprint = null;
         _listingId = "";
@@ -505,11 +483,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             Object.Destroy(preview.Root);
         }
 
-        if (preview.Material != null)
-        {
-            Object.Destroy(preview.Material);
-        }
-
+        // The root's material-set component releases its generated materials.
         _lockedPreviews.Remove(key);
     }
 
@@ -529,21 +503,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         {
             RemoveLockedPreview(key);
         }
-    }
-
-    private void UpdateLockedStatusHud()
-    {
-        ApplyLockedPreviewMaterial();
-        if (_previewRoot != null)
-        {
-            _previewRoot.SetActive(true);
-        }
-
-        UpdateChestPreview(visible: true);
-        string suffix = _mode == PreviewMode.Purchase
-            ? HomesteadLocalization.Text("hs_store_preview_deposit_price")
-            : HomesteadLocalization.Text("hs_store_preview_set_price");
-        ZoneAreaToolStatusHud.ShowBlueprint($"{GetPreviewTitle()} - {suffix}", _yaw, _horizontalOffset, _heightOffset);
     }
 
     private string GetPreviewTitle()
@@ -590,31 +549,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _chestPreviewRoot.transform.rotation = _currentChestRotation;
     }
 
-    private void ApplyLockedPreviewMaterial()
-    {
-        if (_previewRoot == null)
-        {
-            return;
-        }
-
-        Color color = GetLockedPreviewColor();
-        string signature = ColorUtility.ToHtmlStringRGBA(color);
-        if (_lockedPreviewMaterialApplied && string.Equals(signature, _lockedPreviewColorSignature, StringComparison.Ordinal))
-        {
-            ZoneBlueprintGhostOwner.UpdateMaterialColor(_previewRoot, color);
-            if (_lockedPreviewMaterial != null)
-            {
-                _lockedPreviewMaterial.color = color;
-            }
-
-            return;
-        }
-
-        _lockedPreviewMaterial = ZoneBlueprintGhostOwner.ApplyMaterial(_previewRoot, color);
-        _lockedPreviewMaterialApplied = true;
-        _lockedPreviewColorSignature = signature;
-    }
-
     private Color GetLockedPreviewColor()
     {
         return _mode == PreviewMode.Purchase
@@ -645,11 +579,8 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         _name = "";
         _blueprint = null;
         _allowPurchase = false;
-        _placementLocked = false;
-        _lockedPreviewMaterialApplied = false;
         _waitForPlaceRelease = false;
         _activatedFrame = -1;
-        _lockedPreviewColorSignature = "";
         _heightOffset = 0f;
         _horizontalOffset = Vector3.zero;
         _snapResolver.Reset();
@@ -680,15 +611,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             Object.Destroy(_chestPreviewRoot);
             _chestPreviewRoot = null;
         }
-
-        if (_lockedPreviewMaterial != null)
-        {
-            Object.Destroy(_lockedPreviewMaterial);
-            _lockedPreviewMaterial = null;
-        }
-
-        _lockedPreviewMaterialApplied = false;
-        _lockedPreviewColorSignature = "";
     }
 
     private static bool TryGetAimPoint(Player player, out Vector3 point, out Piece? targetPiece, out Vector3 rawHitPoint)

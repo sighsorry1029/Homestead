@@ -180,7 +180,9 @@ internal static class ZoneBlueprintToolPieceFactory
 
     private static string FormatAreaDismantleDescription()
     {
-        return HomesteadLocalization.Format("hs_area_dismantle_desc", ZoneAreaToolShared.FormatCompactShapeInput());
+        return HomesteadLocalization.Format("hs_area_dismantle_desc", ZoneAreaToolShared.FormatCompactShapeInput()) +
+               "\n" +
+               HomesteadLocalization.Text("hs_area_dismantle_color_hint");
     }
 
     private static string SanitizePrefabName(string name)

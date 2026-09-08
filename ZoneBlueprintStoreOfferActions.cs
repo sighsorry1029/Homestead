@@ -35,7 +35,7 @@ internal static class ZoneBlueprintStoreOfferAction
         DateTime utcNow = DateTime.UtcNow;
         ZoneBlueprintStoreOffer? pending = catalog.Offers.FirstOrDefault(offer =>
             string.Equals(offer.ListingId, listing.ListingId, StringComparison.Ordinal) &&
-            ZoneBlueprintStoreDtos.IsOfferBuyer(offer, buyerPlayerId) &&
+            ZoneBlueprintStoreAccess.IsOfferBuyer(offer, buyerPlayerId) &&
             string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Pending, StringComparison.Ordinal));
         if (pending != null)
         {
@@ -55,7 +55,7 @@ internal static class ZoneBlueprintStoreOfferAction
 
         ZoneBlueprintStoreOffer offer = new()
         {
-            OfferId = ZoneBlueprintStoreDtos.CreateOfferId(),
+            OfferId = CreateOfferId(),
             ListingId = listing.ListingId,
             BuyerName = buyerName,
             BuyerPlayerId = buyerPlayerId,
@@ -125,7 +125,7 @@ internal static class ZoneBlueprintStoreOfferAction
         }
 
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
-        if (!ZoneBlueprintStoreDtos.TryGetListingAndOffer(catalog, request.ListingId, request.OfferId, out ZoneBlueprintStoreListing listing, out ZoneBlueprintStoreOffer offer, out reason))
+        if (!TryGetListingAndOffer(catalog, request.ListingId, request.OfferId, out ZoneBlueprintStoreListing listing, out ZoneBlueprintStoreOffer offer, out reason))
         {
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DecideOffer, reason);
         }
@@ -187,13 +187,13 @@ internal static class ZoneBlueprintStoreOfferAction
         }
 
         ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
-        if (!ZoneBlueprintStoreDtos.TryGetListingAndOffer(catalog, request.ListingId, request.OfferId, out ZoneBlueprintStoreListing listing, out ZoneBlueprintStoreOffer offer, out reason))
+        if (!TryGetListingAndOffer(catalog, request.ListingId, request.OfferId, out ZoneBlueprintStoreListing listing, out ZoneBlueprintStoreOffer offer, out reason))
         {
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DeleteOffer, reason);
         }
 
         bool canManage = ZoneBlueprintStoreAccess.IsStoreListingOwner(listing, playerId);
-        bool canDeleteOwn = ZoneBlueprintStoreDtos.IsOfferBuyer(offer, playerId);
+        bool canDeleteOwn = ZoneBlueprintStoreAccess.IsOfferBuyer(offer, playerId);
         if (!canManage && !canDeleteOwn)
         {
             return ZoneBlueprintStoreDtos.Fail(ZoneBlueprintStoreRpcType.DeleteOffer, HomesteadLocalization.Text("hs_store_offer_delete_owner_only"));
@@ -206,5 +206,39 @@ internal static class ZoneBlueprintStoreOfferAction
         }
 
         return ZoneBlueprintStoreDtos.StatusWithListingPatch(ZoneBlueprintStoreRpcType.DeleteOffer, true, HomesteadLocalization.Format("hs_store_offer_deleted_status", offer.BuyerName, listing.Name), catalog, listing, playerId);
+    }
+
+    private static bool TryGetListingAndOffer(
+        ZoneBlueprintStoreCatalog catalog,
+        string listingId,
+        string offerId,
+        out ZoneBlueprintStoreListing listing,
+        out ZoneBlueprintStoreOffer offer,
+        out string reason)
+    {
+        listing = catalog.Listings.FirstOrDefault(item => item.Active && string.Equals(item.ListingId, listingId, StringComparison.Ordinal))!;
+        offer = catalog.Offers.FirstOrDefault(item =>
+            string.Equals(item.ListingId, listingId, StringComparison.Ordinal) &&
+            string.Equals(item.OfferId, offerId, StringComparison.Ordinal) &&
+            !string.Equals(item.Status, ZoneBlueprintStoreOfferStatus.Deleted, StringComparison.Ordinal))!;
+        if (listing == null)
+        {
+            reason = HomesteadLocalization.Text("hs_store_listing_not_found");
+            return false;
+        }
+
+        if (offer == null)
+        {
+            reason = HomesteadLocalization.Text("hs_store_offer_not_found");
+            return false;
+        }
+
+        reason = "";
+        return true;
+    }
+
+    private static string CreateOfferId()
+    {
+        return "offer_" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
     }
 }

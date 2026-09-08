@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.11
+
+- Improved Area Save and Area Dismantle descriptions with Valheim's mouse-wheel icon, balanced icon spacing, and yellow/red selection guidance. Descriptions now use the empty material and crafting-station space while retaining the existing font settings, and restore the normal layout for other pieces.
+- Removed the redundant Area Save/Dismantle key hint; configured controls remain unchanged.
+- Reduced repeated blueprint bounds scans, status HUD string rebuilding, Dvergr circlet state parsing, and blueprint chest escrow parsing.
+- Simplified Store preview state and material ownership to avoid redundant updates and overlapping material cleanup.
+- Prevented long blueprint names from truncating listing IDs' random suffixes, and made new draft writes reject existing files instead of overwriting another listing's blueprint.
+- Added an optional notification bridge for other mods, with bounded source payloads, main-thread checks, and world-session notification cleanup.
+- Added regression checks for listing IDs, blueprint round trips, failed-write preservation, embedded resources, and circlet input guard ordering.
+
+## 1.2.10
+
+- Deferred Dvergr circlet input checks until an active, living local player has a valid circlet. Dedicated servers and inactive circlet updates no longer query gameplay UI, while cleanup and light synchronization remain unchanged.
+
 ## 1.2.9
 
 - Replaced the assembly-qualified dynamic ImageConversion type lookup with a static Unity module reference while retaining reflection for image method compatibility.

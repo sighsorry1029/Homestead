@@ -15,6 +15,7 @@
         <LangVersion>preview</LangVersion>
         <Nullable>enable</Nullable>
         <DeployToGame Condition="'$(DeployToGame)' == ''">false</DeployToGame>
+        <SkipPackaging Condition="'$(SkipPackaging)' == ''">false</SkipPackaging>
     </PropertyGroup>
     <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
         <PlatformTarget>AnyCPU</PlatformTarget>
@@ -127,6 +128,9 @@
         </Reference>
         <Reference Include="UnityEngine.TextRenderingModule">
             <HintPath>$(CorlibPath)\UnityEngine.TextRenderingModule.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.TextCoreFontEngineModule">
+            <HintPath>$(CorlibPath)\UnityEngine.TextCoreFontEngineModule.dll</HintPath>
         </Reference>
         <Reference Include="UnityEngine.UIModule">
             <HintPath>$(CorlibPath)\UnityEngine.UIModule.dll</HintPath>
@@ -336,11 +340,11 @@
         <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath2)" OverwriteReadOnlyFiles="true" Condition="'$(DeployToGame)' == 'true' And Exists('$(CopyOutputDLLPath2)')"/>
         <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(CopyOutputDLLPath3)" OverwriteReadOnlyFiles="true" Condition="'$(DeployToGame)' == 'true' And Exists('$(CopyOutputDLLPath3)')"/>
     </Target>
-    <Target Name="CopyReadMeToTSFolder" AfterTargets="CopyOutputDLL" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') ">
+    <Target Name="CopyReadMeToTSFolder" AfterTargets="CopyOutputDLL" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') And ('$(SkipPackaging)' != 'true') ">
         <Error Text="README.md not found in project root." Condition="!Exists('$(ProjectDir)README.md')"/>
         <Copy SourceFiles="$(ProjectDir)README.md" DestinationFolder="$(PackageDir)" OverwriteReadOnlyFiles="true"/>
     </Target>
-    <Target Name="UpdateManifestVersion" AfterTargets="CopyReadMeToTSFolder" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') ">
+    <Target Name="UpdateManifestVersion" AfterTargets="CopyReadMeToTSFolder" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(OS)' == 'Windows_NT') And ('$(SkipPackaging)' != 'true') ">
         <Error Text="manifest.json not found in Thunderstore directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
         <ItemGroup>
             <ManifestFile Include="$(ThunderstorePackageRoot)\manifest.json"/>
@@ -349,7 +353,7 @@
         <Message Text="Updating version number in Thunderstore\manifest.json" Condition="Exists(@(ManifestFile))"/>
         <Exec Command="powershell.exe -ExecutionPolicy Bypass -Command &quot;&amp; { &amp; '$(ProjectDir)UpdateManifest.ps1' -manifestFile '@(ManifestFile)' -versionString '$(PackageVersion)' }&quot;"/>
     </Target>
-    <Target Name="MakeThunderstorePackage" AfterTargets="UpdateManifestVersion" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <Target Name="MakeThunderstorePackage" AfterTargets="UpdateManifestVersion" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(SkipPackaging)' != 'true') ">
         <Error Text="manifest.json not found in Thunderstore directory." Condition="!Exists('$(ThunderstorePackageRoot)\manifest.json')"/>
         <Error Text="icon.png not found in Thunderstore directory. Please note that Thunderstore requires this image to be 256x256 in dimension" Condition="!Exists('$(ThunderstorePackageRoot)\icon.png')"/>
         <Error Text="translations\English.yml not found in project directory." Condition="!Exists('$(ProjectDir)translations\English.yml')"/>
@@ -367,7 +371,7 @@
         <ZipDirectory SourceDirectory="$(PackageDir)" DestinationFile="$(ThunderstorePackageRoot)\$(PackageName).zip" Overwrite="true"/>
         <RemoveDir Directories="$(PackageDir)"/>
     </Target>
-    <Target Name="MakeNexusPackage" AfterTargets="MakeThunderstorePackage" Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <Target Name="MakeNexusPackage" AfterTargets="MakeThunderstorePackage" Condition=" ('$(Configuration)|$(Platform)' == 'Release|AnyCPU') And ('$(SkipPackaging)' != 'true') ">
         <MakeDir Directories="$(ProjectDir)\Nexus"/>
         <ItemGroup>
             <NexusPackageFiles Include="$(TargetDir)$(AssemblyName).dll;"/>

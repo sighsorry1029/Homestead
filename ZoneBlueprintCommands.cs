@@ -726,18 +726,48 @@ internal static class ZoneBlueprintCommands
         }
 
         Quaternion inverseChestRotation = Quaternion.Inverse(chestRotation);
-        List<Vector3> chestLocalPositions = blueprint.Entries
-            .Where(IsLoadableBlueprintEntry)
-            .Select(entry => inverseChestRotation * (anchorRotation * FromVector(entry.LocalPos)))
-            .ToList();
-        if (chestLocalPositions.Count == 0)
+        bool hasPosition = false;
+        float minX = 0f;
+        float maxX = 0f;
+        float minZ = 0f;
+        foreach (ZoneBlueprintEntry entry in blueprint.Entries)
+        {
+            if (!IsLoadableBlueprintEntry(entry))
+            {
+                continue;
+            }
+
+            Vector3 position = inverseChestRotation * (anchorRotation * FromVector(entry.LocalPos));
+            if (!hasPosition)
+            {
+                minX = maxX = position.x;
+                minZ = position.z;
+                hasPosition = true;
+                continue;
+            }
+
+            // Preserve Enumerable.Min/Max's different NaN handling and first-value ties.
+            if (position.x < minX || float.IsNaN(position.x))
+            {
+                minX = position.x;
+            }
+
+            if (position.x > maxX || float.IsNaN(maxX))
+            {
+                maxX = position.x;
+            }
+
+            if (position.z < minZ || float.IsNaN(position.z))
+            {
+                minZ = position.z;
+            }
+        }
+
+        if (!hasPosition)
         {
             return anchor;
         }
 
-        float minX = chestLocalPositions.Min(position => position.x);
-        float maxX = chestLocalPositions.Max(position => position.x);
-        float minZ = chestLocalPositions.Min(position => position.z);
         Vector3 local = new((minX + maxX) * 0.5f, 0f, minZ - 2.5f);
         Vector3 world = anchor + chestRotation * local;
         world.y = HomesteadTerrainSupport.SampleGroundY(world.x, world.z, anchor.y);

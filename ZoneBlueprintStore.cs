@@ -33,6 +33,7 @@ internal static class ZoneBlueprintStore
         }
 
         _initialized = true;
+        ZoneBlueprintStoreNotificationsUi.Initialize();
         ZoneBlueprintStoreDraftRepository.Initialize(logger);
         ZoneBlueprintStoreVisuals.Initialize(logger);
         ZoneBlueprintStoreChestPrefab.Initialize(logger);

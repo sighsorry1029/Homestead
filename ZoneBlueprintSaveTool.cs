@@ -878,6 +878,7 @@ internal static class ZoneBlueprintSaveToolMenu
     public static void ResetForWorldSession()
     {
         ZoneBlueprintSaveTool.ResetForWorldSession();
+        HudSetupBlueprintPieceInfoPatch.RestoreDescriptionLayout();
         ClearBlueprintPiecesForWorldSession();
         ZoneBlueprintVisuals.ResetForWorldSession();
         CachedBlueprintNames.Clear();
@@ -2031,21 +2032,26 @@ internal static class ZoneBlueprintSaveToolMenu
     }
 
     [HarmonyPatch(typeof(Hud), nameof(Hud.SetupPieceInfo))]
-    private static class HudSetupBlueprintStoreInfoPatch
+    private static class HudSetupBlueprintPieceInfoPatch
     {
+        private static RectTransform? _expandedDescription;
+        private static Vector2 _originalDescriptionOffsetMin;
+
         private static void Postfix(Hud __instance, Piece piece)
         {
-            if (__instance == null || piece == null)
-            {
-                return;
-            }
-
-            if (__instance.m_hoveredPiece != piece)
+            if (__instance == null)
             {
                 return;
             }
 
             ZoneBlueprintSaveToolMarker? marker = GetMarker(piece);
+            UpdateAreaDescriptionLayout(__instance, marker?.Kind);
+
+            if (piece == null || __instance.m_hoveredPiece != piece)
+            {
+                return;
+            }
+
             if (marker == null)
             {
                 return;
@@ -2061,6 +2067,45 @@ internal static class ZoneBlueprintSaveToolMenu
             {
                 TryOpenStoreListing(marker.BlueprintName);
             }
+        }
+
+        private static void UpdateAreaDescriptionLayout(Hud hud, ZoneBlueprintToolKind? kind)
+        {
+            RectTransform? description = hud.m_pieceDescription != null ? hud.m_pieceDescription.rectTransform : null;
+            bool expand = kind is ZoneBlueprintToolKind.AreaSave or ZoneBlueprintToolKind.AreaDismantle;
+            if (expand && description != null && _expandedDescription == description)
+            {
+                return;
+            }
+
+            RestoreDescriptionLayout();
+            if (!expand || description == null || description.parent is not RectTransform parent ||
+                hud.m_requirementItems.Length == 0 || hud.m_requirementItems[0] == null ||
+                hud.m_requirementItems[0].transform.parent is not RectTransform requirements)
+            {
+                return;
+            }
+
+            // These tools have no requirements. Use that row's lower edge while
+            // keeping the description clear of the title and piece icon above it.
+            Vector3 bottom = parent.InverseTransformPoint(
+                requirements.TransformPoint(new Vector3(0f, requirements.rect.yMin, 0f)));
+            float anchorBottom = parent.rect.yMin + parent.rect.height * description.anchorMin.y;
+            _expandedDescription = description;
+            _originalDescriptionOffsetMin = description.offsetMin;
+            description.offsetMin = new Vector2(
+                _originalDescriptionOffsetMin.x,
+                Mathf.Min(_originalDescriptionOffsetMin.y, bottom.y - anchorBottom));
+        }
+
+        public static void RestoreDescriptionLayout()
+        {
+            if (_expandedDescription != null)
+            {
+                _expandedDescription.offsetMin = _originalDescriptionOffsetMin;
+            }
+
+            _expandedDescription = null;
         }
     }
 

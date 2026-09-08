@@ -142,7 +142,8 @@ internal static class ZoneAreaToolShared
         string width = FormatModifier(
             BlueprintConfig.AreaToolWidthInputLabel,
             BlueprintConfig.AreaToolWidthModifierLabel);
-        return $"{scale}/{depth}/{width} + Wheel";
+        // Match the gap after '+' before the description template's ':'.
+        return $"{scale}/{depth}/{width} + {ZoneBlueprintToolIcons.MouseWheelInputLabel} ";
     }
 
     private static string FormatModifier(string inputLabel, string modifierLabel)

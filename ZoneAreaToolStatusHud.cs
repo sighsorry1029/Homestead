@@ -20,6 +20,11 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     private string _lastAreaLine = "";
     private string _lastPlacementLine = "";
     private string _lastDvergrLine = "";
+    private string? _renderedAreaLine;
+    private string? _renderedPlacementLine;
+    private string? _renderedDvergrLine;
+    private string? _renderedBuildCameraLine;
+    private string _renderedText = "";
     private float _areaHideAfter = float.MinValue;
     private float _placementHideAfter = float.MinValue;
     private float _dvergrHideAfter = float.MinValue;
@@ -325,8 +330,25 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         }
 
         PruneExpiredLines();
-        string[] lines = [_areaLine, _placementLine, _dvergrLine, _buildCameraLine];
-        _text!.text = string.Join("\n", lines.Where(line => !string.IsNullOrEmpty(line)));
+        if (_renderedAreaLine != _areaLine ||
+            _renderedPlacementLine != _placementLine ||
+            _renderedDvergrLine != _dvergrLine ||
+            _renderedBuildCameraLine != _buildCameraLine)
+        {
+            _renderedAreaLine = _areaLine;
+            _renderedPlacementLine = _placementLine;
+            _renderedDvergrLine = _dvergrLine;
+            _renderedBuildCameraLine = _buildCameraLine;
+            string[] lines = [_areaLine, _placementLine, _dvergrLine, _buildCameraLine];
+            _renderedText = string.Join("\n", lines.Where(line => !string.IsNullOrEmpty(line)));
+        }
+
+        // A recreated text element must still receive the cached lines.
+        if (_text!.text != _renderedText)
+        {
+            _text.text = _renderedText;
+        }
+
         ApplyVisibility();
         _text.transform.SetAsLastSibling();
         ApplyLayout();

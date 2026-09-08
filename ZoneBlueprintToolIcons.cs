@@ -1,9 +1,89 @@
+using TMPro;
 using UnityEngine;
+using UnityEngine.TextCore;
 
 namespace Homestead;
 
 internal static class ZoneBlueprintToolIcons
 {
+    internal const string MouseWheelSpriteName = "mousew_icon";
+    private const string InputSpriteAssetName = "HomesteadInputIcons";
+    private static TMP_SpriteAsset? _inputSpriteAsset;
+
+    public static string MouseWheelInputLabel => _inputSpriteAsset != null && _inputSpriteAsset.spriteSheet != null
+        ? "<voffset=-0.12em><size=135%><sprite=\"HomesteadInputIcons\" name=\"mousew_icon\"></size></voffset>"
+        : "Wheel";
+
+    public static void InitializeMouseWheelIcon(Sprite sprite)
+    {
+        if (_inputSpriteAsset != null && _inputSpriteAsset.spriteGlyphTable[0].sprite == sprite)
+        {
+            return;
+        }
+
+        int hash = TMP_TextUtilities.GetHashCode(InputSpriteAssetName);
+        if (MaterialReferenceManager.TryGetSpriteAsset(hash, out TMP_SpriteAsset existing) && existing != null)
+        {
+            _inputSpriteAsset = existing;
+        }
+
+        Shader shader = Shader.Find("TextMeshPro/Sprite");
+        if (shader == null || sprite.texture == null ||
+            sprite.packed && (sprite.packingMode != SpritePackingMode.Rectangle || sprite.packingRotation != SpritePackingRotation.None))
+        {
+            return;
+        }
+
+        // The vanilla icon is in UIAtlas: sprite.rect is not its texture UV rectangle.
+        Rect rect = sprite.textureRect;
+        float width = Mathf.RoundToInt(rect.width);
+        float height = Mathf.RoundToInt(rect.height);
+        if (_inputSpriteAsset != null)
+        {
+            // Soft-reference bundles can unload the borrowed atlas between HUDs.
+            // Keep TMP's registered asset/material, but reconnect the current sprite.
+            TMP_SpriteGlyph glyph = _inputSpriteAsset.spriteGlyphTable[0];
+            glyph.sprite = sprite;
+            glyph.glyphRect = new GlyphRect(Mathf.RoundToInt(rect.x), Mathf.RoundToInt(rect.y), (int)width, (int)height);
+            glyph.metrics = new GlyphMetrics(width, height, 0f, height * 0.9f, width);
+            _inputSpriteAsset.spriteSheet = sprite.texture;
+            _inputSpriteAsset.material.mainTexture = sprite.texture;
+            return;
+        }
+
+        TMP_SpriteAsset asset = ScriptableObject.CreateInstance<TMP_SpriteAsset>();
+        asset.name = InputSpriteAssetName;
+        asset.spriteSheet = sprite.texture;
+        asset.spriteInfoList =
+        [
+            new TMP_Sprite
+            {
+                name = MouseWheelSpriteName,
+                sprite = sprite,
+                x = Mathf.RoundToInt(rect.x),
+                y = Mathf.RoundToInt(rect.y),
+                width = width,
+                height = height,
+                yOffset = height * 0.9f,
+                xAdvance = width,
+                scale = 1f
+            }
+        ];
+        asset.material = new Material(shader)
+        {
+            name = InputSpriteAssetName,
+            mainTexture = sprite.texture
+        };
+        asset.UpdateLookupTables();
+
+        // TMP's named-asset registry has no removal API. Share this one asset/material
+        // for the process lifetime; do not recreate or destroy it on world changes.
+        Object.DontDestroyOnLoad(asset);
+        Object.DontDestroyOnLoad(asset.material);
+        MaterialReferenceManager.AddSpriteAsset(hash, asset);
+        _inputSpriteAsset = asset;
+    }
+
     private static Sprite? _areaSaveIcon;
     private static Sprite? _areaDismantleIcon;
     private static Sprite? _blueprintSnapPointIcon;

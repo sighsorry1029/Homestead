@@ -44,13 +44,23 @@ internal static class ZoneBlueprintFileFormat
 
     public static void WriteFile(string path, ZoneBlueprintFile blueprint)
     {
+        WriteFile(path, blueprint, overwrite: true);
+    }
+
+    public static void WriteNewFile(string path, ZoneBlueprintFile blueprint)
+    {
+        WriteFile(path, blueprint, overwrite: false);
+    }
+
+    private static void WriteFile(string path, ZoneBlueprintFile blueprint, bool overwrite)
+    {
         string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             File.WriteAllText(tempPath, Serialize(blueprint));
             ReadFile(tempPath);
 
-            if (!File.Exists(path))
+            if (!overwrite || !File.Exists(path))
             {
                 File.Move(tempPath, path);
                 return;

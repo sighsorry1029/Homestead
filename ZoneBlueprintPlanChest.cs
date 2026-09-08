@@ -48,6 +48,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private bool _confirmInProgress;
     private bool _confirmationCanceled;
     private string _lastReadySignature = "";
+    private Color? _pendingMaterialColor;
     private string _failedBlueprintName = "";
     private string _lastPlanLoadFailure = "";
     private string _requestedServerPreviewName = "";
@@ -493,8 +494,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return;
         }
 
-        List<ItemDrop.ItemData> items = _container.m_inventory.GetAllItems().ToList();
-        if (items.Count == 0)
+        if (_container.m_inventory.GetAllItems().Count == 0)
         {
             return;
         }
@@ -783,11 +783,13 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     {
         _previewGhost.Destroy();
         _stationGhost.Destroy();
+        _pendingMaterialColor = null;
     }
 
     private void RebuildStationPreview()
     {
         _stationGhost.Destroy();
+        _pendingMaterialColor = null;
 
         if (_blueprint == null || _stationRequirements.Count == 0)
         {
@@ -833,13 +835,20 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private void ApplyPendingMaterial(GameObject root)
     {
         _previewGhost.ApplyMaterial(root, BlueprintConfig.PreviewGhostColor);
+        _pendingMaterialColor = null;
     }
 
     private void RefreshPendingMaterialStyle()
     {
         Color color = BlueprintConfig.PreviewGhostColor;
+        if (_pendingMaterialColor.HasValue && _pendingMaterialColor.Value.Equals(color))
+        {
+            return;
+        }
+
         _previewGhost.UpdateMaterialColor(color);
         _stationGhost.UpdateMaterialColor(color);
+        _pendingMaterialColor = color;
     }
 
     private HashSet<int> GetReadyEntryIndices(out string signature)

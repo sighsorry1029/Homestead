@@ -19,7 +19,6 @@ internal static class ZoneBuildKeyHints
 
     private static GameObject? _offsetHint;
     private static GameObject? _gridHint;
-    private static GameObject? _toolHint;
     private static GameObject? _buildCameraHint;
     private static readonly Dictionary<int, HintWidgets> HintWidgetCache = [];
     private static Player? _cachedBuildCameraConditionPlayer;
@@ -58,8 +57,14 @@ internal static class ZoneBuildKeyHints
         Transform parent = template.parent;
         _offsetHint = CreateHint(template, parent, "HomesteadOffsetHint", 0);
         _gridHint = CreateHint(template, parent, "HomesteadGridHint", 1);
-        _toolHint = CreateHint(template, parent, "HomesteadToolHint", 2);
-        _buildCameraHint = CreateHint(template, parent, "HomesteadBuildCameraHint", 3);
+        _buildCameraHint = CreateHint(template, parent, "HomesteadBuildCameraHint", 2);
+        Image? wheelImage = keyHints.GetComponentsInChildren<Image>(includeInactive: true)
+            .FirstOrDefault(image => image.sprite != null && image.sprite.name == ZoneBlueprintToolIcons.MouseWheelSpriteName);
+        if (wheelImage != null)
+        {
+            ZoneBlueprintToolIcons.InitializeMouseWheelIcon(wheelImage.sprite);
+            ZoneBlueprintSaveToolMenu.RequestHammerTableRefresh();
+        }
         HintWidgetCache.Clear();
     }
 
@@ -75,7 +80,7 @@ internal static class ZoneBuildKeyHints
     private static void UpdateHints(KeyHints keyHints)
     {
         EnsureHints(keyHints);
-        if (_offsetHint == null || _gridHint == null || _toolHint == null || _buildCameraHint == null)
+        if (_offsetHint == null || _gridHint == null || _buildCameraHint == null)
         {
             return;
         }
@@ -117,25 +122,6 @@ internal static class ZoneBuildKeyHints
             "",
             102f);
 
-        if (ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive)
-        {
-            string scaleKey = BlueprintConfig.AreaToolUniformScaleModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolUniformScaleModifierLabel;
-            string depthKey = BlueprintConfig.AreaToolDepthModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolDepthModifierLabel;
-            string widthKey = BlueprintConfig.AreaToolWidthModifierKey.MainKey == KeyCode.None ? "" : "+" + BlueprintConfig.AreaToolWidthModifierLabel;
-            string shapeKeys = string.Join("/", new[] { scaleKey, depthKey, widthKey }.Where(value => !string.IsNullOrWhiteSpace(value)));
-            SetHint(
-                _toolHint,
-                showBuildHints,
-                HomesteadLocalization.Text("hs_keyhint_area_shape"),
-                "Wheel",
-                shapeKeys,
-                166f);
-        }
-        else
-        {
-            _toolHint.SetActive(false);
-        }
-
         bool buildCameraActive = ZoneBuildCamera.InBuildMode();
         bool showLookAtLockHint = buildCameraActive && BuildCameraConfig.LookAtLockHotkey.MainKey != KeyCode.None;
         SetHint(
@@ -153,7 +139,6 @@ internal static class ZoneBuildKeyHints
     {
         SetActiveIfChanged(_offsetHint, false);
         SetActiveIfChanged(_gridHint, false);
-        SetActiveIfChanged(_toolHint, false);
         SetActiveIfChanged(_buildCameraHint, false);
     }
 

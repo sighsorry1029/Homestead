@@ -1,21 +1,74 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using BepInEx;
-using BepInEx.Logging;
-using HarmonyLib;
+using System.Threading;
 using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
-using Object = UnityEngine.Object;
 
 namespace Homestead;
+
+/// <summary>
+/// Optional bridge for other mods to publish notifications in Homestead's notification panel.
+/// Calls made before Homestead initializes or outside Unity's main thread are rejected and may be retried.
+/// Registrations live for the provider plugin's lifetime; providers should unregister during teardown
+/// and republish payloads for each world session.
+/// Callbacks run synchronously on the main thread and should remain short and avoid retaining
+/// world-specific objects beyond the current session.
+/// </summary>
+public static class HomesteadNotificationBridge
+{
+    public static int ApiVersion { get; } = 1;
+
+    /// <summary>
+    /// Registers a unique, plugin-lifetime notification source. Duplicate source IDs are rejected;
+    /// unregister before registering replacement callbacks.
+    /// </summary>
+    public static bool RegisterSource(
+        string sourceId,
+        Action<string[]> markRead,
+        Action<string> activate,
+        bool autoOpenOnUnread = false)
+    {
+        return ZoneBlueprintStoreNotificationsUi.RegisterExternalSource(sourceId, markRead, activate, autoOpenOnUnread);
+    }
+
+    /// <summary>
+    /// Replaces the world-session notification payload for a registered source.
+    /// A source may publish at most 64 notifications, with 64 external notifications total.
+    /// A replacement that would exceed the total is rejected without changing the prior payload.
+    /// The supplied read state is authoritative; changing an existing ID from read to unread
+    /// presents it as newly unread.
+    /// </summary>
+    public static bool ReplaceSource(
+        string sourceId,
+        string[] ids,
+        string[] messages,
+        string[] createdAtUtc,
+        bool[] read)
+    {
+        return ZoneBlueprintStoreNotificationsUi.ReplaceExternalSource(sourceId, ids, messages, createdAtUtc, read);
+    }
+
+    /// <summary>Removes a source and all of its displayed notifications.</summary>
+    public static void UnregisterSource(string sourceId)
+    {
+        ZoneBlueprintStoreNotificationsUi.UnregisterExternalSource(sourceId);
+    }
+}
 
 
 internal static class ZoneBlueprintStoreNotificationsUi
 {
+    private const string StoreSourceId = "homestead.blueprint_store";
     private const int MaxRows = 8;
+    private const int MaxNotifications = 128;
+    private const int MaxNotificationsPerSource = 64;
+    private const int MaxExternalNotifications = 64;
+    private const int MaxExternalSources = 16;
+    private const int MaxSourceIdLength = 64;
+    private const int MaxNotificationIdLength = 128;
+    private const int MaxNotificationMessageLength = 2048;
     private const float ScrollWheelThreshold = 0.05f;
     private const float ButtonWidth = 42f;
     private const float ButtonHeight = 38f;
@@ -26,11 +79,15 @@ internal static class ZoneBlueprintStoreNotificationsUi
     private static GameObject? _buttonRoot;
     private static Text? _badgeText;
     private static GameObject? _panel;
+    private static Text? _titleText;
     private static Text? _statusText;
     private static readonly List<GameObject> Rows = [];
+    private static readonly List<Button> RowButtons = [];
     private static readonly List<Text> RowTexts = [];
-    private static readonly List<ZoneBlueprintStoreNotificationDto> Notifications = [];
+    private static readonly List<NotificationUiItem> Notifications = [];
+    private static readonly Dictionary<string, ExternalNotificationSource> ExternalSources = new(StringComparer.Ordinal);
     private static int _scrollOffset;
+    private static int _suppressRowActivationUntilFrame = -1;
     private static bool _buttonPointerDown;
     private static bool _buttonDragging;
     private static bool _buttonDragMoved;
@@ -42,12 +99,222 @@ internal static class ZoneBlueprintStoreNotificationsUi
     private static bool _panelDragMoved;
     private static Vector2 _panelDragStartMouse;
     private static Vector2 _panelDragStartOffset;
+    private static int _mainThreadId;
+    private static int _offMainThreadWarningLogged;
+
+    internal static void Initialize()
+    {
+        _mainThreadId = Thread.CurrentThread.ManagedThreadId;
+    }
 
     public static void ResetForWorldSession()
     {
         Notifications.Clear();
         _scrollOffset = 0;
+        _suppressRowActivationUntilFrame = -1;
         HideForWorldExit();
+    }
+
+    internal static bool RegisterExternalSource(
+        string sourceId,
+        Action<string[]> markRead,
+        Action<string> activate,
+        bool autoOpenOnUnread)
+    {
+        if (!EnsureExternalApiMainThread(nameof(HomesteadNotificationBridge.RegisterSource)))
+        {
+            return false;
+        }
+
+        if (!TryNormalizeExternalSourceId(sourceId, out string normalizedSourceId) ||
+            markRead == null ||
+            activate == null)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning("Ignored an invalid external notification source registration.");
+            return false;
+        }
+
+        if (ExternalSources.ContainsKey(normalizedSourceId))
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Ignored duplicate external notification source registration '{normalizedSourceId}'. Unregister it before replacing its callbacks.");
+            return false;
+        }
+
+        if (ExternalSources.Count >= MaxExternalSources)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Ignored external notification source '{normalizedSourceId}' because the {MaxExternalSources}-source limit was reached.");
+            return false;
+        }
+
+        ExternalSources[normalizedSourceId] = new ExternalNotificationSource(markRead, activate, autoOpenOnUnread);
+        if (IsInWorld())
+        {
+            Refresh();
+        }
+
+        return true;
+    }
+
+    internal static bool ReplaceExternalSource(
+        string sourceId,
+        string[] ids,
+        string[] messages,
+        string[] createdAtUtc,
+        bool[] read)
+    {
+        if (!EnsureExternalApiMainThread(nameof(HomesteadNotificationBridge.ReplaceSource)))
+        {
+            return false;
+        }
+
+        if (!TryNormalizeExternalSourceId(sourceId, out string normalizedSourceId) ||
+            !ExternalSources.TryGetValue(normalizedSourceId, out ExternalNotificationSource source))
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning("Ignored notifications for an unregistered external source.");
+            return false;
+        }
+
+        if (ids == null || messages == null || createdAtUtc == null || read == null ||
+            ids.Length != messages.Length ||
+            ids.Length != createdAtUtc.Length ||
+            ids.Length != read.Length)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Ignored an invalid notification replacement from external source '{normalizedSourceId}'.");
+            return false;
+        }
+
+        if (ids.Length > MaxNotificationsPerSource)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Ignored {ids.Length} notifications from external source '{normalizedSourceId}' because the per-source limit is {MaxNotificationsPerSource}.");
+            return false;
+        }
+
+        Dictionary<string, bool> previousReadById = Notifications
+            .Where(notification => string.Equals(notification.SourceId, normalizedSourceId, StringComparison.Ordinal))
+            .ToDictionary(notification => notification.NotificationId, notification => notification.Read, StringComparer.Ordinal);
+        HashSet<string> newUnreadIds = new(StringComparer.Ordinal);
+        Dictionary<string, NotificationUiItem> replacementById = new(StringComparer.Ordinal);
+        for (int i = 0; i < ids.Length; i++)
+        {
+            string notificationId = (ids[i] ?? "").Trim();
+            string message = messages[i] ?? "";
+            if (string.IsNullOrWhiteSpace(notificationId) ||
+                notificationId.Length > MaxNotificationIdLength ||
+                string.IsNullOrWhiteSpace(message))
+            {
+                continue;
+            }
+
+            if (message.Length > MaxNotificationMessageLength)
+            {
+                message = message.Substring(0, MaxNotificationMessageLength);
+            }
+
+            string createdAt = (createdAtUtc[i] ?? "").Trim();
+            if (HomesteadTimestamp.ParseUtc(createdAt) == DateTime.MinValue)
+            {
+                createdAt = HomesteadTimestamp.Now();
+            }
+
+            bool isRead = read[i];
+            replacementById[notificationId] = new NotificationUiItem
+            {
+                SourceId = normalizedSourceId,
+                NotificationId = notificationId,
+                Message = message,
+                CreatedAt = createdAt,
+                Read = isRead
+            };
+            if (!isRead &&
+                (!previousReadById.TryGetValue(notificationId, out bool previousRead) || previousRead))
+            {
+                newUnreadIds.Add(notificationId);
+            }
+        }
+
+        int otherExternalNotifications = Notifications.Count(notification =>
+            !string.Equals(notification.SourceId, StoreSourceId, StringComparison.Ordinal) &&
+            !string.Equals(notification.SourceId, normalizedSourceId, StringComparison.Ordinal));
+        if (otherExternalNotifications + replacementById.Count > MaxExternalNotifications)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Ignored {replacementById.Count} notifications from external source '{normalizedSourceId}' because other sources already use {otherExternalNotifications} of the {MaxExternalNotifications} external notification slots.");
+            return false;
+        }
+
+        Notifications.RemoveAll(notification =>
+            string.Equals(notification.SourceId, normalizedSourceId, StringComparison.Ordinal));
+        Notifications.AddRange(replacementById.Values);
+        SortAndTrimNotifications();
+        bool hasNewUnread = Notifications.Any(notification =>
+            string.Equals(notification.SourceId, normalizedSourceId, StringComparison.Ordinal) &&
+            !notification.Read &&
+            newUnreadIds.Contains(notification.NotificationId));
+        if (IsInWorld())
+        {
+            Refresh();
+        }
+
+        if (hasNewUnread && source.AutoOpenOnUnread && IsInWorld())
+        {
+            OpenPanel(markAsRead: false);
+        }
+
+        return true;
+    }
+
+    internal static void UnregisterExternalSource(string sourceId)
+    {
+        if (!EnsureExternalApiMainThread(nameof(HomesteadNotificationBridge.UnregisterSource)))
+        {
+            return;
+        }
+
+        if (!TryNormalizeExternalSourceId(sourceId, out string normalizedSourceId))
+        {
+            return;
+        }
+
+        ExternalSources.Remove(normalizedSourceId);
+        Notifications.RemoveAll(notification =>
+            string.Equals(notification.SourceId, normalizedSourceId, StringComparison.Ordinal));
+        if (IsInWorld())
+        {
+            Refresh();
+            if (!IsNotificationButtonEnabled() && IsPanelVisible())
+            {
+                ClosePanel();
+            }
+        }
+    }
+
+    private static bool EnsureExternalApiMainThread(string operation)
+    {
+        int mainThreadId = Volatile.Read(ref _mainThreadId);
+        if (mainThreadId != 0 && Thread.CurrentThread.ManagedThreadId == mainThreadId)
+        {
+            return true;
+        }
+
+        if (Interlocked.Exchange(ref _offMainThreadWarningLogged, 1) == 0)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"Ignored {operation} because Homestead's notification bridge must be called from Unity's main thread after Homestead initializes.");
+        }
+
+        return false;
+    }
+
+    private static bool TryNormalizeExternalSourceId(string sourceId, out string normalizedSourceId)
+    {
+        normalizedSourceId = (sourceId ?? "").Trim();
+        return !string.IsNullOrWhiteSpace(normalizedSourceId) &&
+               normalizedSourceId.Length <= MaxSourceIdLength &&
+               !string.Equals(normalizedSourceId, StoreSourceId, StringComparison.Ordinal);
     }
 
     public static void SetNotifications(IEnumerable<ZoneBlueprintStoreNotificationDto> notifications)
@@ -74,7 +341,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
             return;
         }
 
-        if (!BlueprintConfig.StoreNotificationButtonEnabled)
+        if (!IsNotificationButtonEnabled())
         {
             if (_buttonRoot != null && _buttonRoot)
             {
@@ -133,7 +400,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
             return false;
         }
 
-        bool hasNewUnread = false;
+        HashSet<string> newUnreadIds = new(StringComparer.Ordinal);
         foreach (ZoneBlueprintStoreNotificationDto notification in notifications)
         {
             if (string.IsNullOrWhiteSpace(notification.NotificationId))
@@ -141,40 +408,83 @@ internal static class ZoneBlueprintStoreNotificationsUi
                 continue;
             }
 
-            if (!ShouldDisplayNotification(notification))
+            NotificationUiItem uiNotification = FromStoreNotification(notification);
+            if (!ShouldDisplayNotification(uiNotification))
             {
                 continue;
             }
 
-            int index = Notifications.FindIndex(item => string.Equals(item.NotificationId, notification.NotificationId, StringComparison.Ordinal));
+            int index = Notifications.FindIndex(item =>
+                string.Equals(item.SourceId, StoreSourceId, StringComparison.Ordinal) &&
+                string.Equals(item.NotificationId, notification.NotificationId, StringComparison.Ordinal));
             if (index >= 0)
             {
-                notification.Read |= Notifications[index].Read;
-                Notifications[index] = notification;
+                uiNotification.Read |= Notifications[index].Read;
+                Notifications[index] = uiNotification;
             }
             else
             {
-                Notifications.Add(notification);
-                if (!notification.Read)
+                Notifications.Add(uiNotification);
+                if (!uiNotification.Read)
                 {
-                    hasNewUnread = true;
+                    newUnreadIds.Add(uiNotification.NotificationId);
                 }
             }
         }
 
+        SortAndTrimNotifications();
+        return Notifications.Any(notification =>
+            string.Equals(notification.SourceId, StoreSourceId, StringComparison.Ordinal) &&
+            !notification.Read &&
+            newUnreadIds.Contains(notification.NotificationId));
+    }
+
+    private static NotificationUiItem FromStoreNotification(ZoneBlueprintStoreNotificationDto notification)
+    {
+        return new NotificationUiItem
+        {
+            SourceId = StoreSourceId,
+            NotificationId = notification.NotificationId,
+            Message = notification.Message,
+            CreatedAt = notification.CreatedAt,
+            Read = notification.Read
+        };
+    }
+
+    private static void SortAndTrimNotifications()
+    {
         Notifications.Sort((left, right) =>
         {
             int timestampOrder = HomesteadTimestamp.ParseUtc(right.CreatedAt).CompareTo(HomesteadTimestamp.ParseUtc(left.CreatedAt));
-            return timestampOrder != 0
-                ? timestampOrder
+            if (timestampOrder != 0)
+            {
+                return timestampOrder;
+            }
+
+            int sourceOrder = string.Compare(right.SourceId, left.SourceId, StringComparison.Ordinal);
+            return sourceOrder != 0
+                ? sourceOrder
                 : string.Compare(right.NotificationId, left.NotificationId, StringComparison.Ordinal);
         });
-        if (Notifications.Count > 64)
+        Dictionary<string, int> retainedBySource = new(StringComparer.Ordinal);
+        for (int index = 0; index < Notifications.Count;)
         {
-            Notifications.RemoveRange(64, Notifications.Count - 64);
+            NotificationUiItem notification = Notifications[index];
+            retainedBySource.TryGetValue(notification.SourceId, out int retained);
+            if (retained >= MaxNotificationsPerSource)
+            {
+                Notifications.RemoveAt(index);
+                continue;
+            }
+
+            retainedBySource[notification.SourceId] = retained + 1;
+            index++;
         }
 
-        return hasNewUnread;
+        if (Notifications.Count > MaxNotifications)
+        {
+            Notifications.RemoveRange(MaxNotifications, Notifications.Count - MaxNotifications);
+        }
     }
 
     private static void EnsureButton()
@@ -406,6 +716,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
             SetCurrentButtonOffset(offset);
             _runtimeButtonOffset = offset;
             BlueprintConfig.SetStoreNotificationButtonOffset(offset);
+            _suppressRowActivationUntilFrame = Time.frameCount + 1;
         }
 
         ResetPanelPointerState();
@@ -482,6 +793,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
         }
 
         Rows.Clear();
+        RowButtons.Clear();
         RowTexts.Clear();
         GUIManager gui = GUIManager.Instance;
         _panel = gui.CreateWoodpanel(
@@ -494,7 +806,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
             draggable: false);
         _panel.name = "HomesteadStoreNotificationPanel";
         Transform panel = _panel.transform;
-        _ = gui.CreateText(HomesteadLocalization.Text("hs_store_notifications_title"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), gui.AveriaSerifBold, 20, gui.ValheimOrange, true, Color.black, 460f, 28f, false);
+        _titleText = gui.CreateText(HomesteadLocalization.Text("hs_store_notifications_title"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), gui.AveriaSerifBold, 20, gui.ValheimOrange, true, Color.black, 460f, 28f, false).GetComponent<Text>();
 
         for (int i = 0; i < MaxRows; i++)
         {
@@ -508,6 +820,12 @@ internal static class ZoneBlueprintStoreNotificationsUi
             rect.sizeDelta = new Vector2(480f, 34f);
             Image background = row.AddComponent<Image>();
             background.color = i % 2 == 0 ? new Color(0.05f, 0.045f, 0.035f, 0.32f) : new Color(0.02f, 0.018f, 0.014f, 0.22f);
+            Button rowButton = row.AddComponent<Button>();
+            rowButton.targetGraphic = background;
+            rowButton.transition = Selectable.Transition.None;
+            rowButton.navigation = new Navigation { mode = Navigation.Mode.None };
+            int rowIndex = i;
+            rowButton.onClick.AddListener(() => ActivateRow(rowIndex));
             Text text = gui.CreateText("", row.transform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(10f, 0f), gui.AveriaSerif, 13, gui.ValheimBeige, true, Color.black, 456f, 30f, false).GetComponent<Text>();
             RectTransform textRect = text.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;
@@ -519,6 +837,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
             text.horizontalOverflow = HorizontalWrapMode.Wrap;
             text.verticalOverflow = VerticalWrapMode.Truncate;
             Rows.Add(row);
+            RowButtons.Add(rowButton);
             RowTexts.Add(text);
         }
 
@@ -550,25 +869,83 @@ internal static class ZoneBlueprintStoreNotificationsUi
     private static void MarkUnreadAsRead()
     {
         PruneHiddenNotifications();
-        List<string> unreadIds = Notifications
+        List<NotificationUiItem> unread = Notifications
             .Where(notification => !notification.Read)
-            .Select(notification => notification.NotificationId)
             .ToList();
-        if (unreadIds.Count == 0)
+        if (unread.Count == 0)
         {
             return;
         }
 
-        foreach (ZoneBlueprintStoreNotificationDto notification in Notifications)
+        DispatchRead(unread);
+        RefreshButtonVisibility();
+    }
+
+    private static void DispatchRead(IReadOnlyList<NotificationUiItem> unread)
+    {
+        if (unread.Count == 0)
         {
-            if (unreadIds.Contains(notification.NotificationId))
-            {
-                notification.Read = true;
-            }
+            return;
         }
 
-        ZoneBlueprintStoreNotifications.RequestReadNotifications(unreadIds);
-        RefreshButtonVisibility();
+        foreach (NotificationUiItem notification in unread)
+        {
+            notification.Read = true;
+        }
+
+        string[] storeIds = unread
+            .Where(notification => string.Equals(notification.SourceId, StoreSourceId, StringComparison.Ordinal))
+            .Select(notification => notification.NotificationId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (storeIds.Length > 0)
+        {
+            ZoneBlueprintStoreNotifications.RequestReadNotifications(storeIds);
+        }
+
+        foreach (IGrouping<string, NotificationUiItem> sourceGroup in unread
+                     .Where(notification => !string.Equals(notification.SourceId, StoreSourceId, StringComparison.Ordinal))
+                     .GroupBy(notification => notification.SourceId, StringComparer.Ordinal))
+        {
+            string[] ids = sourceGroup
+                .Select(notification => notification.NotificationId)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (!ExternalSources.TryGetValue(sourceGroup.Key, out ExternalNotificationSource source))
+            {
+                RestoreExternalUnread(sourceGroup.Key, ids);
+                continue;
+            }
+
+            try
+            {
+                source.MarkRead(ids);
+            }
+            catch (Exception ex)
+            {
+                RestoreExternalUnread(sourceGroup.Key, ids);
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    $"External notification source '{sourceGroup.Key}' failed to mark notifications as read: {ex.Message}");
+            }
+        }
+    }
+
+    private static void RestoreExternalUnread(string sourceId, IReadOnlyCollection<string> notificationIds)
+    {
+        if (notificationIds.Count == 0)
+        {
+            return;
+        }
+
+        HashSet<string> ids = new(notificationIds, StringComparer.Ordinal);
+        foreach (NotificationUiItem notification in Notifications)
+        {
+            if (string.Equals(notification.SourceId, sourceId, StringComparison.Ordinal) &&
+                ids.Contains(notification.NotificationId))
+            {
+                notification.Read = false;
+            }
+        }
     }
 
     private static void Refresh()
@@ -584,7 +961,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
     private static void RefreshButtonVisibility()
     {
         PruneHiddenNotifications();
-        if (!BlueprintConfig.StoreNotificationButtonEnabled)
+        if (!IsNotificationButtonEnabled())
         {
             if (_buttonRoot != null && _buttonRoot)
             {
@@ -611,6 +988,14 @@ internal static class ZoneBlueprintStoreNotificationsUi
     private static void RefreshPanel()
     {
         PruneHiddenNotifications();
+        if (_titleText != null && _titleText)
+        {
+            _titleText.text = HomesteadLocalization.Text(
+                ExternalSources.Count > 0
+                    ? "hs_notifications_title"
+                    : "hs_store_notifications_title");
+        }
+
         _scrollOffset = Mathf.Clamp(_scrollOffset, 0, Mathf.Max(0, Notifications.Count - MaxRows));
         for (int i = 0; i < Rows.Count; i++)
         {
@@ -622,9 +1007,13 @@ internal static class ZoneBlueprintStoreNotificationsUi
                 continue;
             }
 
-            ZoneBlueprintStoreNotificationDto notification = Notifications[notificationIndex];
+            NotificationUiItem notification = Notifications[notificationIndex];
             RowTexts[i].text = notification.Message;
             RowTexts[i].color = notification.Read ? GUIManager.Instance.ValheimBeige : GUIManager.Instance.ValheimYellow;
+            if (i < RowButtons.Count)
+            {
+                RowButtons[i].interactable = CanActivate(notification);
+            }
         }
 
         if (_statusText != null && _statusText)
@@ -667,6 +1056,53 @@ internal static class ZoneBlueprintStoreNotificationsUi
         RefreshPanel();
     }
 
+    private static void ActivateRow(int rowIndex)
+    {
+        if (_panelDragMoved || Time.frameCount <= _suppressRowActivationUntilFrame)
+        {
+            return;
+        }
+
+        int notificationIndex = _scrollOffset + rowIndex;
+        if (notificationIndex < 0 || notificationIndex >= Notifications.Count)
+        {
+            return;
+        }
+
+        NotificationUiItem notification = Notifications[notificationIndex];
+        if (!CanActivate(notification))
+        {
+            return;
+        }
+
+        if (!notification.Read)
+        {
+            DispatchRead(new[] { notification });
+        }
+
+        if (!ExternalSources.TryGetValue(notification.SourceId, out ExternalNotificationSource source))
+        {
+            return;
+        }
+
+        ClosePanel();
+        try
+        {
+            source.Activate(notification.NotificationId);
+        }
+        catch (Exception ex)
+        {
+            HomesteadPlugin.HomesteadLogger.LogWarning(
+                $"External notification source '{notification.SourceId}' failed to activate notification '{notification.NotificationId}': {ex.Message}");
+        }
+    }
+
+    private static bool CanActivate(NotificationUiItem notification)
+    {
+        return !string.Equals(notification.SourceId, StoreSourceId, StringComparison.Ordinal) &&
+               ExternalSources.ContainsKey(notification.SourceId);
+    }
+
     private static void ClosePanel()
     {
         if (_panel != null && _panel)
@@ -688,9 +1124,42 @@ internal static class ZoneBlueprintStoreNotificationsUi
         Notifications.RemoveAll(notification => !ShouldDisplayNotification(notification));
     }
 
-    private static bool ShouldDisplayNotification(ZoneBlueprintStoreNotificationDto notification)
+    private static bool ShouldDisplayNotification(NotificationUiItem notification)
     {
-        return BlueprintConfig.StoreNotificationsEnabled;
+        return string.Equals(notification.SourceId, StoreSourceId, StringComparison.Ordinal)
+            ? BlueprintConfig.StoreNotificationsEnabled
+            : ExternalSources.ContainsKey(notification.SourceId);
+    }
+
+    private static bool IsNotificationButtonEnabled()
+    {
+        return ExternalSources.Count > 0 || BlueprintConfig.StoreNotificationButtonEnabled;
+    }
+
+    private sealed class NotificationUiItem
+    {
+        public string SourceId = "";
+        public string NotificationId = "";
+        public string Message = "";
+        public string CreatedAt = "";
+        public bool Read;
+    }
+
+    private sealed class ExternalNotificationSource
+    {
+        public ExternalNotificationSource(
+            Action<string[]> markRead,
+            Action<string> activate,
+            bool autoOpenOnUnread)
+        {
+            MarkRead = markRead;
+            Activate = activate;
+            AutoOpenOnUnread = autoOpenOnUnread;
+        }
+
+        public Action<string[]> MarkRead { get; }
+        public Action<string> Activate { get; }
+        public bool AutoOpenOnUnread { get; }
     }
 }
 

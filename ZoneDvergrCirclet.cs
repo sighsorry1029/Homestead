@@ -51,6 +51,7 @@ internal static partial class ZoneDvergrCirclet
         TempLights.Clear();
         TempVisualRoots.Clear();
         RepairStationDisplayNameCache.Clear();
+        ResetStateCaches();
         _loggedCircletExtendedSkip = false;
         _circletExtendedLoaded = null;
         AzuExtendedPlayerInventoryCompat.ResetForWorldSession();
@@ -60,7 +61,6 @@ internal static partial class ZoneDvergrCirclet
     internal static void Update()
     {
         bool active = Active;
-        bool inputBlocked = ShouldBlockInput();
         Player player = Player.m_localPlayer;
         ItemDrop.ItemData? item = player && TryGetEquippedDvergrCirclet(player, out ItemDrop.ItemData? equipped)
             ? equipped
@@ -99,7 +99,7 @@ internal static partial class ZoneDvergrCirclet
         CircletState state = LoadState(dvergrItem);
         EnsureLocalCircletVisual(player, dvergrItem, state);
         PublishLocalCircletState(player, dvergrItem, state);
-        if (inputBlocked)
+        if (ShouldBlockInput())
         {
             return;
         }

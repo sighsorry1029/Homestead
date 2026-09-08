@@ -7,7 +7,9 @@ namespace Homestead;
 internal sealed class ZoneBlueprintGhostOwner
 {
     public GameObject? Root { get; private set; }
+    // Materials attached to a root are owned by its ZoneBlueprintGhostMaterialSet.
     public Material? Material { get; private set; }
+    private bool _ownsStandaloneMaterial;
 
     public bool HasRoot => Root != null && Root;
 
@@ -52,12 +54,14 @@ internal sealed class ZoneBlueprintGhostOwner
     public Material ApplyMaterial(Color color)
     {
         Material = ApplyMaterial(Root, color, Material);
+        _ownsStandaloneMaterial = Root == null;
         return Material;
     }
 
     public Material ApplyMaterial(GameObject target, Color color)
     {
         Material = ApplyMaterial(target, color, Material);
+        _ownsStandaloneMaterial = target == null;
         return Material;
     }
 
@@ -77,13 +81,14 @@ internal sealed class ZoneBlueprintGhostOwner
             Object.Destroy(Root);
         }
 
-        if (Material != null)
+        if (_ownsStandaloneMaterial && Material != null)
         {
             Object.Destroy(Material);
         }
 
         Root = null;
         Material = null;
+        _ownsStandaloneMaterial = false;
     }
 
     public static Material ApplyMaterial(GameObject? root, Color color, Material? material = null)

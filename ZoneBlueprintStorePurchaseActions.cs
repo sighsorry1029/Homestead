@@ -41,7 +41,7 @@ internal static class ZoneBlueprintStorePurchaseAction
         if (!string.IsNullOrWhiteSpace(request.OfferId))
         {
             ZoneBlueprintStoreCatalog catalog = ZoneBlueprintStoreDraftRepository.LoadActiveCatalog();
-            if (!ZoneBlueprintStoreDtos.TryGetAcceptedBuyerOffer(catalog, listing.ListingId, request.OfferId, buyerPlayerId, out ZoneBlueprintStoreOffer offer, out reason))
+            if (!TryGetAcceptedBuyerOffer(catalog, listing.ListingId, request.OfferId, buyerPlayerId, out ZoneBlueprintStoreOffer offer, out reason))
             {
                 return FailBuy(reason);
             }
@@ -178,7 +178,7 @@ internal static class ZoneBlueprintStorePurchaseAction
         ZoneBlueprintStoreOffer? offer = null;
         if (!string.IsNullOrWhiteSpace(offerId))
         {
-            if (!ZoneBlueprintStoreDtos.TryGetAcceptedBuyerOffer(catalog, listing.ListingId, offerId, buyerPlayerId, out offer, out string offerReason))
+            if (!TryGetAcceptedBuyerOffer(catalog, listing.ListingId, offerId, buyerPlayerId, out offer, out string offerReason))
             {
                 return HomesteadCommandResult.Fail(offerReason);
             }
@@ -281,6 +281,40 @@ internal static class ZoneBlueprintStorePurchaseAction
 
         ZoneBlueprintStoreNotifications.PushNotification(notification);
         return HomesteadCommandResult.Ok(purchaseMessage);
+    }
+
+    private static bool TryGetAcceptedBuyerOffer(
+        ZoneBlueprintStoreCatalog catalog,
+        string listingId,
+        string offerId,
+        long buyerPlayerId,
+        out ZoneBlueprintStoreOffer offer,
+        out string reason)
+    {
+        offer = catalog.Offers.FirstOrDefault(item =>
+            string.Equals(item.ListingId, listingId, StringComparison.Ordinal) &&
+            string.Equals(item.OfferId, offerId, StringComparison.Ordinal) &&
+            !string.Equals(item.Status, ZoneBlueprintStoreOfferStatus.Deleted, StringComparison.Ordinal))!;
+        if (offer == null)
+        {
+            reason = HomesteadLocalization.Text("hs_store_accepted_offer_not_found");
+            return false;
+        }
+
+        if (!string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Accepted, StringComparison.Ordinal))
+        {
+            reason = HomesteadLocalization.Text("hs_store_offer_not_accepted");
+            return false;
+        }
+
+        if (!ZoneBlueprintStoreAccess.IsOfferBuyer(offer, buyerPlayerId))
+        {
+            reason = HomesteadLocalization.Text("hs_store_offer_other_buyer");
+            return false;
+        }
+
+        reason = "";
+        return true;
     }
 
     private static bool IsChestNearby(Vector3 requesterPosition, ZDO? chestZdo)

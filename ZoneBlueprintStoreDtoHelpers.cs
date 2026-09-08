@@ -45,83 +45,10 @@ internal static class ZoneBlueprintStoreDtos
         return CreateEnvelope(type, response);
     }
 
-    public static bool IsOfferBuyer(ZoneBlueprintStoreOffer offer, long playerId)
-    {
-        if (offer == null || playerId == 0L)
-        {
-            return false;
-        }
-
-        return ZoneBlueprintStoreAccess.MatchesPlayerId(offer.BuyerPlayerId, playerId);
-    }
-
-    public static bool TryGetListingAndOffer(
-        ZoneBlueprintStoreCatalog catalog,
-        string listingId,
-        string offerId,
-        out ZoneBlueprintStoreListing listing,
-        out ZoneBlueprintStoreOffer offer,
-        out string reason)
-    {
-        listing = catalog.Listings.FirstOrDefault(item => item.Active && string.Equals(item.ListingId, listingId, StringComparison.Ordinal))!;
-        offer = catalog.Offers.FirstOrDefault(item =>
-            string.Equals(item.ListingId, listingId, StringComparison.Ordinal) &&
-            string.Equals(item.OfferId, offerId, StringComparison.Ordinal) &&
-            !string.Equals(item.Status, ZoneBlueprintStoreOfferStatus.Deleted, StringComparison.Ordinal))!;
-        if (listing == null)
-        {
-            reason = HomesteadLocalization.Text("hs_store_listing_not_found");
-            return false;
-        }
-
-        if (offer == null)
-        {
-            reason = HomesteadLocalization.Text("hs_store_offer_not_found");
-            return false;
-        }
-
-        reason = "";
-        return true;
-    }
-
-    public static bool TryGetAcceptedBuyerOffer(
-        ZoneBlueprintStoreCatalog catalog,
-        string listingId,
-        string offerId,
-        long buyerPlayerId,
-        out ZoneBlueprintStoreOffer offer,
-        out string reason)
-    {
-        offer = catalog.Offers.FirstOrDefault(item =>
-            string.Equals(item.ListingId, listingId, StringComparison.Ordinal) &&
-            string.Equals(item.OfferId, offerId, StringComparison.Ordinal) &&
-            !string.Equals(item.Status, ZoneBlueprintStoreOfferStatus.Deleted, StringComparison.Ordinal))!;
-        if (offer == null)
-        {
-            reason = HomesteadLocalization.Text("hs_store_accepted_offer_not_found");
-            return false;
-        }
-
-        if (!string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Accepted, StringComparison.Ordinal))
-        {
-            reason = HomesteadLocalization.Text("hs_store_offer_not_accepted");
-            return false;
-        }
-
-        if (!IsOfferBuyer(offer, buyerPlayerId))
-        {
-            reason = HomesteadLocalization.Text("hs_store_offer_other_buyer");
-            return false;
-        }
-
-        reason = "";
-        return true;
-    }
-
     public static ZoneBlueprintStoreOfferDto ToOfferDto(ZoneBlueprintStoreOffer offer, bool canManage, long playerId)
     {
         List<ZoneBlueprintStorePriceItem> priceItems = ZoneBlueprintStorePrices.NormalizePriceItems(offer.PriceItems);
-        bool buyer = IsOfferBuyer(offer, playerId);
+        bool buyer = ZoneBlueprintStoreAccess.IsOfferBuyer(offer, playerId);
         bool pending = string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Pending, StringComparison.Ordinal);
         return new ZoneBlueprintStoreOfferDto
         {
@@ -136,11 +63,6 @@ internal static class ZoneBlueprintStoreDtos
             CanDelete = canManage || buyer,
             CanBuy = buyer && string.Equals(offer.Status, ZoneBlueprintStoreOfferStatus.Accepted, StringComparison.Ordinal)
         };
-    }
-
-    public static string CreateOfferId()
-    {
-        return "offer_" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
     }
 
     public static ZoneBlueprintStoreListingSummaryDto ToSummaryDto(

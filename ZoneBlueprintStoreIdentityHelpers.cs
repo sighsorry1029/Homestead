@@ -117,4 +117,14 @@ internal static class ZoneBlueprintStoreAccess
     {
         return ZoneBlueprintStoreIdentity.MatchesPlayer(storedPlayerId, playerId);
     }
+
+    public static bool IsOfferBuyer(ZoneBlueprintStoreOffer offer, long playerId)
+    {
+        if (offer == null || playerId == 0L)
+        {
+            return false;
+        }
+
+        return MatchesPlayerId(offer.BuyerPlayerId, playerId);
+    }
 }
