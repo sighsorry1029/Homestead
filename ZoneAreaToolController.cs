@@ -132,29 +132,24 @@ internal sealed class ZoneAreaToolController
         }
 
         _options.OnFrame?.Invoke(player);
+        bool canHandleToolInput = false;
+        if (!ZoneAreaToolShared.ShouldBlockInput())
+        {
+            if (_suppressInputFrames > 0)
+            {
+                _suppressInputFrames--;
+            }
+            else if (!_options.ShouldBlockToolInput())
+            {
+                HandleScroll(locked);
+                HandleOffset();
+                canHandleToolInput = true;
+            }
+        }
+
         UpdateStatusHud();
 
-        if (ZoneAreaToolShared.ShouldBlockInput())
-        {
-            return true;
-        }
-
-        if (_suppressInputFrames > 0)
-        {
-            _suppressInputFrames--;
-            return true;
-        }
-
-        if (_options.ShouldBlockToolInput())
-        {
-            return true;
-        }
-
-        HandleScroll(locked);
-        HandleOffset();
-        UpdateStatusHud();
-
-        if (!locked && Input.GetMouseButtonDown(0))
+        if (canHandleToolInput && !locked && Input.GetMouseButtonDown(0))
         {
             _options.OnClick(player, CurrentArea);
         }
@@ -287,7 +282,7 @@ internal sealed class ZoneAreaToolController
 
     private void UpdateStatusHud()
     {
-        ZoneAreaToolStatusHud.Show(_options.StatusTitle(), FormattedSize, GetEffectiveYaw(), _horizontalOffset, _heightOffset);
+        ZoneAreaToolStatusHud.Show(FormattedSize, GetEffectiveYaw(), _horizontalOffset, _heightOffset);
     }
 
     private void EnsureRangeLine()
@@ -333,7 +328,6 @@ internal sealed class ZoneAreaToolController
         public Action<float>? OnLockedScroll { get; set; }
         public Action<Player>? OnFrame { get; set; }
         public Func<bool> ShouldBlockToolInput { get; set; } = () => false;
-        public Func<string> StatusTitle { get; set; } = () => "";
         public Func<Player, ZoneAreaSelection, IReadOnlyList<ZDO>> FindCandidates { get; set; } = (_, _) => Array.Empty<ZDO>();
         public Action<Player, ZoneAreaSelection> OnClick { get; set; } = (_, _) => { };
     }

@@ -271,7 +271,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             _currentChestRotation = chestRotation;
             _currentChestPosition = GetChestPosition(anchor, rotation, chestRotation);
             UpdateChestPreview(visible: true);
-            ZoneAreaToolStatusHud.ShowBlueprint(GetPreviewTitle(), _yaw, _horizontalOffset, _heightOffset);
+            ZoneAreaToolStatusHud.ShowBlueprint(_yaw, _horizontalOffset, _heightOffset);
             UpdatePlaceInputGuard();
             if (IsPlacePressed())
             {
@@ -503,13 +503,6 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
         {
             RemoveLockedPreview(key);
         }
-    }
-
-    private string GetPreviewTitle()
-    {
-        return _mode == PreviewMode.Purchase
-            ? HomesteadLocalization.Format("hs_store_preview_purchase_title", _name)
-            : HomesteadLocalization.Format("hs_store_preview_listing_title", _name);
     }
 
     private string GetChestPreviewMode()

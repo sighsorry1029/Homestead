@@ -82,9 +82,6 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
                 UpdateSavePanel();
             },
             ShouldBlockToolInput = () => _selection != null && IsSaveNameInputFocused(),
-            StatusTitle = () => _selection == null
-                ? HomesteadLocalization.Text("hs_area_save_name")
-                : HomesteadLocalization.Text("hs_area_save_preview_name"),
             FindCandidates = FindSaveBoundaryPreviewCandidates,
             OnClick = PickSelection
         });

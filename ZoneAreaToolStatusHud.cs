@@ -29,13 +29,16 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     private float _placementHideAfter = float.MinValue;
     private float _dvergrHideAfter = float.MinValue;
     private float _buildCameraHideAfter = float.MinValue;
+    private bool _layoutApplied;
+    private Vector2 _appliedPosition;
+    private float _appliedFontSize;
 
-    public static void Show(string title, string size, float yaw, Vector3 horizontalOffset, float heightOffset)
+    public static void Show(string size, float yaw, Vector3 horizontalOffset, float heightOffset)
     {
         ShowPlacementLine(horizontalOffset, heightOffset, yaw, FormatAreaSize(size));
     }
 
-    public static void ShowBlueprint(string title, float yaw, Vector3 horizontalOffset, float heightOffset)
+    public static void ShowBlueprint(float yaw, Vector3 horizontalOffset, float heightOffset)
     {
         ShowPlacementLine(horizontalOffset, heightOffset, yaw);
     }
@@ -219,7 +222,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private void SetAreaLine(string line, bool keepVisible)
     {
-        EnsureElements();
         if (!CanShow())
         {
             return;
@@ -258,7 +260,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private void SetPlacementLine(string line, float visibleSeconds, bool keepVisible)
     {
-        EnsureElements();
         if (!CanShow())
         {
             return;
@@ -283,7 +284,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private void SetDvergrLine(string line, float visibleSeconds)
     {
-        EnsureElements();
         if (!CanShow())
         {
             return;
@@ -306,7 +306,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private void SetBuildCameraLine(string line)
     {
-        EnsureElements();
         if (!CanShow())
         {
             return;
@@ -407,6 +406,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
             _text.margin = Vector4.zero;
             _text.raycastTarget = false;
             _text.text = string.Empty;
+            _layoutApplied = false;
         }
 
         if (_text == null)
@@ -430,9 +430,19 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
             return;
         }
 
-        _rectTransform.anchoredPosition = ClientConfig.StatusHudPosition;
-        _text.fontSize = ClientConfig.StatusHudFontSize;
-        _rectTransform.sizeDelta = CalculateHudSize(_text.fontSize);
+        Vector2 position = ClientConfig.StatusHudPosition;
+        float fontSize = ClientConfig.StatusHudFontSize;
+        if (_layoutApplied && _appliedPosition == position && Mathf.Approximately(_appliedFontSize, fontSize))
+        {
+            return;
+        }
+
+        _rectTransform.anchoredPosition = position;
+        _text.fontSize = fontSize;
+        _rectTransform.sizeDelta = CalculateHudSize(fontSize);
+        _appliedPosition = position;
+        _appliedFontSize = fontSize;
+        _layoutApplied = true;
     }
 
     private static TextMeshProUGUI? FindHudTextTemplate()

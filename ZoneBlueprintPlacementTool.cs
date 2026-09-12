@@ -167,7 +167,7 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
 
     private void UpdateStatusHud()
     {
-        ZoneAreaToolStatusHud.ShowBlueprint("Blueprint Placement", _placementYaw, _horizontalOffset, _heightOffset);
+        ZoneAreaToolStatusHud.ShowBlueprint(_placementYaw, _horizontalOffset, _heightOffset);
     }
 
     private void OnDestroy()

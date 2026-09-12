@@ -47,7 +47,6 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
             TargetOverlayRefreshInterval = TargetOverlayRefreshInterval,
             GetSavedYaw = () => _lastAreaYaw,
             SetSavedYaw = yaw => _lastAreaYaw = yaw,
-            StatusTitle = () => HomesteadLocalization.Text("hs_area_dismantle_name"),
             FindCandidates = FindDismantlePreviewCandidates,
             OnClick = RequestDismantle
         });
