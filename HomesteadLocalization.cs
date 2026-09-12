@@ -7,8 +7,7 @@ using System.Reflection;
 using System.Text;
 using BepInEx;
 using BepInEx.Logging;
-using Jotunn.Entities;
-using Jotunn.Managers;
+using HarmonyLib;
 
 namespace Homestead;
 
@@ -27,10 +26,10 @@ internal static class HomesteadLocalization
         }
 
         _loaded = true;
-        CustomLocalization localization = LocalizationManager.Instance.GetLocalization();
-        AddEmbeddedYaml(localization, "English");
-        AddEmbeddedYaml(localization, "Korean");
-        AddExternalYamlFiles(localization);
+        AddEmbeddedYaml("English");
+        AddEmbeddedYaml("Korean");
+        AddExternalYamlFiles();
+        if (Localization.m_instance != null) Apply(Localization.m_instance, Localization.m_instance.GetSelectedLanguage());
     }
 
     public static string Token(string key)
@@ -62,7 +61,7 @@ internal static class HomesteadLocalization
         return Localization.m_instance != null ? Localization.m_instance.Localize(value) : GetLoadedText(value, value);
     }
 
-    private static void AddEmbeddedYaml(CustomLocalization localization, string language)
+    private static void AddEmbeddedYaml(string language)
     {
         string resourceSuffix = ".translations." + language + ".yml";
         Assembly assembly = Assembly.GetExecutingAssembly();
@@ -82,10 +81,10 @@ internal static class HomesteadLocalization
         }
 
         using StreamReader reader = new(stream, Encoding.UTF8);
-        AddYamlTranslations(localization, language, reader.ReadToEnd(), $"embedded translations/{language}.yml");
+        AddYamlTranslations(language, reader.ReadToEnd(), $"embedded translations/{language}.yml");
     }
 
-    private static void AddExternalYamlFiles(CustomLocalization localization)
+    private static void AddExternalYamlFiles()
     {
         string pluginPath = Paths.PluginPath;
         if (string.IsNullOrWhiteSpace(pluginPath) || !Directory.Exists(pluginPath))
@@ -113,7 +112,7 @@ internal static class HomesteadLocalization
 
             try
             {
-                AddYamlTranslations(localization, language, File.ReadAllText(file, Encoding.UTF8), file);
+                AddYamlTranslations(language, File.ReadAllText(file, Encoding.UTF8), file);
                 _logger?.LogInfo($"Loaded external Homestead localization '{language}' from {file}");
             }
             catch (Exception ex)
@@ -137,7 +136,7 @@ internal static class HomesteadLocalization
         return !string.IsNullOrWhiteSpace(language);
     }
 
-    private static void AddYamlTranslations(CustomLocalization localization, string language, string yaml, string source)
+    private static void AddYamlTranslations(string language, string yaml, string source)
     {
         Dictionary<string, string> translations = HomesteadYaml.Deserialize<Dictionary<string, string>>(yaml);
         Dictionary<string, string> validTranslations = new(StringComparer.OrdinalIgnoreCase);
@@ -158,7 +157,6 @@ internal static class HomesteadLocalization
             return;
         }
 
-        localization.AddTranslation(language, validTranslations);
         if (!LoadedTranslations.TryGetValue(language, out Dictionary<string, string> loaded))
         {
             loaded = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -174,15 +172,35 @@ internal static class HomesteadLocalization
     private static string GetLoadedText(string keyOrToken, string fallback)
     {
         string key = keyOrToken.TrimStart('$');
-        string language = UnityEngine.PlayerPrefs.GetString("language", LocalizationManager.DefaultLanguage);
+        string language = UnityEngine.PlayerPrefs.GetString("language", "English");
         if (TryGetLoadedText(language, key, out string text) ||
-            !language.Equals(LocalizationManager.DefaultLanguage, StringComparison.OrdinalIgnoreCase) &&
-            TryGetLoadedText(LocalizationManager.DefaultLanguage, key, out text))
+            !language.Equals("English", StringComparison.OrdinalIgnoreCase) &&
+            TryGetLoadedText("English", key, out text))
         {
             return text;
         }
 
         return fallback;
+    }
+
+    private static readonly AccessTools.FieldRef<Localization, Dictionary<string, string>> Words =
+        AccessTools.FieldRefAccess<Localization, Dictionary<string, string>>("m_translations");
+
+    private static void Apply(Localization localization, string language)
+    {
+        Dictionary<string, string> words = Words(localization);
+        if (LoadedTranslations.TryGetValue("English", out var english))
+            foreach (var pair in english) words[pair.Key] = pair.Value;
+        if (LoadedTranslations.TryGetValue(language, out var selected))
+            foreach (var pair in selected) words[pair.Key] = pair.Value;
+        foreach (string name in LoadedTranslations.Keys)
+            if (!localization.GetLanguages().Contains(name)) localization.GetLanguages().Add(name);
+    }
+
+    [HarmonyPatch(typeof(Localization), nameof(Localization.SetupLanguage))]
+    private static class LanguagePatch
+    {
+        private static void Postfix(Localization __instance, string language) => Apply(__instance, language);
     }
 
     private static bool TryGetLoadedText(string language, string key, out string text)

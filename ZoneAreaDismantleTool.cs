@@ -445,7 +445,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
             return true;
         }
 
-        if (prefab.GetComponent<ItemStand>() != null && !string.IsNullOrEmpty(zdo.GetString(ZDOVars.s_item)))
+        if (prefab.GetComponent<ItemStand>() != null && (zdo.GetInt(ZDOVars.s_item) != 0 || !string.IsNullOrEmpty(zdo.GetString(ZDOVars.s_item))))
         {
             return true;
         }
@@ -456,7 +456,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
             int slotCount = Mathf.Max(armorStand.m_slots?.Count ?? 0, 32);
             for (int i = 0; i < slotCount; i++)
             {
-                if (!string.IsNullOrEmpty(zdo.GetString(i + "_item")))
+                if (zdo.GetInt(i + "_item") != 0 || !string.IsNullOrEmpty(zdo.GetString(i + "_item")))
                 {
                     return true;
                 }
@@ -468,20 +468,10 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
 
     private static bool HasContainerItems(ZDO zdo)
     {
-        string payload = zdo.GetString(ZDOVars.s_items);
-        if (!string.IsNullOrEmpty(payload))
-        {
-            try
-            {
-                ZPackage package = new(payload);
-                package.ReadInt();
-                return package.ReadInt() > 0;
-            }
-            catch
-            {
-                return true;
-            }
-        }
+        byte[] payload = zdo.GetByteArray(ZDOVars.s_items);
+        if (payload != null) return HasStoredContainerItems(payload);
+        // Unsupported typed data is protected, never migrated or treated as empty.
+        if (!string.IsNullOrEmpty(zdo.GetString(ZDOVars.s_items))) return true;
 
         ZNetView? view = ZNetScene.instance?.FindInstance(zdo);
         Container? container = view != null ? view.GetComponent<Container>() : null;
@@ -499,6 +489,16 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
         }
 
         return container.GetInventory()?.NrOfItems() > 0;
+    }
+
+    internal static bool HasStoredContainerItems(byte[] payload)
+    {
+        // 1.0.7 Inventory.Save: Int32 version 109, UInt16 item count.
+        // Unknown/truncated payloads must never authorize destructive operations.
+        if (payload == null || payload.Length < 6) return true;
+        int version = BitConverter.ToInt32(payload, 0);
+        if (version != 109) return true;
+        return BitConverter.ToUInt16(payload, 4) != 0 || payload.Length != 6;
     }
 
     private static bool TryResolveRemotePlayer(long sender, out long playerId, out Vector3 playerPosition, out string reason)

@@ -5,7 +5,6 @@ using System.Linq;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -89,14 +88,14 @@ internal static class ZoneBlueprintStorePriceInputUi
             return;
         }
 
-        if (GUIManager.CustomGUIFront == null)
+        if (HomesteadUi.CustomGUIFront == null)
         {
             return;
         }
 
         Rows.Clear();
-        GUIManager gui = GUIManager.Instance;
-        _panel = ZoneBlueprintStorePanelLayout.CreatePanel(gui, GUIManager.CustomGUIFront.transform, ZoneBlueprintStorePanelKind.Form, "HomesteadBlueprintStorePriceInput");
+        HomesteadUi gui = HomesteadUi.Instance;
+        _panel = ZoneBlueprintStorePanelLayout.CreatePanel(gui, HomesteadUi.CustomGUIFront.transform, ZoneBlueprintStorePanelKind.Form, "HomesteadBlueprintStorePriceInput");
 
         Transform panel = _panel.transform;
         _headerText = gui.CreateText("", panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), gui.AveriaSerifBold, 21, gui.ValheimOrange, true, Color.black, 540f, 28f, false).GetComponent<Text>();

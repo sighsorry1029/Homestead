@@ -39,6 +39,8 @@ internal static class HomesteadFeatureBootstrap
 
     private static void RegisterSessionResetters()
     {
+        ZoneSessionResetRegistry.Register("Homestead input", HomesteadUi.ResetInput);
+        ZoneSessionResetRegistry.Register("Icon render queue", HomesteadIconRenderer.Instance.Shutdown);
         ZoneSessionResetRegistry.Register("Blueprint RPC queue", ZoneBlueprintNetworkPayload.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint plan ghost cleanup", ZoneBlueprintCommands.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Area dismantle tool", ZoneAreaDismantleTool.Deactivate);
@@ -78,6 +80,8 @@ internal static class HomesteadFeatureBootstrap
         ZoneBlueprintChestMapPins.Shutdown();
         ZoneBlueprintChestZdoRegistry.Shutdown();
         ZoneBlueprintStoreDraftRepository.Flush(force: true);
+        HomesteadUi.Shutdown();
+        HomesteadPrefabs.Shutdown();
     }
 
     public static void OnLocalPlayerSet()

@@ -1,0 +1,21 @@
+<Project>
+  <!-- Preserve existing private accesses without stale DLLs in the game directory.
+       Original inputs remain untouched; only obj contains compiler references.
+       Tool: BepInEx.AssemblyPublicizer 0.4.2 (Mono unsafe module + CLR attributes). -->
+  <UsingTask TaskName="PublicizeTask" AssemblyFile="$(PkgBepInEx_AssemblyPublicizer_MSBuild)/lib/netstandard2.1/BepInEx.AssemblyPublicizer.MSBuild.dll" />
+  <Target Name="PrepareGameCompilerReferences" AfterTargets="ResolveReferences" BeforeTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <Publicize Include="assembly_valheim;assembly_utils;assembly_guiutils" />
+    </ItemGroup>
+    <PublicizeTask IntermediateOutputPath="$(IntermediateOutputPath)" GeneratedIgnoresAccessChecksToFile="$(IntermediateOutputPath)Homestead.AccessChecks.cs" ReferencePath="@(ReferencePath)" PackageReference="@(PackageReference)" Publicize="@(Publicize)">
+      <Output TaskParameter="RemovedReferences" ItemName="_OriginalCompilerReferences" />
+      <Output TaskParameter="PublicizedReferences" ItemName="_GameCompilerReferences" />
+    </PublicizeTask>
+    <ItemGroup>
+      <ReferencePath Remove="@(_OriginalCompilerReferences)" />
+      <ReferencePath Include="@(_GameCompilerReferences)" />
+      <Compile Include="$(IntermediateOutputPath)Homestead.AccessChecks.cs" />
+      <Compile Include="$(PkgBepInEx_AssemblyPublicizer_MSBuild)/contentFiles/cs/any/IgnoresAccessChecksToAttribute.cs" />
+    </ItemGroup>
+  </Target>
+</Project>

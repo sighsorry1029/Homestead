@@ -5,6 +5,20 @@ namespace Homestead;
 
 internal static class HomesteadPlayerIdentity
 {
+    internal static PlatformUserID ResolveCreatorPlatformId(long playerId, long sender)
+    {
+        if (Player.m_localPlayer != null && Player.m_localPlayer.GetPlayerID() == playerId)
+            return UserInfo.GetLocalUser()?.UserId ?? PlatformUserID.None;
+        ZNetPeer? peer = ZNet.instance?.GetPeer(sender);
+        if (peer == null || !peer.IsReady() || TryReadPlayerId(peer.m_characterID) != playerId)
+            throw new InvalidOperationException("Cannot resolve authenticated blueprint creator.");
+        string host = peer.m_socket.GetHostName();
+        PlatformUserID identity = ZNet.m_onlineBackend == OnlineBackendType.Steamworks
+            ? new PlatformUserID("Steam", host) : new PlatformUserID(host);
+        if (!identity.IsValid) throw new InvalidOperationException("Invalid blueprint creator platform identity.");
+        return identity;
+    }
+
     public static string ResolvePlatformId(Player? player, long sender, long playerId)
     {
         if (player != null)

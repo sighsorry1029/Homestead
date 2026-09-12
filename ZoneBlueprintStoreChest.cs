@@ -5,7 +5,6 @@ using System.Linq;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -62,6 +61,7 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
     {
         _nview = GetComponent<ZNetView>();
         _container = GetComponent<Container>();
+        ZoneBlueprintChestLifecycle.RegisterTouchRpc(_nview, _container);
         InvokeRepeating(nameof(Tick), 0.5f, 0.5f);
         ZoneBlueprintChestZdoRegistry.Refresh(_nview != null && _nview.IsValid() ? _nview.GetZDO() : null);
         ZoneBlueprintStoreChestRegistry.Refresh(this);

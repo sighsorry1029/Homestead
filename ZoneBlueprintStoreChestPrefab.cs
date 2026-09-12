@@ -5,7 +5,6 @@ using System.Linq;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -71,7 +70,7 @@ internal static class ZoneBlueprintStoreChestPrefab
         }
 
         _initialized = true;
-        PrefabManager.OnPrefabsRegistered += RegisterPrefab;
+        HomesteadPrefabs.OnPrefabsRegistered += RegisterPrefab;
     }
 
     private static bool TryValidatePlacement(
@@ -460,7 +459,7 @@ internal static class ZoneBlueprintStoreChestPrefab
             return;
         }
 
-        if (PrefabManager.Instance.GetPrefab(definition.PrefabName))
+        if (HomesteadPrefabs.Instance.GetPrefab(definition.PrefabName))
         {
             return;
         }
@@ -471,15 +470,15 @@ internal static class ZoneBlueprintStoreChestPrefab
             return;
         }
 
-        GameObject prefab = PrefabManager.Instance.CreateClonedPrefab(definition.PrefabName, basePrefab);
+        GameObject prefab = HomesteadPrefabs.Instance.CreateClonedPrefab(definition.PrefabName, basePrefab);
         if (!prefab)
         {
             return;
         }
 
         ConfigurePrefab(prefab, definition);
-        PrefabManager.Instance.AddPrefab(prefab);
-        PrefabManager.Instance.RegisterToZNetScene(prefab);
+        HomesteadPrefabs.Instance.AddPrefab(prefab);
+        HomesteadPrefabs.Instance.RegisterToZNetScene(prefab);
         _logger?.LogInfo($"Registered Homestead blueprint store chest prefab: {definition.PrefabName}.");
     }
 
@@ -512,6 +511,7 @@ internal static class ZoneBlueprintStoreChestPrefab
             piece.m_name = definition.DisplayName;
             piece.m_description = definition.Description;
             piece.m_resources = Array.Empty<Piece.Requirement>();
+            piece.m_craftingStation = null;
         }
 
         if (prefab.GetComponent<ZoneBlueprintStoreChest>() == null)

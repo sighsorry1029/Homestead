@@ -129,7 +129,7 @@ internal sealed class ZoneAreaTargetOverlay
 
         float zoneSize = ZoneSystem.instance != null ? ZoneSystem.instance.m_zoneSize : ZoneSystem.c_ZoneSize;
         int area = Mathf.CeilToInt((selection.HalfDiagonal + BoundaryCandidatePadding) / Mathf.Max(1f, zoneSize));
-        ZDOMan.instance.FindSectorObjects(ZoneSystem.GetZone(selection.Center), area, 0, buffer);
+        ZDOMan.instance.FindSectorObjects(ZoneSystem.GetZone(selection.Center), new SimulationDistance(area, 0, classic: true), buffer);
     }
 
     private static bool TryClassifyBoundary(ZDO zdo, ZoneAreaSelection selection, out bool included)

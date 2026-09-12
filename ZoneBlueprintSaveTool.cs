@@ -6,8 +6,6 @@ using System.IO;
 using System.Linq;
 using BepInEx.Logging;
 using HarmonyLib;
-using Jotunn.Entities;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -431,14 +429,14 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
             return;
         }
 
-        if (GUIManager.CustomGUIFront == null)
+        if (HomesteadUi.CustomGUIFront == null)
         {
             return;
         }
 
-        GUIManager gui = GUIManager.Instance;
+        HomesteadUi gui = HomesteadUi.Instance;
         _savePanel = gui.CreateWoodpanel(
-            GUIManager.CustomGUIFront.transform,
+            HomesteadUi.CustomGUIFront.transform,
             new Vector2(0.5f, 0.5f),
             new Vector2(0.5f, 0.5f),
             Vector2.zero,
@@ -627,7 +625,7 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
             return;
         }
 
-        GUIManager.BlockInput(blocked);
+        HomesteadUi.BlockInput(blocked);
         _saveInputBlocked = blocked;
     }
 
@@ -797,9 +795,7 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
 
 internal static class ZoneBlueprintSaveToolMenu
 {
-    private const string CategoryId = "Homestead";
     private const string CategoryLabelKey = "hs_hammer_category";
-    private const string HammerTable = "Hammer";
     private const float BlueprintListRefreshCooldownSeconds = 15f;
     private const float HammerRefreshDelaySeconds = 0.08f;
     private const float HammerRefreshBulkDelaySeconds = 0.75f;
@@ -807,7 +803,6 @@ internal static class ZoneBlueprintSaveToolMenu
     private const int BlueprintPieceRegisterBudget = 64;
 
     private static readonly Dictionary<string, Piece> BlueprintPieces = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> RegisteredPrefabs = new(StringComparer.OrdinalIgnoreCase);
     private static readonly List<string> CachedBlueprintNames = [];
     private static readonly Queue<string> PendingBlueprintPieceNames = new();
     private static readonly HashSet<string> PendingBlueprintPieceNameSet = new(StringComparer.OrdinalIgnoreCase);
@@ -855,7 +850,7 @@ internal static class ZoneBlueprintSaveToolMenu
         {
             if (_homesteadCategory == Piece.PieceCategory.Max)
             {
-                _homesteadCategory = PieceManager.Instance.AddPieceCategory(CategoryId);
+                _homesteadCategory = ZoneBlueprintHammerTable.AllocateCategory();
             }
 
             return _homesteadCategory;
@@ -1260,12 +1255,10 @@ internal static class ZoneBlueprintSaveToolMenu
                 BlueprintPieces.Remove(name);
                 if (piece != null && piece && piece.gameObject != null && piece.gameObject)
                 {
-                    RegisteredPrefabs.Remove(piece.gameObject.name);
                     Object.Destroy(piece.gameObject);
                 }
             }
 
-            RegisteredPrefabs.Remove(ZoneBlueprintToolPieceFactory.BlueprintPrefabName(name));
             ZoneBlueprintVisuals.InvalidateIcon(name);
         }
 
@@ -1308,7 +1301,6 @@ internal static class ZoneBlueprintSaveToolMenu
         }
 
         BlueprintPieces.Clear();
-        RegisteredPrefabs.RemoveWhere(name => name.StartsWith("Homestead_Blueprint_", StringComparison.OrdinalIgnoreCase));
     }
 
     private static void EnsureBlueprintPiecesInHammerTable(PieceTable table)
@@ -1502,18 +1494,18 @@ internal static class ZoneBlueprintSaveToolMenu
 
     private static bool SortHomesteadAvailablePiecesInHammerTable(PieceTable table)
     {
-        if (table == null || table.m_availablePieces == null)
+        if (table == null || HomesteadGameAccess.AvailableByCategory(table) == null)
         {
             return false;
         }
 
         int availableIndex = (int)HomesteadCategory;
-        if (availableIndex < 0 || availableIndex >= table.m_availablePieces.Count)
+        if (availableIndex < 0 || availableIndex >= HomesteadGameAccess.AvailableByCategory(table).Count)
         {
             return false;
         }
 
-        List<Piece> availablePieces = table.m_availablePieces[availableIndex];
+        List<Piece> availablePieces = HomesteadGameAccess.AvailableByCategory(table)[availableIndex];
         Piece? selectedPiece = GetMarker(table.GetSelectedPiece()) != null ? table.GetSelectedPiece() : null;
         List<Piece> sorted = new(availablePieces.Count + BlueprintPieces.Count + 5);
         foreach (Piece piece in availablePieces)
@@ -1631,12 +1623,10 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_toolPiece != null && _toolPiece)
         {
             ZoneBlueprintToolPieceFactory.RefreshAreaSave(_toolPiece);
-            RegisterWithJotunn(_toolPiece.gameObject);
             return;
         }
 
         _toolPiece = ZoneBlueprintToolPieceFactory.CreateAreaSave(HomesteadCategory);
-        RegisterWithJotunn(_toolPiece.gameObject);
     }
 
     private static void EnsureDismantleToolPiece()
@@ -1644,12 +1634,10 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_dismantleToolPiece != null && _dismantleToolPiece)
         {
             ZoneBlueprintToolPieceFactory.RefreshAreaDismantle(_dismantleToolPiece);
-            RegisterWithJotunn(_dismantleToolPiece.gameObject);
             return;
         }
 
         _dismantleToolPiece = ZoneBlueprintToolPieceFactory.CreateAreaDismantle(HomesteadCategory);
-        RegisterWithJotunn(_dismantleToolPiece.gameObject);
     }
 
     private static void EnsureSnapPointToolPiece()
@@ -1657,12 +1645,10 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_snapPointToolPiece != null && _snapPointToolPiece)
         {
             ZoneBlueprintToolPieceFactory.RefreshBlueprintSnapPoint(_snapPointToolPiece);
-            RegisterWithJotunn(_snapPointToolPiece.gameObject);
             return;
         }
 
         _snapPointToolPiece = ZoneBlueprintToolPieceFactory.CreateBlueprintSnapPoint(HomesteadCategory);
-        RegisterWithJotunn(_snapPointToolPiece.gameObject);
     }
 
     private static void EnsureStoreToolPiece()
@@ -1670,12 +1656,10 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_storeToolPiece != null && _storeToolPiece)
         {
             ZoneBlueprintToolPieceFactory.RefreshStore(_storeToolPiece);
-            RegisterWithJotunn(_storeToolPiece.gameObject);
             return;
         }
 
         _storeToolPiece = ZoneBlueprintToolPieceFactory.CreateStore(HomesteadCategory);
-        RegisterWithJotunn(_storeToolPiece.gameObject);
     }
 
     private static void EnsureDataFolderToolPiece()
@@ -1683,12 +1667,10 @@ internal static class ZoneBlueprintSaveToolMenu
         if (_dataFolderToolPiece != null && _dataFolderToolPiece)
         {
             ZoneBlueprintToolPieceFactory.RefreshDataFolder(_dataFolderToolPiece);
-            RegisterWithJotunn(_dataFolderToolPiece.gameObject);
             return;
         }
 
         _dataFolderToolPiece = ZoneBlueprintToolPieceFactory.CreateDataFolder(HomesteadCategory);
-        RegisterWithJotunn(_dataFolderToolPiece.gameObject);
     }
 
     private static Piece? EnsureBlueprintPiece(string name, ZoneBlueprintFile? loadedBlueprint = null, bool queueMissingIcon = true)
@@ -1700,7 +1682,6 @@ internal static class ZoneBlueprintSaveToolMenu
                 UpdateBlueprintPiece(cached, name, loadedBlueprint, queueMissingIcon);
             }
 
-            RegisterWithJotunn(cached.gameObject);
             return cached;
         }
 
@@ -1716,51 +1697,12 @@ internal static class ZoneBlueprintSaveToolMenu
 
         Piece piece = ZoneBlueprintToolPieceFactory.CreateBlueprint(name, blueprint, HomesteadCategory, GetStoreListInputLabel(), queueMissingIcon);
         BlueprintPieces[name] = piece;
-        RegisterWithJotunn(piece.gameObject);
         return piece;
     }
 
     private static void UpdateBlueprintPiece(Piece piece, string name, ZoneBlueprintFile blueprint, bool queueMissingIcon = true)
     {
         ZoneBlueprintToolPieceFactory.UpdateBlueprint(piece, name, blueprint, HomesteadCategory, GetStoreListInputLabel(), queueMissingIcon);
-    }
-
-    private static void RegisterWithJotunn(GameObject prefab)
-    {
-        if (!prefab || RegisteredPrefabs.Contains(prefab.name))
-        {
-            return;
-        }
-
-        Piece piece = prefab.GetComponent<Piece>();
-        if (piece == null || piece.m_icon == null)
-        {
-            return;
-        }
-
-        ZoneBlueprintSaveToolMarker? marker = prefab.GetComponent<ZoneBlueprintSaveToolMarker>();
-        if (marker != null && marker.Kind == ZoneBlueprintToolKind.Blueprint)
-        {
-            RegisteredPrefabs.Add(prefab.name);
-            return;
-        }
-
-        CustomPiece customPiece = new(prefab, HammerTable, false)
-        {
-            Category = CategoryId
-        };
-        _ = PieceManager.Instance.AddPiece(customPiece);
-
-        try
-        {
-            PieceManager.Instance.RegisterPieceInPieceTable(prefab, HammerTable, CategoryId);
-        }
-        catch
-        {
-            // Jotunn will register queued custom pieces when ObjectDB is ready.
-        }
-
-        RegisteredPrefabs.Add(prefab.name);
     }
 
     [HarmonyPatch(typeof(PieceTable), nameof(PieceTable.UpdateAvailable))]
@@ -1772,6 +1714,7 @@ internal static class ZoneBlueprintSaveToolMenu
             if (__instance != null && ZoneBlueprintHammerTable.LooksLike(__instance))
             {
                 EnsureBlueprintPiecesInHammerTable(__instance);
+                ZoneBlueprintHammerTable.EnsureAvailableCategorySlots(__instance);
                 if (_forceHammerRefreshOnNextTableUpdate)
                 {
                     _forceHammerRefreshOnNextTableUpdate = false;

@@ -5,7 +5,6 @@ using System.Linq;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -196,6 +195,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
 
     private void ActivateInternal(PreviewMode mode, string listingId, string offerId, string name, ZoneBlueprintFile blueprint, bool allowPurchase)
     {
+        ZoneBlueprintPlacementTool.Deactivate();
         ClearPreview();
         _mode = mode;
         _listingId = listingId;
@@ -243,7 +243,14 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             return;
         }
 
-        if (!ZoneAreaToolShared.ShouldBlockInput())
+        bool inputBlocked = ZoneAreaToolShared.ShouldBlockInput();
+        if (inputBlocked)
+        {
+            // A click used by the Hammer menu must not also place the preview.
+            // Keep the guard armed until that same physical input is released.
+            _waitForPlaceRelease = true;
+        }
+        else
         {
             ZonePlacementInput.ApplyYawScroll(ref _yaw);
             ZonePlacementInput.ApplyOffset(ref _horizontalOffset, ref _heightOffset);
@@ -272,11 +279,14 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
             _currentChestPosition = GetChestPosition(anchor, rotation, chestRotation);
             UpdateChestPreview(visible: true);
             ZoneAreaToolStatusHud.ShowBlueprint(_yaw, _horizontalOffset, _heightOffset);
-            UpdatePlaceInputGuard();
-            if (IsPlacePressed())
+            if (!inputBlocked)
             {
-                PlaceChest();
-                return;
+                UpdatePlaceInputGuard();
+                if (IsPlacePressed())
+                {
+                    PlaceChest();
+                    return;
+                }
             }
         }
         else

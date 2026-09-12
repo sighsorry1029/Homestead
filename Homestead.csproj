@@ -59,34 +59,25 @@
                 <BepInExPath Condition="!Exists('$(BepInExPath)')AND Exists('$(GamePath)')">$(GamePath)\BepInEx</BepInExPath>
                 <CorlibPath Condition="!Exists('$(CorlibPath)') AND Exists('$(GamePath)')">$(GamePath)\valheim_Data\Managed</CorlibPath>
                 <CorlibPath Condition="!Exists('$(CorlibPath)') AND Exists('$(GamePath)')">$(GamePath)\unstripped_corlib</CorlibPath>
-                <PublicizedAssembliesPath Condition="!Exists('$(PublicizedAssembliesPath)') AND Exists('$(GamePath)')">$(GamePath)\valheim_Data\Managed\publicized_assemblies</PublicizedAssembliesPath>
                 <AfterTargets Condition="'$(AfterTargets)' == ''">ILRepacker</AfterTargets>
             </PropertyGroup>
         </When>
     </Choose>
-    <PropertyGroup>
-        <JotunnPath Condition="'$(JotunnPath)' == '' And Exists('$(BepInExPath)\plugins\ValheimModding-Jotunn\Jotunn.dll')">$(BepInExPath)\plugins\ValheimModding-Jotunn\Jotunn.dll</JotunnPath>
-        <JotunnPath Condition="'$(JotunnPath)' == '' And Exists('$(BepInExPath)\plugins\Jotunn.dll')">$(BepInExPath)\plugins\Jotunn.dll</JotunnPath>
-    </PropertyGroup>
     <ItemGroup>
         <Reference Include="0Harmony">
             <HintPath>$(BepInExPath)\core\0Harmony.dll</HintPath>
         </Reference>
         <Reference Include="assembly_guiutils">
-            <HintPath>$(PublicizedAssembliesPath)\assembly_guiutils_publicized.dll</HintPath>
+            <HintPath>$(CorlibPath)\assembly_guiutils.dll</HintPath>
         </Reference>
         <Reference Include="assembly_utils">
-            <HintPath>$(PublicizedAssembliesPath)\assembly_utils_publicized.dll</HintPath>
+            <HintPath>$(CorlibPath)\assembly_utils.dll</HintPath>
         </Reference>
         <Reference Include="assembly_valheim">
-            <HintPath>$(PublicizedAssembliesPath)\assembly_valheim_publicized.dll</HintPath>
+            <HintPath>$(CorlibPath)\assembly_valheim.dll</HintPath>
         </Reference>
         <Reference Include="BepInEx">
             <HintPath>$(BepInExPath)\core\BepInEx.dll</HintPath>
-        </Reference>
-        <Reference Include="Jotunn" Condition="'$(JotunnPath)' != ''">
-            <HintPath>$(JotunnPath)</HintPath>
-            <Private>False</Private>
         </Reference>
         <Reference Include="ServerSync">
             <HintPath>Libs\ServerSync.dll</HintPath>
@@ -157,6 +148,10 @@
         <Compile Include="SavedZdoData.cs"/>
         <Compile Include="HomesteadTerrainSupport.cs"/>
         <Compile Include="HomesteadTimestamp.cs"/>
+        <Compile Include="HomesteadUi.cs"/>
+        <Compile Include="HomesteadPrefabs.cs"/>
+        <Compile Include="HomesteadIconRenderer.cs"/>
+        <Compile Include="HomesteadGameAccess.cs"/>
         <Compile Include="HomesteadYaml.cs"/>
         <Compile Include="InventorySlotsCompat.cs"/>
         <Compile Include="ZoneHammerRefreshScheduler.cs"/>
@@ -298,12 +293,11 @@
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
         <PackageReference Include="YamlDotNet" Version="16.3.0" />
+        <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" ExcludeAssets="build;buildTransitive;contentFiles" GeneratePathProperty="true" />
     </ItemGroup>
     <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>
-    <Target Name="ValidateJotunnReference" BeforeTargets="ResolveReferences">
-        <Error Text="Jotunn.dll was not found. Set JotunnPath to the installed Jotunn.dll." Condition="'$(JotunnPath)' == '' Or !Exists('$(JotunnPath)')"/>
-    </Target>
-    <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
+    <Import Project="GameReferences.targets"/>
+    <!-- To modify your build process, add your task inside one of the targets below and uncomment it.
          Other similar extension points exist, see Microsoft.Common.targets.
     <Target Name="BeforeBuild">
     </Target>

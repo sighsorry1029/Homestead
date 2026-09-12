@@ -1,5 +1,4 @@
 using System;
-using Jotunn.Managers;
 using UnityEngine;
 
 namespace Homestead;
@@ -52,7 +51,7 @@ internal static class ZoneBlueprintStorePanelRuntime
             _inputBlockCount++;
             if (_inputBlockCount == 1)
             {
-                GUIManager.BlockInput(true);
+                HomesteadUi.BlockInput(true);
             }
 
             return;
@@ -61,14 +60,14 @@ internal static class ZoneBlueprintStorePanelRuntime
         _inputBlockCount = Math.Max(0, _inputBlockCount - 1);
         if (_inputBlockCount == 0)
         {
-            GUIManager.BlockInput(false);
+            HomesteadUi.BlockInput(false);
         }
     }
 
     public static void ResetInputBlocks()
     {
+        if (_inputBlockCount > 0) HomesteadUi.BlockInput(false);
         _inputBlockCount = 0;
-        GUIManager.BlockInput(false);
     }
 
     public static bool IsVisible(GameObject? panel)

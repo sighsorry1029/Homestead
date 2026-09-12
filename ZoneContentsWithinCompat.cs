@@ -116,7 +116,7 @@ internal static class ZoneContentsWithinBlueprintChestPreview
         Inventory inventory = grid.GetInventory();
         int width = Mathf.Max(1, grid.m_width);
         int index = 0;
-        foreach (InventoryGrid.Element element in grid.m_elements)
+        foreach (InventoryElement element in HomesteadGameAccess.InventoryElements(grid))
         {
             ItemDrop.ItemData? item = inventory.GetItemAt(index % width, index / width);
             index++;
@@ -226,10 +226,10 @@ internal static class ZoneContentsWithinBlueprintChestPreview
             inventory.m_inventory.Add(item);
         }
 
-        inventory.Changed();
+        HomesteadGameAccess.InventoryChanged(inventory);
     }
 
-    private static void ApplyRequirementSlotStyle(InventoryGrid.Element element, ItemDrop.ItemData? item)
+    private static void ApplyRequirementSlotStyle(InventoryElement element, ItemDrop.ItemData? item)
     {
         if (element.m_icon != null)
         {

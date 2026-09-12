@@ -32,7 +32,7 @@ internal static partial class ZoneDvergrCirclet
         }
     }
 
-    [HarmonyPatch(typeof(Inventory), nameof(Inventory.Load))]
+    [HarmonyPatch(typeof(Inventory), nameof(Inventory.Load), new[] { typeof(ZPackage) })]
     private static class InventoryLoadPatch
     {
         private static void Postfix(Inventory __instance)
@@ -141,7 +141,7 @@ internal static partial class ZoneDvergrCirclet
             if (oldDurability > 0f && item.m_durability <= 0f)
             {
                 player.Message(MessageHud.MessageType.TopLeft, HomesteadLocalization.Text("hs_dvergr_depleted"), 0, item.GetIcon());
-                player.GetInventory().Changed();
+                HomesteadGameAccess.InventoryChanged(player.GetInventory());
             }
         }
     }
@@ -280,7 +280,7 @@ internal static partial class ZoneDvergrCirclet
         }
     }
 
-    [HarmonyPatch(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.GetTooltip), typeof(ItemDrop.ItemData), typeof(int), typeof(bool), typeof(float), typeof(int))]
+    [HarmonyPatch(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.GetTooltip), typeof(ItemDrop.ItemData), typeof(int), typeof(bool), typeof(float), typeof(int), typeof(bool))]
     private static class ItemDataGetTooltipPatch
     {
         [HarmonyPriority(Priority.Low)]

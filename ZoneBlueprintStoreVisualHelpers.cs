@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using BepInEx.Logging;
-using Jotunn.Managers;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -26,7 +25,7 @@ internal static class ZoneBlueprintStoreVisuals
 
     public static void PlayCompletionVfx(Vector3 position)
     {
-        GameObject? prefab = ZNetScene.instance?.GetPrefab(StoreCompleteVfxPrefab) ?? PrefabManager.Instance.GetPrefab(StoreCompleteVfxPrefab);
+        GameObject? prefab = ZNetScene.instance?.GetPrefab(StoreCompleteVfxPrefab) ?? HomesteadPrefabs.Instance.GetPrefab(StoreCompleteVfxPrefab);
         if (!prefab)
         {
             if (!_storeCompleteVfxMissingLogged)

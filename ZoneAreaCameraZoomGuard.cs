@@ -6,8 +6,6 @@ namespace Homestead;
 internal static class ZoneAreaCameraZoomGuard
 {
     private static int _suppressFrame = -1;
-    private static float _distance;
-    private static float _zoomSensitivity;
 
     public static void SuppressWheelZoomThisFrame()
     {
@@ -18,8 +16,6 @@ internal static class ZoneAreaCameraZoomGuard
 
         if (_suppressFrame != Time.frameCount)
         {
-            _distance = GameCamera.instance.m_distance;
-            _zoomSensitivity = GameCamera.instance.m_zoomSens;
             _suppressFrame = Time.frameCount;
         }
     }
@@ -27,23 +23,39 @@ internal static class ZoneAreaCameraZoomGuard
     [HarmonyPatch(typeof(GameCamera), nameof(GameCamera.UpdateCamera))]
     private static class GameCameraUpdateCameraPatch
     {
-        private static void Prefix(GameCamera __instance)
+        private static void Prefix(GameCamera __instance, out CameraZoomState __state)
         {
-            if (_suppressFrame == Time.frameCount)
+            bool suppress = _suppressFrame == Time.frameCount || HomesteadUi.InputBlocked;
+            __state = suppress
+                ? new CameraZoomState(__instance.m_distance, __instance.m_zoomSens)
+                : default;
+            if (suppress)
             {
-                _distance = __instance.m_distance;
-                _zoomSensitivity = __instance.m_zoomSens;
                 __instance.m_zoomSens = 0f;
             }
         }
 
-        private static void Postfix(GameCamera __instance)
+        private static void Postfix(GameCamera __instance, CameraZoomState __state)
         {
-            if (_suppressFrame == Time.frameCount)
+            if (__state.Suppressed)
             {
-                __instance.m_zoomSens = _zoomSensitivity;
-                __instance.m_distance = _distance;
+                __instance.m_zoomSens = __state.ZoomSensitivity;
+                __instance.m_distance = __state.Distance;
             }
         }
+    }
+
+    private readonly struct CameraZoomState
+    {
+        public CameraZoomState(float distance, float zoomSensitivity)
+        {
+            Suppressed = true;
+            Distance = distance;
+            ZoomSensitivity = zoomSensitivity;
+        }
+
+        public bool Suppressed { get; }
+        public float Distance { get; }
+        public float ZoomSensitivity { get; }
     }
 }

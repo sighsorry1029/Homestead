@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -494,13 +493,13 @@ internal static class ZoneBlueprintStoreNotificationsUi
             return;
         }
 
-        if (GUIManager.CustomGUIFront == null)
+        if (HomesteadUi.CustomGUIFront == null)
         {
             return;
         }
 
-        GUIManager gui = GUIManager.Instance;
-        _buttonRoot = gui.CreateButton("!", GUIManager.CustomGUIFront.transform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-62f, -118f), ButtonWidth, ButtonHeight);
+        HomesteadUi gui = HomesteadUi.Instance;
+        _buttonRoot = gui.CreateButton("!", HomesteadUi.CustomGUIFront.transform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-62f, -118f), ButtonWidth, ButtonHeight);
         _buttonRoot.name = "HomesteadStoreNotificationButton";
 
         GameObject badge = new("Badge", typeof(RectTransform));
@@ -527,7 +526,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
         bool panelOpen = IsPanelVisible();
         Transform? desiredParent = panelOpen && _panel != null && _panel
             ? _panel.transform
-            : GUIManager.CustomGUIFront?.transform;
+            : HomesteadUi.CustomGUIFront?.transform;
         if (desiredParent == null)
         {
             return;
@@ -582,7 +581,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
         if (_buttonRoot != null && _buttonRoot)
         {
             RectTransform rect = _buttonRoot.GetComponent<RectTransform>();
-            if (rect != null && rect.transform.parent == GUIManager.CustomGUIFront?.transform)
+            if (rect != null && rect.transform.parent == HomesteadUi.CustomGUIFront?.transform)
             {
                 return rect.anchoredPosition;
             }
@@ -787,7 +786,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
             return;
         }
 
-        if (GUIManager.CustomGUIFront == null)
+        if (HomesteadUi.CustomGUIFront == null)
         {
             return;
         }
@@ -795,9 +794,9 @@ internal static class ZoneBlueprintStoreNotificationsUi
         Rows.Clear();
         RowButtons.Clear();
         RowTexts.Clear();
-        GUIManager gui = GUIManager.Instance;
+        HomesteadUi gui = HomesteadUi.Instance;
         _panel = gui.CreateWoodpanel(
-            GUIManager.CustomGUIFront.transform,
+            HomesteadUi.CustomGUIFront.transform,
             new Vector2(1f, 1f),
             new Vector2(1f, 1f),
             new Vector2(-300f, -340f),
@@ -1009,7 +1008,7 @@ internal static class ZoneBlueprintStoreNotificationsUi
 
             NotificationUiItem notification = Notifications[notificationIndex];
             RowTexts[i].text = notification.Message;
-            RowTexts[i].color = notification.Read ? GUIManager.Instance.ValheimBeige : GUIManager.Instance.ValheimYellow;
+            RowTexts[i].color = notification.Read ? HomesteadUi.Instance.ValheimBeige : HomesteadUi.Instance.ValheimYellow;
             if (i < RowButtons.Count)
             {
                 RowButtons[i].interactable = CanActivate(notification);

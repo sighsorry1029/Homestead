@@ -5,7 +5,6 @@ using System.Linq;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -143,15 +142,15 @@ internal static class ZoneBlueprintStoreOffersUi
             return;
         }
 
-        if (GUIManager.CustomGUIFront == null)
+        if (HomesteadUi.CustomGUIFront == null)
         {
             return;
         }
 
         Rows.Clear();
         RowWidgets.Clear();
-        GUIManager gui = GUIManager.Instance;
-        _panel = ZoneBlueprintStorePanelLayout.CreatePanel(gui, GUIManager.CustomGUIFront.transform, ZoneBlueprintStorePanelKind.Large, "HomesteadBlueprintStoreOffersPanel");
+        HomesteadUi gui = HomesteadUi.Instance;
+        _panel = ZoneBlueprintStorePanelLayout.CreatePanel(gui, HomesteadUi.CustomGUIFront.transform, ZoneBlueprintStorePanelKind.Large, "HomesteadBlueprintStoreOffersPanel");
 
         Transform panel = _panel.transform;
         _ = gui.CreateText(HomesteadLocalization.Text("hs_store_offers_title"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), gui.AveriaSerifBold, 21, gui.ValheimOrange, true, Color.black, 640f, 28f, false);

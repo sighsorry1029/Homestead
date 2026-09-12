@@ -230,7 +230,7 @@ internal static partial class ZoneDvergrCirclet
 
         try
         {
-            GameObject root = player.m_visEquipment.AttachItem(PrefabHash, 0, helmetTransform, false);
+            GameObject root = HomesteadGameAccess.AttachItem(player.m_visEquipment, PrefabHash, 0, helmetTransform, false, false, item.m_quality);
             if (!root)
             {
                 return false;

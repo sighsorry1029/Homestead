@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.2.15
+
+- Fixed dedicated-server interaction with blueprint plan and store chests when their network owner is the server, including InventorySlots setups with multi-user chest access disabled. Activity updates now use an authenticated, distance-checked RPC without transferring ZDO ownership.
+- Restored Blueprint Store panels closer to their former Jotunn-backed presentation with an independent canvas, native Valheim fonts, sprites, materials, borders, scaling, and draggable panel behavior.
+- Prevented mouse-wheel input over Blueprint Store panels from changing the player's camera zoom.
+- Made normal blueprint placement and Alt-click store-listing placement mutually exclusive, and prevented Hammer-menu clicks from placing the previously active blueprint or listing chest.
+- Removed the inherited workbench requirement when manually dismantling Homestead blueprint plan, price, purchase, and payout chests, matching their workbench-free placement behavior.
+
+## 1.2.14
+
+- Fixed blueprint plan chest placement from remote clients on dedicated servers by authenticating the creator through the requesting peer's current character ZDO instead of Valheim 1.0.7's unpopulated peer player-ID field. Host placement and the existing server-authoritative requester, distance, ownership, and platform-identity checks remain intact.
+
+## 1.2.13
+
+- Kept Homestead's five workflow tools and saved blueprints exclusively in the Homestead hammer tab instead of also showing them under Categories, Materials, Recent, or Favorites. The native repair action remains available in the Homestead tab.
+
+## 1.2.12
+
+- Added compatibility with Valheim 1.0.7, including its updated build menu, piece tables, inventory storage, terrain, equipment visuals, creator platform identities, and Harmony method signatures.
+- Removed the Jotunn dependency. Homestead now owns its focused prefab registration, hammer tab, localization, UI controls, and blueprint icon rendering while retaining existing configuration, save formats, prefab names, and RPC contracts.
+- Updated the bundled ServerSync implementation for Valheim 1.0.7 while preserving configuration identifiers, version checks, permissions, and connection message ordering.
+- Protected unloaded containers and item/armor stands from Area Dismantle under the new storage format; unknown or malformed stored contents are conservatively skipped to prevent item loss.
+- Kept the native repair action in the Homestead build tab, hid that tab for non-hammer tools, and retained Valheim's native mouse-wheel sprite in area-tool descriptions.
+
 ## 1.2.11
 
 - Improved Area Save and Area Dismantle descriptions with Valheim's mouse-wheel icon, balanced icon spacing, and yellow/red selection guidance. Descriptions now use the empty material and crafting-station space while retaining the existing font settings, and restore the normal layout for other pieces.

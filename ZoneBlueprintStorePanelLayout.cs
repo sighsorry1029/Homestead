@@ -1,4 +1,3 @@
-using Jotunn.Managers;
 using UnityEngine;
 
 namespace Homestead;
@@ -20,7 +19,7 @@ internal static class ZoneBlueprintStorePanelLayout
     private static Vector2 _pendingLargeOffset;
     private static Vector2 _pendingFormOffset;
 
-    public static GameObject CreatePanel(GUIManager gui, Transform parent, ZoneBlueprintStorePanelKind kind, string name)
+    public static GameObject CreatePanel(HomesteadUi gui, Transform parent, ZoneBlueprintStorePanelKind kind, string name)
     {
         Vector2 size = GetSize(kind);
         GameObject panel = gui.CreateWoodpanel(

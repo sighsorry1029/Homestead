@@ -4,7 +4,6 @@ using System.Globalization;
 using BepInEx.Configuration;
 using BepInEx.Bootstrap;
 using BepInEx.Logging;
-using Jotunn.Managers;
 using UnityEngine;
 
 namespace Homestead;
@@ -108,7 +107,7 @@ internal static partial class ZoneDvergrCirclet
         {
             state.LightOn = !state.LightOn;
             SaveState(dvergrItem, state);
-            player.GetInventory().Changed();
+            HomesteadGameAccess.InventoryChanged(player.GetInventory());
             EnsureLocalCircletVisual(player, dvergrItem, state);
             PublishLocalCircletState(player, dvergrItem, state);
             ShowStateHud(state);
@@ -121,7 +120,7 @@ internal static partial class ZoneDvergrCirclet
             TryAdjustHotkey(KeyCode.LeftArrow, state, intensityDelta: 0f, rangeDelta: -1f))
         {
             SaveState(dvergrItem, state);
-            player.GetInventory().Changed();
+            HomesteadGameAccess.InventoryChanged(player.GetInventory());
             EnsureLocalCircletVisual(player, dvergrItem, state);
             PublishLocalCircletState(player, dvergrItem, state);
             ShowStateHud(state);
@@ -469,8 +468,8 @@ internal static partial class ZoneDvergrCirclet
         [
             ZNetScene.instance?.GetPrefab(configured),
             ZNetScene.instance?.GetPrefab(Utils.GetPrefabName(configured)),
-            PrefabManager.Instance.GetPrefab(configured),
-            PrefabManager.Instance.GetPrefab(Utils.GetPrefabName(configured))
+            HomesteadPrefabs.Instance.GetPrefab(configured),
+            HomesteadPrefabs.Instance.GetPrefab(Utils.GetPrefabName(configured))
         ];
         foreach (GameObject? candidate in candidates)
         {

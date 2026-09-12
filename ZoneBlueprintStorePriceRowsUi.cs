@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -23,13 +22,13 @@ internal static class ZoneBlueprintStorePriceRowsUi
 {
     private const int SlotCount = ZoneBlueprintStoreChest.MaxPriceItemTypes;
 
-    public static void CreateColumnHeaders(GUIManager gui, Transform panel)
+    public static void CreateColumnHeaders(HomesteadUi gui, Transform panel)
     {
         _ = gui.CreateText(HomesteadLocalization.Text("hs_store_item_prefab_or_name"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(-126f, -88f), gui.AveriaSerifBold, 13, gui.ValheimOrange, true, Color.black, 300f, 20f, false);
         _ = gui.CreateText(HomesteadLocalization.Text("hs_store_amount"), panel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(160f, -88f), gui.AveriaSerifBold, 13, gui.ValheimOrange, true, Color.black, 120f, 20f, false);
     }
 
-    public static List<ZoneBlueprintStorePriceRow> CreateRows(GUIManager gui, Transform panel)
+    public static List<ZoneBlueprintStorePriceRow> CreateRows(HomesteadUi gui, Transform panel)
     {
         List<ZoneBlueprintStorePriceRow> rows = [];
         for (int i = 0; i < SlotCount; i++)

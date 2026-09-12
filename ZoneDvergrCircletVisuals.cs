@@ -181,7 +181,7 @@ internal static partial class ZoneDvergrCirclet
             {
                 try
                 {
-                    _customRoot = visEquipment.AttachItem(PrefabHash, 0, visEquipment.m_helmet, false);
+                    _customRoot = HomesteadGameAccess.AttachItem(visEquipment, PrefabHash, 0, visEquipment.m_helmet, false, false, 0);
                     if (_customRoot)
                     {
                         _customRoot.name = "HomesteadDvergrCircletRemoteVisual";

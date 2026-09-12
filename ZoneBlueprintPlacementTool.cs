@@ -34,6 +34,7 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
 
     public static void Activate(Player player, string blueprintName)
     {
+        ZoneBlueprintStorePreviewTool.DeactivateActive();
         EnsureInstance();
         _instance?.ActivateInternal(player, blueprintName);
     }
@@ -125,6 +126,7 @@ internal sealed class ZoneBlueprintPlacementTool : MonoBehaviour
 
         if (ShouldBlockInput())
         {
+            _suppressInputFrames = Math.Max(_suppressInputFrames, 2);
             UpdateAnchor(player, aimPoint, targetPiece, rawHitPoint);
             UpdatePreviewTransform();
             UpdateStatusHud();

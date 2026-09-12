@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -32,7 +31,7 @@ internal static class ZoneBlueprintStorePriceIconStrip
     }
 
     public static void CreateSlots(
-        GUIManager gui,
+        HomesteadUi gui,
         Transform parent,
         int slotCount,
         Vector2 start,

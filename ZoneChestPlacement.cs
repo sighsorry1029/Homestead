@@ -1,6 +1,5 @@
 using System;
 using BepInEx.Logging;
-using Jotunn.Managers;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -39,13 +38,13 @@ internal static class ZoneChestPlacement
             return null;
         }
 
-        GameObject? cached = PrefabManager.Instance.GetPrefab(prefabName);
+        GameObject? cached = HomesteadPrefabs.Instance.GetPrefab(prefabName);
         if (!IsExpectedNetworkChestPrefab(cached, prefabName))
         {
             return null;
         }
 
-        PrefabManager.Instance.RegisterToZNetScene(cached);
+        HomesteadPrefabs.Instance.RegisterToZNetScene(cached!);
         registered = scene.GetPrefab(prefabHash);
         return IsExpectedNetworkChestPrefab(registered, prefabName) ? registered : null;
     }

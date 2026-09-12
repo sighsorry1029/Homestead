@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Jotunn.Managers;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -351,7 +350,7 @@ internal static class ZoneMaterialEscrow
         }
 
         int index = 0;
-        foreach (InventoryGrid.Element element in grid.m_elements)
+        foreach (InventoryElement element in HomesteadGameAccess.InventoryElements(grid))
         {
             if (index >= missing.Count)
             {
@@ -398,7 +397,7 @@ internal static class ZoneMaterialEscrow
 
         return ObjectDB.instance?.GetItemPrefab(prefabName) ??
                ZNetScene.instance?.GetPrefab(prefabName) ??
-               PrefabManager.Instance.GetPrefab(prefabName);
+               HomesteadPrefabs.Instance.GetPrefab(prefabName);
     }
 
     public static int TakeAllowedAmount(Inventory sourceInventory, ItemDrop.ItemData item, int requestedAmount, int remaining)

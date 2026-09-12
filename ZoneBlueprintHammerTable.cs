@@ -1,13 +1,114 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using HarmonyLib;
+using TMPro;
 using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
 
 namespace Homestead;
 
 internal static class ZoneBlueprintHammerTable
 {
     private static readonly List<PieceTable> TempPieceTables = [];
+
+    internal static Piece.PieceCategory AllocateCategory()
+    {
+        int next = (int)Piece.PieceCategory.Max + 1;
+        // One discovery at registration, not a per-frame Resources scan.
+        foreach (PieceTable table in Resources.FindObjectsOfTypeAll<PieceTable>())
+        {
+            foreach (Piece.PieceCategory category in table.m_categories) next = Math.Max(next, (int)category + 1);
+            foreach (GameObject go in table.m_pieces)
+                if (go && go.TryGetComponent<Piece>(out var piece)) next = Math.Max(next, (int)piece.m_category + 1);
+        }
+        if (next > 512) throw new InvalidOperationException("Unexpected build category range.");
+        return (Piece.PieceCategory)next;
+    }
+
+    private sealed class HomesteadPieceList : IPieceList
+    {
+        public string DisplayName => "Homestead";
+        // BuildUi also uses this flag to retain its special repair button.
+        public bool ShowTags => true;
+        public bool CanCustomizeTags => false;
+        public int TagCount => 0;
+        public int TagSeparatorIndex => -1;
+        public string GetTagDisplayName(int index) => "";
+        public int GetTagIdByIndex(int index) => -1;
+        public void UpdateAvailableTags(PieceTable pieceTable) { }
+        public void GetAvailablePiecesWithTag(int tagId, PieceTable table, IList<Piece> result)
+        {
+            // m_pieces already carries Homestead's stable menu order.
+            foreach (GameObject go in table.m_pieces)
+                if (go && go.TryGetComponent<Piece>(out var piece) && table.m_availablePieces.Contains(piece) &&
+                    (piece.GetComponent<ZoneBlueprintSaveToolMarker>() || piece.m_repairPiece)) result.Add(piece);
+        }
+    }
+
+    [HarmonyPatch]
+    private static class NativePieceListFilterPatch
+    {
+        private static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(ByUsagePieceList), nameof(ByUsagePieceList.GetAvailablePiecesWithTag));
+            yield return AccessTools.Method(typeof(ByMaterialPieceList), nameof(ByMaterialPieceList.GetAvailablePiecesWithTag));
+            yield return AccessTools.Method(typeof(RecentPieceList), nameof(RecentPieceList.GetAvailablePiecesWithTag));
+            yield return AccessTools.Method(typeof(FavoritePieceList), nameof(FavoritePieceList.GetAvailablePiecesWithTag));
+        }
+
+        private static void Postfix(IList<Piece> resultOut)
+        {
+            for (int i = resultOut.Count - 1; i >= 0; i--)
+            {
+                ZoneBlueprintSaveToolMarker? marker = resultOut[i]
+                    ? resultOut[i].GetComponent<ZoneBlueprintSaveToolMarker>()
+                    : null;
+                if (marker != null)
+                {
+                    resultOut.RemoveAt(i);
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(BuildUi))]
+    private static class BuildUiPatch
+    {
+        private static readonly AccessTools.FieldRef<BuildUi, List<IPieceList>> Lists = AccessTools.FieldRefAccess<BuildUi, List<IPieceList>>("m_pieceLists");
+        private static readonly AccessTools.FieldRef<BuildUi, List<Button>> Buttons = AccessTools.FieldRefAccess<BuildUi, List<Button>>("m_tabButtons");
+        private static readonly AccessTools.FieldRef<BuildUi, TabHandler> Tabs = AccessTools.FieldRefAccess<BuildUi, TabHandler>("m_tabHandler");
+        [HarmonyPostfix, HarmonyPatch("Awake")]
+        [HarmonyPriority(Priority.Last)]
+        private static void Postfix(BuildUi __instance)
+        {
+            List<IPieceList> lists = Lists(__instance);
+            if (lists.Any(list => list is HomesteadPieceList)) return;
+            List<Button> buttons = Buttons(__instance);
+            if (buttons.Count == 0) return;
+            int index = lists.Count;
+            Button button = UnityEngine.Object.Instantiate(buttons[0], buttons[0].transform.parent);
+            button.name = "HomesteadTab";
+            button.onClick = new Button.ButtonClickedEvent();
+            foreach (TMP_Text text in button.GetComponentsInChildren<TMP_Text>(true)) text.text = "Homestead";
+            button.onClick.AddListener(() => __instance.SelectPieceList(index));
+            lists.Add(new HomesteadPieceList());
+            buttons.Add(button);
+            UnityEvent select = new();
+            select.AddListener(() => __instance.SelectPieceList(index));
+            Tabs(__instance).m_tabs.Add(new TabHandler.Tab { m_button = button, m_onClick = select });
+        }
+
+        [HarmonyPostfix, HarmonyPatch(nameof(BuildUi.OpenBuildMenu))]
+        private static void AfterOpen(BuildUi __instance)
+        {
+            PieceTable? table = Player.m_localPlayer?.GetBuildTool();
+            foreach (Button button in Buttons(__instance))
+                if (button && button.name == "HomesteadTab") button.gameObject.SetActive(table && LooksLike(table));
+        }
+    }
 
     public static bool LooksLike(PieceTable table)
     {
@@ -54,7 +155,9 @@ internal static class ZoneBlueprintHammerTable
         }
 
         table.m_pieces.RemoveAll(pieceObject => ShouldRemovePieceObject(pieceObject, removeBlueprintPieces));
-        foreach (List<Piece> availablePieces in table.m_availablePieces)
+        table.m_availablePieces.RemoveWhere(piece => ShouldRemoveAvailablePiece(piece, removeBlueprintPieces));
+        table.m_enabledPieces.RemoveWhere(piece => ShouldRemoveAvailablePiece(piece, removeBlueprintPieces));
+        foreach (List<Piece> availablePieces in HomesteadGameAccess.AvailableByCategory(table))
         {
             availablePieces.RemoveAll(piece => ShouldRemoveAvailablePiece(piece, removeBlueprintPieces));
         }
@@ -119,9 +222,9 @@ internal static class ZoneBlueprintHammerTable
             requiredSlots = Mathf.Max(requiredSlots, (int)category + 1);
         }
 
-        while (table.m_availablePieces.Count < requiredSlots)
+        while (HomesteadGameAccess.AvailableByCategory(table).Count < requiredSlots)
         {
-            table.m_availablePieces.Add([]);
+            HomesteadGameAccess.AvailableByCategory(table).Add([]);
         }
 
         if (table.m_selectedPiece.Length < requiredSlots)
@@ -153,13 +256,15 @@ internal static class ZoneBlueprintHammerTable
         }
 
         EnsureAvailableCategorySlots(table);
+        table.m_enabledPieces.Add(piece);
+        table.m_availablePieces.Add(piece);
         int availableIndex = (int)piece.m_category;
-        if (availableIndex < 0 || availableIndex >= table.m_availablePieces.Count)
+        if (availableIndex < 0 || availableIndex >= HomesteadGameAccess.AvailableByCategory(table).Count)
         {
             return;
         }
 
-        List<Piece> availablePieces = table.m_availablePieces[availableIndex];
+        List<Piece> availablePieces = HomesteadGameAccess.AvailableByCategory(table)[availableIndex];
         if (!availablePieces.Contains(piece))
         {
             availablePieces.Add(piece);

@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using BepInEx.Logging;
 using HarmonyLib;
-using Jotunn.Managers;
 using UnityEngine;
 using Object = UnityEngine.Object;
 using Random = UnityEngine.Random;
@@ -93,6 +92,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         ActiveAnchors.Add(this);
         _nview = GetComponent<ZNetView>();
         _container = GetComponent<Container>();
+        ZoneBlueprintChestLifecycle.RegisterTouchRpc(_nview, _container);
         _wearNTear = GetComponent<WearNTear>();
         if (_wearNTear != null)
         {
@@ -829,7 +829,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return null;
         }
 
-        return ZNetScene.instance?.GetPrefab(prefabName) ?? PrefabManager.Instance.GetPrefab(prefabName) ?? ObjectDB.instance?.GetItemPrefab(prefabName);
+        return ZNetScene.instance?.GetPrefab(prefabName) ?? HomesteadPrefabs.Instance.GetPrefab(prefabName) ?? ObjectDB.instance?.GetItemPrefab(prefabName);
     }
 
     private void ApplyPendingMaterial(GameObject root)
@@ -1371,7 +1371,7 @@ internal static class ZoneBlueprintPlanChestPrefab
         }
 
         _initialized = true;
-        PrefabManager.OnPrefabsRegistered += RegisterPrefab;
+        HomesteadPrefabs.OnPrefabsRegistered += RegisterPrefab;
     }
 
     public static HomesteadCommandResult PlacePlanChest(string blueprintName, Player player, Vector3 anchor, Quaternion anchorRotation, Vector3 chestPosition, Quaternion chestRotation)
@@ -1404,6 +1404,7 @@ internal static class ZoneBlueprintPlanChestPrefab
         GameObject? chest = null;
         try
         {
+            var creatorPlatform = HomesteadPlayerIdentity.ResolveCreatorPlatformId(playerId, vfxExcludePeer);
             chest = Object.Instantiate(prefab, chestPosition, chestRotation);
             ZDO zdo = ZoneChestPlacement.RequireValidNetworkedSpawn(
                 chest,
@@ -1412,7 +1413,7 @@ internal static class ZoneBlueprintPlanChestPrefab
             Piece piece = chest.GetComponent<Piece>();
             if (piece != null)
             {
-                piece.SetCreator(playerId);
+                piece.SetCreator(playerId, creatorPlatform);
             }
 
             ZoneBlueprintChestLifecycle.SetOwnerPlatformId(zdo, ownerPlatformId);
@@ -1478,7 +1479,7 @@ internal static class ZoneBlueprintPlanChestPrefab
             return;
         }
 
-        if (PrefabManager.Instance.GetPrefab(PrefabName))
+        if (HomesteadPrefabs.Instance.GetPrefab(PrefabName))
         {
             return;
         }
@@ -1489,15 +1490,15 @@ internal static class ZoneBlueprintPlanChestPrefab
             return;
         }
 
-        GameObject prefab = PrefabManager.Instance.CreateClonedPrefab(PrefabName, basePrefab);
+        GameObject prefab = HomesteadPrefabs.Instance.CreateClonedPrefab(PrefabName, basePrefab);
         if (!prefab)
         {
             return;
         }
 
         ConfigurePrefab(prefab);
-        PrefabManager.Instance.AddPrefab(prefab);
-        PrefabManager.Instance.RegisterToZNetScene(prefab);
+        HomesteadPrefabs.Instance.AddPrefab(prefab);
+        HomesteadPrefabs.Instance.RegisterToZNetScene(prefab);
         _logger?.LogInfo("Registered Homestead blueprint chest prefab.");
     }
 
@@ -1520,6 +1521,7 @@ internal static class ZoneBlueprintPlanChestPrefab
             piece.m_name = HomesteadLocalization.Token("hs_blueprint_chest_name");
             piece.m_description = HomesteadLocalization.Token("hs_blueprint_chest_desc");
             piece.m_resources = Array.Empty<Piece.Requirement>();
+            piece.m_craftingStation = null;
         }
 
         if (prefab.GetComponent<ZoneBlueprintPlanAnchor>() == null)

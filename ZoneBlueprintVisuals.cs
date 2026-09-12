@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using Jotunn.Managers;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -183,16 +182,15 @@ internal static class ZoneBlueprintVisuals
 
         try
         {
-            RenderManager.RenderRequest request = new(root)
+            HomesteadIconRenderer.RenderRequest request = new(root)
             {
                 Width = 256,
                 Height = 256,
-                Rotation = RenderManager.IsometricRotation,
-                ParticleSimulationTime = -1f
+                Rotation = HomesteadIconRenderer.IsometricRotation,
             };
 
 #pragma warning disable CS0618
-            bool queued = RenderManager.Instance.EnqueueRender(request, Finish);
+            bool queued = HomesteadIconRenderer.Instance.EnqueueRender(request, Finish);
 #pragma warning restore CS0618
             if (!queued && !finished)
             {
@@ -321,14 +319,13 @@ internal static class ZoneBlueprintVisuals
                 return null;
             }
 
-            RenderManager.RenderRequest request = new(root)
+            HomesteadIconRenderer.RenderRequest request = new(root)
             {
                 Width = 256,
                 Height = 256,
-                Rotation = RenderManager.IsometricRotation,
-                ParticleSimulationTime = -1f
+                Rotation = HomesteadIconRenderer.IsometricRotation,
             };
-            return RenderManager.Instance.Render(request);
+            return HomesteadIconRenderer.Instance.Render(request);
         }
         finally
         {
@@ -447,7 +444,7 @@ internal static class ZoneBlueprintVisuals
             return entries;
         }
 
-        Quaternion inverseIconRotation = Quaternion.Inverse(RenderManager.IsometricRotation);
+        Quaternion inverseIconRotation = Quaternion.Inverse(HomesteadIconRenderer.IsometricRotation);
         Vector3 viewToCamera = (inverseIconRotation * Vector3.forward).normalized;
         Vector3 screenRight = (inverseIconRotation * Vector3.left).normalized;
         Vector3 screenUp = (inverseIconRotation * Vector3.up).normalized;

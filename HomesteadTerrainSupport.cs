@@ -55,13 +55,13 @@ internal static class HomesteadTerrainSupport
         }
 
         Dictionary<long, float> supportHeights = supportCells.ToDictionary(cell => PackCell(cell.X, cell.Z), cell => cell.Height);
-        List<Vector2i> zones = supportCells
+        List<Vector2s> zones = supportCells
             .Select(cell => ZoneSystem.GetZone(new Vector3(cell.X, 0f, cell.Z)))
             .Distinct()
             .ToList();
 
         List<TerrainSupportTarget> targets = [];
-        foreach (Vector2i zone in zones)
+        foreach (Vector2s zone in zones)
         {
             if (!canContinue())
             {
@@ -311,7 +311,7 @@ internal static class HomesteadTerrainSupport
     }
 
     private static bool TryPrepareTerrainTarget(
-        Vector2i zone,
+        Vector2s zone,
         out TerrainSupportTarget target,
         out string reason,
         out bool cleanupFailed)
@@ -915,8 +915,8 @@ internal static class HomesteadTerrainSupport
         compiler.m_operations++;
         compiler.m_lastOpPoint = operationPoint;
         compiler.m_lastOpRadius = operationRadius;
-        compiler.Save();
-        compiler.m_hmap.Poke(delayed: false);
+        HomesteadGameAccess.PersistTerrain(compiler);
+        compiler.m_hmap.Poke(delayed: 0, paintOnly: false);
     }
 
     private static float GetHeightmapResetRadius(Heightmap heightmap)
@@ -1026,7 +1026,7 @@ internal static class HomesteadTerrainSupport
         return false;
     }
 
-    private static bool TryGetHeightmap(Vector2i zone, out Heightmap heightmap)
+    private static bool TryGetHeightmap(Vector2s zone, out Heightmap heightmap)
     {
         heightmap = null!;
         if (ZoneSystem.instance == null || !ZoneSystem.instance.IsZoneLoaded(zone))
@@ -1375,8 +1375,8 @@ internal static class HomesteadTerrainSupport
                 _compiler.m_lastOpPoint = _lastOpPoint;
                 _compiler.m_lastOpRadius = _lastOpRadius;
                 zdo.Set(SupportFillBaseLayerHash, _supportPayload.ToArray());
-                _compiler.Save();
-                _compiler.m_hmap.Poke(delayed: false);
+                HomesteadGameAccess.PersistTerrain(_compiler);
+                _compiler.m_hmap.Poke(delayed: 0, paintOnly: false);
                 ClutterSystem.instance?.ResetGrass(
                     _compiler.m_hmap.transform.position,
                     GetHeightmapResetRadius(_compiler.m_hmap));

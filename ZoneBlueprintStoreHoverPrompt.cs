@@ -1,4 +1,3 @@
-using Jotunn.Managers;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -46,14 +45,14 @@ internal static class ZoneBlueprintStoreHoverPrompt
             return;
         }
 
-        if (GUIManager.CustomGUIFront == null)
+        if (HomesteadUi.CustomGUIFront == null)
         {
             return;
         }
 
-        GUIManager gui = GUIManager.Instance;
+        HomesteadUi gui = HomesteadUi.Instance;
         _root = new GameObject("HomesteadBlueprintStoreHoverPrompt", typeof(RectTransform));
-        _root.transform.SetParent(GUIManager.CustomGUIFront.transform, false);
+        _root.transform.SetParent(HomesteadUi.CustomGUIFront.transform, false);
         RectTransform rect = (RectTransform)_root.transform;
         rect.anchorMin = new Vector2(0f, 0f);
         rect.anchorMax = new Vector2(0f, 0f);
