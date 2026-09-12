@@ -524,59 +524,79 @@ internal static class ZoneBuildCamera
     private static void ShowDistanceHud(Player player, GameCamera camera)
     {
         float currentDistance = Vector3.Distance(camera.transform.position, player.transform.position);
-        float maxDistance = GetMaxDistanceFromAvatar(player);
-        float maxPlaceDistance = GetMaxPlaceDistance(player);
-        float resourcePickupRange = GetResourcePickupRange(player);
+        int comfort = GetDistanceComfortLevel(player);
+        string comfortLabel = GetComfortLabel();
+        float maxDistance = GetComfortScaledValue(
+            BuildCameraConfig.BaseDistanceFromAvatar,
+            BuildCameraConfig.DistancePerComfortLevel,
+            comfort);
+        float maxPlaceDistance = GetComfortScaledValue(
+            BuildCameraConfig.MaxPlaceDistance,
+            BuildCameraConfig.MaxPlaceDistancePerComfortLevel,
+            comfort);
+        float resourcePickupRange = GetComfortScaledValue(
+            BuildCameraConfig.ResourcePickupRange,
+            BuildCameraConfig.ResourcePickupRangePerComfortLevel,
+            comfort);
         ZoneAreaToolStatusHud.ShowBuildCameraDistance(
             currentDistance,
             maxDistance,
-            GetDistanceDetail(player),
+            FormatComfortScaledDetail(
+                BuildCameraConfig.BaseDistanceFromAvatar,
+                BuildCameraConfig.DistancePerComfortLevel,
+                comfort,
+                comfortLabel),
             maxPlaceDistance,
-            GetMaxPlaceDistanceDetail(player),
+            FormatComfortScaledDetail(
+                BuildCameraConfig.MaxPlaceDistance,
+                BuildCameraConfig.MaxPlaceDistancePerComfortLevel,
+                comfort,
+                comfortLabel),
             resourcePickupRange,
-            GetResourcePickupRangeDetail(player));
+            FormatComfortScaledDetail(
+                BuildCameraConfig.ResourcePickupRange,
+                BuildCameraConfig.ResourcePickupRangePerComfortLevel,
+                comfort,
+                comfortLabel));
     }
 
     private static float GetMaxDistanceFromAvatar(Player player)
     {
-        int comfort = GetDistanceComfortLevel(player);
-        return BuildCameraConfig.BaseDistanceFromAvatar +
-               comfort * BuildCameraConfig.DistancePerComfortLevel;
-    }
-
-    private static string GetDistanceDetail(Player player)
-    {
-        int comfort = GetDistanceComfortLevel(player);
-        return $"{FormatDistanceNumber(BuildCameraConfig.BaseDistanceFromAvatar)}+" +
-               $"{FormatDistanceNumber(BuildCameraConfig.DistancePerComfortLevel)}*{comfort}({GetComfortLabel()})";
+        return GetComfortScaledValue(
+            BuildCameraConfig.BaseDistanceFromAvatar,
+            BuildCameraConfig.DistancePerComfortLevel,
+            GetDistanceComfortLevel(player));
     }
 
     private static float GetMaxPlaceDistance(Player player)
     {
-        int comfort = GetDistanceComfortLevel(player);
-        return BuildCameraConfig.MaxPlaceDistance +
-               comfort * BuildCameraConfig.MaxPlaceDistancePerComfortLevel;
-    }
-
-    private static string GetMaxPlaceDistanceDetail(Player player)
-    {
-        int comfort = GetDistanceComfortLevel(player);
-        return $"{FormatDistanceNumber(BuildCameraConfig.MaxPlaceDistance)}+" +
-               $"{FormatDistanceNumber(BuildCameraConfig.MaxPlaceDistancePerComfortLevel)}*{comfort}({GetComfortLabel()})";
+        return GetComfortScaledValue(
+            BuildCameraConfig.MaxPlaceDistance,
+            BuildCameraConfig.MaxPlaceDistancePerComfortLevel,
+            GetDistanceComfortLevel(player));
     }
 
     private static float GetResourcePickupRange(Player player)
     {
-        int comfort = GetDistanceComfortLevel(player);
-        return BuildCameraConfig.ResourcePickupRange +
-               comfort * BuildCameraConfig.ResourcePickupRangePerComfortLevel;
+        return GetComfortScaledValue(
+            BuildCameraConfig.ResourcePickupRange,
+            BuildCameraConfig.ResourcePickupRangePerComfortLevel,
+            GetDistanceComfortLevel(player));
     }
 
-    private static string GetResourcePickupRangeDetail(Player player)
+    private static float GetComfortScaledValue(float baseValue, float perComfortLevel, int comfort)
     {
-        int comfort = GetDistanceComfortLevel(player);
-        return $"{FormatDistanceNumber(BuildCameraConfig.ResourcePickupRange)}+" +
-               $"{FormatDistanceNumber(BuildCameraConfig.ResourcePickupRangePerComfortLevel)}*{comfort}({GetComfortLabel()})";
+        return baseValue + comfort * perComfortLevel;
+    }
+
+    private static string FormatComfortScaledDetail(
+        float baseValue,
+        float perComfortLevel,
+        int comfort,
+        string comfortLabel)
+    {
+        return $"{FormatDistanceNumber(baseValue)}+" +
+               $"{FormatDistanceNumber(perComfortLevel)}*{comfort}({comfortLabel})";
     }
 
     private static int GetDistanceComfortLevel(Player player)
