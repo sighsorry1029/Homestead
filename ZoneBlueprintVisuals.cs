@@ -75,6 +75,7 @@ internal static class ZoneBlueprintVisuals
             return "";
         }
 
+        Texture2D? texture = null;
         try
         {
             int maxIconBytes = BlueprintConfig.NetworkSettings.MaxIconBytes;
@@ -83,11 +84,25 @@ internal static class ZoneBlueprintVisuals
                 return "";
             }
 
-            return Convert.ToBase64String(File.ReadAllBytes(path));
+            // Validate the bytes being sent, independently of cached/null sprites
+            // and a pending disk watcher notification or replacement render.
+            byte[] png = File.ReadAllBytes(path);
+            if (png.Length > maxIconBytes) return "";
+            texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            if (!TryLoadImage(texture, png))
+            {
+                return "";
+            }
+
+            return Convert.ToBase64String(png);
         }
         catch
         {
             return "";
+        }
+        finally
+        {
+            if (texture != null) Object.Destroy(texture);
         }
     }
 
@@ -426,7 +441,19 @@ internal static class ZoneBlueprintVisuals
 
     private static bool TryLoadImage(Texture2D texture, byte[] data)
     {
-        return LoadImageMethod?.Invoke(null, new object[] { texture, data }) is true;
+        return LoadImageMethod?.Invoke(null, new object[] { texture, data }) is true && HasVisiblePixels(texture);
+    }
+
+    internal static bool HasVisiblePixels(Texture2D texture)
+    {
+        // Reject wholly invisible captures, including the orthographic shader
+        // regression. Existing valid/custom icons keep their original pixels.
+        foreach (Color32 pixel in texture.GetPixels32())
+        {
+            if (pixel.a != 0) return true;
+        }
+
+        return false;
     }
 
     private static byte[]? EncodeToPng(Texture2D texture)

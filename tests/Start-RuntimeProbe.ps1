@@ -1,8 +1,10 @@
 param(
     [ValidateSet('client', 'server')][string]$Role = 'server',
+    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug',
     [string]$ClientInstall = 'C:/Program Files (x86)/Steam/steamapps/common/Valheim',
     [string]$ServerInstall = 'D:/SteamLibrary/steamapps/common/Valheim dedicated server',
     [switch]$UiOnly,
+    [switch]$IconOnly,
     [int]$Width = 1280,
     [int]$Height = 720
 )
@@ -22,11 +24,12 @@ foreach ($directory in @($data, 'MonoBleedingEdge')) {
 Get-ChildItem -LiteralPath $install -File | Where-Object { $_.Extension -in '.dll', '.exe' -or $_.Name -eq 'steam_appid.txt' } | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $root -Force }
 Copy-Item -LiteralPath "$ClientInstall/winhttp.dll", "$ClientInstall/doorstop_config.ini" -Destination $root -Force
 Get-ChildItem -LiteralPath "$ClientInstall/BepInEx/core" -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination "$root/BepInEx/core" -Force }
-Copy-Item -LiteralPath "$project/bin/Debug/Homestead.dll", "$PSScriptRoot/RuntimeProbe/bin/Debug/net48/RuntimeProbe.dll" -Destination "$root/BepInEx/plugins" -Force
+Copy-Item -LiteralPath "$project/bin/$Configuration/Homestead.dll", "$PSScriptRoot/RuntimeProbe/bin/Debug/net48/RuntimeProbe.dll" -Destination "$root/BepInEx/plugins" -Force
 Copy-Item -LiteralPath "$project/samples/sample_001.blueprint" -Destination "$root/probe.blueprint" -Force
 Set-Content -LiteralPath "$root/homestead-probe.enabled" -Value 'Isolated test only'
 $arguments = @('-batchmode', '-savedir', "`"$root/saves`"", '-logFile', "`"$root/unity.log`"")
 if ($UiOnly) { $arguments += '-homestead-ui-probe' }
+if ($IconOnly) { $arguments += '-homestead-icon-probe' }
 if ($Role -eq 'server') {
     $arguments += @('-nographics', '-name', 'HomesteadCompatibility', '-port', '2499', '-world', 'HomesteadCompatibility', '-password', 'codex-test-only', '-public', '0')
 } else {

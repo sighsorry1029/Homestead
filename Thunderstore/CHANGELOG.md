@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.16
+
+- Fixed newly saved blueprint snapshots becoming fully transparent after the Jotunn removal by restoring the shader-compatible narrow-perspective capture used by the former renderer while retaining the existing framing and transparent background.
+- Detects and regenerates existing fully transparent blueprint snapshots when they are next loaded, preserves valid or custom icons, and prevents invalid snapshots from being attached to new Blueprint Store listings.
+
 ## 1.2.15
 
 - Fixed dedicated-server interaction with blueprint plan and store chests when their network owner is the server, including InventorySlots setups with multi-user chest access disabled. Activity updates now use an authenticated, distance-checked RPC without transferring ZDO ownership.

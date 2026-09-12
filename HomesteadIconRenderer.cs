@@ -83,7 +83,9 @@ internal sealed class HomesteadIconRenderer
             rig = new GameObject("HomesteadIconCamera", typeof(Camera));
             Camera camera = rig.GetComponent<Camera>();
             camera.enabled = false;
-            camera.orthographic = true;
+            // Valheim's piece shaders lose their alpha with an orthographic camera.
+            // Match the former Jotunn capture with a narrow perspective instead.
+            camera.fieldOfView = 0.5f;
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = Color.clear;
             camera.cullingMask = 1 << 30;
@@ -98,11 +100,12 @@ internal sealed class HomesteadIconRenderer
                 halfHeight = Mathf.Max(halfHeight, Mathf.Abs(corner.y));
             }
             camera.aspect = (float)request.Width / request.Height;
-            camera.orthographicSize = Mathf.Max(0.1f, Mathf.Max(halfHeight, halfWidth / camera.aspect) * 1.08f);
+            float halfSize = Mathf.Max(0.1f, Mathf.Max(halfHeight, halfWidth / camera.aspect) * 1.08f);
             float radius = Mathf.Max(1f, extents.magnitude);
-            camera.transform.position = bounds.center - camera.transform.forward * (radius * 2f + 1f);
-            camera.nearClipPlane = 0.1f;
-            camera.farClipPlane = radius * 4f + 2f;
+            float distance = halfSize / Mathf.Tan(camera.fieldOfView * Mathf.Deg2Rad * 0.5f) + radius;
+            camera.transform.position = bounds.center - camera.transform.forward * distance;
+            camera.nearClipPlane = Mathf.Max(0.1f, distance - radius - 1f);
+            camera.farClipPlane = distance + radius + 1f;
             Light light = rig.AddComponent<Light>();
             light.type = LightType.Directional;
             light.cullingMask = 1 << 30;
@@ -118,6 +121,7 @@ internal sealed class HomesteadIconRenderer
             texture = new Texture2D(request.Width, request.Height, TextureFormat.RGBA32, false);
             texture.ReadPixels(new Rect(0, 0, request.Width, request.Height), 0, 0);
             texture.Apply();
+            if (!ZoneBlueprintVisuals.HasVisiblePixels(texture)) return null;
             Sprite sprite = Sprite.Create(texture, new Rect(0, 0, request.Width, request.Height), new Vector2(0.5f, 0.5f));
             texture = null; // sprite/cache owns the texture from here
             return sprite;
@@ -128,7 +132,7 @@ internal sealed class HomesteadIconRenderer
             RenderSettings.fog = fog;
             RenderSettings.ambientLight = ambient;
             RenderSettings.ambientMode = ambientMode;
-            if (rig) { rig.SetActive(false); Object.Destroy(rig); }
+            if (rig) { rig.GetComponent<Camera>().targetTexture = null; rig.SetActive(false); Object.Destroy(rig); }
             if (target) RenderTexture.ReleaseTemporary(target);
             if (texture) Object.Destroy(texture);
             if (root)

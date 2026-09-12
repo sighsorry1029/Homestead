@@ -36,18 +36,26 @@ public sealed class Probe : BaseUnityPlugin
         mod = AppDomain.CurrentDomain.GetAssemblies().Single(a => a.GetName().Name == "Homestead");
         bool headless = SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null;
         bool uiOnly = Environment.GetCommandLineArgs().Contains("-homestead-ui-probe");
+        bool iconOnly = Environment.GetCommandLineArgs().Contains("-homestead-icon-probe");
         if (!headless)
         {
             yield return new WaitForSeconds(6f);
+            FejdStartup startup = FindFirstObjectByType<FejdStartup>();
+            float startupDeadline = Time.realtimeSinceStartup + 30f;
+            while (!startup && Time.realtimeSinceStartup < startupDeadline)
+            {
+                yield return null;
+                startup = FindFirstObjectByType<FejdStartup>();
+            }
             try
             {
+                Check(startup, "main-menu startup object available");
                 PlayerProfile profile = new PlayerProfile("homestead_probe", FileHelpers.FileSource.Local);
                 profile.SetName("Homestead Probe");
                 profile.Save();
                 Game.SetProfile("homestead_probe", FileHelpers.FileSource.Local);
                 World world = World.GetCreateWorld("HomesteadProbe", FileHelpers.FileSource.Local);
                 ZNet.SetServer(true, false, false, "HomesteadProbe", "", world);
-                FejdStartup startup = FindFirstObjectByType<FejdStartup>();
                 AccessTools.Method(typeof(FejdStartup), "LoadMainScene").Invoke(startup, null);
             }
             catch (Exception ex) { Fail(ex); yield break; }
@@ -62,6 +70,22 @@ public sealed class Probe : BaseUnityPlugin
             if (valkyrie && Player.m_localPlayer.InIntro()) valkyrie.DropPlayer();
             while (Player.m_localPlayer.InCutscene() && Time.realtimeSinceStartup < deadline) yield return null;
             yield return new WaitForSeconds(1f);
+        }
+        if (iconOnly)
+        {
+            try
+            {
+                Check(!headless && ZNetScene.instance, "graphical world loaded for icon probe");
+                CheckIconFixtures();
+                BeginIconCacheRecovery();
+            }
+            catch (Exception ex) { Fail(ex); yield break; }
+            yield return new WaitForSeconds(8f);
+            try { CheckIconCacheRecovery(); }
+            catch (Exception ex) { Fail(ex); yield break; }
+            File.AppendAllText(report, "COMPLETE\n");
+            Application.Quit();
+            yield break;
         }
         try
         {
@@ -243,11 +267,88 @@ public sealed class Probe : BaseUnityPlugin
         Sprite sprite = (Sprite)Call("ZoneBlueprintVisuals", "RenderAndCacheIcon", "probe", blueprint);
         Check(sprite && sprite.texture.width == 256, "native icon rendered");
         File.WriteAllBytes(Path.Combine(Paths.GameRootPath, "probe-icon.png"), sprite.texture.EncodeToPNG());
+        CheckIconPixels(sprite.texture, "sample icon");
         CheckBlueprintPlacementModesAreExclusive(blueprint);
         Check((bool)Call("ZoneBlueprintStoreUi", "Open"), "store panel created");
         Call("ZoneBlueprintStoreUi", "RequestCurrentPage", null, true);
         Check((bool)mod.GetType("Homestead.HomesteadUi").GetProperty("InputBlocked", Any).GetValue(null), "modal blocks game input");
         CheckStoreCameraZoomGuard();
+    }
+
+    private void CheckIconFixtures()
+    {
+        string fixtures = Path.Combine(Paths.GameRootPath, "icon-fixtures");
+        string[] paths = Directory.Exists(fixtures) ? Directory.GetFiles(fixtures, "*.blueprint") : new string[0];
+        foreach (string path in new[] { Path.Combine(Paths.GameRootPath, "probe.blueprint") }.Concat(paths))
+        {
+            string name = Path.GetFileNameWithoutExtension(path);
+            object blueprint = Call("ZoneBlueprintFileFormat", "ReadFile", path);
+            Sprite sprite = (Sprite)Call("ZoneBlueprintVisuals", "RenderAndCacheIcon", name, blueprint);
+            Check(sprite && sprite.texture.width == 256, "icon rendered: " + name);
+            File.WriteAllBytes(Path.Combine(Paths.GameRootPath, name + "-rendered.png"), sprite.texture.EncodeToPNG());
+            CheckIconPixels(sprite.texture, name);
+        }
+    }
+
+    private void CheckIconPixels(Texture2D texture, string name)
+    {
+        Color32[] pixels = texture.GetPixels32();
+        int visible = pixels.Count(pixel => pixel.a > 0);
+        int hiddenColor = pixels.Count(pixel => pixel.a == 0 && (pixel.r > 0 || pixel.g > 0 || pixel.b > 0));
+        File.AppendAllText(report, $"ICON {name}: visible={visible}, hiddenColor={hiddenColor}, total={pixels.Length}\n");
+        Check(visible > 100 && visible < pixels.Length, "icon has visible geometry and transparent background: " + name);
+        Check(hiddenColor < visible / 10, "icon geometry does not lose its alpha: " + name);
+    }
+
+    private Piece iconRecoveryPiece;
+    private byte[] validIconBytes;
+    private void BeginIconCacheRecovery()
+    {
+        string validPath = (string)Call("ZoneBlueprintCommands", "GetBlueprintIconPath", "probe");
+        validIconBytes = File.ReadAllBytes(validPath);
+        Call("ZoneBlueprintVisuals", "InvalidateIcon", "probe");
+        object[] validArgs = { "probe", null };
+        Check((bool)Call("ZoneBlueprintVisuals", "TryGetIcon", validArgs), "valid disk icon accepted");
+
+        const string name = "icon_recovery_probe";
+        string iconPath = (string)Call("ZoneBlueprintCommands", "GetBlueprintIconPath", name);
+        string blueprintPath = Path.ChangeExtension(iconPath, ".blueprint");
+        File.Copy(Path.Combine(Paths.GameRootPath, "probe.blueprint"), blueprintPath, true);
+        Texture2D blank = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+        blank.SetPixels(Enumerable.Repeat(new Color(0.8f, 0.4f, 0.1f, 0f), 4).ToArray());
+        blank.Apply();
+        byte[] blankBytes = blank.EncodeToPNG();
+        Destroy(blank);
+        File.WriteAllBytes(validPath, blankBytes);
+        Check((string)Call("ZoneBlueprintVisuals", "GetIconPngBase64", "probe") == "", "upload validates disk bytes despite stale valid sprite");
+        File.WriteAllBytes(validPath, validIconBytes);
+        Call("ZoneBlueprintVisuals", "SetCachedIcon", "probe", null);
+        Check((string)Call("ZoneBlueprintVisuals", "GetIconPngBase64", "probe") == Convert.ToBase64String(validIconBytes),
+            "valid disk icon can be uploaded despite cached null");
+        Call("ZoneBlueprintVisuals", "InvalidateIcon", "probe");
+        File.WriteAllBytes(iconPath, blankBytes);
+        Call("ZoneBlueprintVisuals", "InvalidateIcon", name);
+        object[] invalidArgs = { name, null };
+        Check(!(bool)Call("ZoneBlueprintVisuals", "TryGetIcon", invalidArgs), "fully transparent disk icon rejected");
+        Check(File.ReadAllBytes(iconPath).SequenceEqual(blankBytes), "invalid icon retained until replacement is ready");
+        Check((string)Call("ZoneBlueprintVisuals", "GetIconPngBase64", name) == "", "invalid icon is not uploaded while awaiting replacement");
+        Check((Sprite)Call("ZoneBlueprintVisuals", "CreateIconFromBase64", name, Convert.ToBase64String(blankBytes)) == null,
+            "fully transparent store icon falls back");
+        object blueprint = Call("ZoneBlueprintFileFormat", "ReadFile", blueprintPath);
+        iconRecoveryPiece = (Piece)Call("ZoneBlueprintToolPieceFactory", "CreateBlueprint", name, blueprint,
+            default(Piece.PieceCategory), "Alt", true);
+    }
+
+    private void CheckIconCacheRecovery()
+    {
+        object[] args = { "icon_recovery_probe", null };
+        Check((bool)Call("ZoneBlueprintVisuals", "TryGetIcon", args), "normal hammer icon queue regenerated invalid capture");
+        Sprite icon = (Sprite)args[1];
+        CheckIconPixels(icon.texture, "recovered icon");
+        Check((string)Call("ZoneBlueprintVisuals", "GetIconPngBase64", "icon_recovery_probe") != "", "recovered icon can be uploaded");
+        string validPath = (string)Call("ZoneBlueprintCommands", "GetBlueprintIconPath", "probe");
+        Check(File.ReadAllBytes(validPath).SequenceEqual(validIconBytes), "valid icon file left unchanged");
+        Destroy(iconRecoveryPiece.gameObject);
     }
 
     private void CheckBlueprintPlacementModesAreExclusive(object blueprint)
