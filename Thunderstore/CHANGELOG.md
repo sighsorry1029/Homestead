@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.17
+
+- Updated Homestead for Valheim 1.0.14, including the current controller-stick input signatures, and fixed returned blueprint materials being lost when Valheim rejects a stack merge after its inventory capacity check.
+- Added the server-synced `Homestead Tab Access` setting. Servers can keep the tab available to everyone or show and activate Homestead hammer tools only for ServerSync administrators; existing network chests remain usable.
+- Allowed any player to confirm a blueprint construction chest while preserving the original builder on completed pieces. Confirmations now obtain a renewable server reservation so concurrent attempts cannot build the same plan twice; the confirming player still supplies the existing requirements and optional material pull.
+
 ## 1.2.16
 
 - Fixed newly saved blueprint snapshots becoming fully transparent after the Jotunn removal by restoring the shader-compatible narrow-perspective capture used by the former renderer while retaining the existing framing and transparent background.

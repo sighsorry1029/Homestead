@@ -137,6 +137,9 @@ internal static class ZoneBlueprintCommands
         Vector3 anchor,
         Quaternion anchorRotation,
         Dictionary<string, int> depositedMaterials,
+        long creatorId,
+        string creatorName,
+        int creatorPlatformIndex,
         Func<bool> canContinue,
         Func<bool> tryCommit,
         Action<HomesteadCommandResult> onComplete)
@@ -284,7 +287,7 @@ internal static class ZoneBlueprintCommands
             }
 
             spawnResult = new SpawnPlanResult(plan.Entries.Count);
-            yield return SpawnPlanAsync(plan, player, spawnResult, canContinue);
+            yield return SpawnPlanAsync(plan, creatorId, creatorName, creatorPlatformIndex, spawnResult, canContinue);
             if (!canContinue() && spawnResult.Success)
             {
                 spawnResult.Failure = "Blueprint confirmation was canceled.";
@@ -1162,12 +1165,12 @@ internal static class ZoneBlueprintCommands
 
     private static IEnumerator SpawnPlanAsync(
         BlueprintLoadPlan plan,
-        Player player,
+        long playerId,
+        string playerName,
+        int creatorPlatformIndex,
         SpawnPlanResult result,
         Func<bool> canContinue)
     {
-        long playerId = player.GetPlayerID();
-        string playerName = player.GetPlayerName();
         int processedSinceYield = 0;
 
         foreach (BlueprintLoadEntry item in plan.Entries)
@@ -1178,7 +1181,7 @@ internal static class ZoneBlueprintCommands
                 break;
             }
 
-            if (!TrySpawnPlanEntry(item, playerId, playerName, out ZDO? zdo, out string failure))
+            if (!TrySpawnPlanEntry(item, playerId, playerName, creatorPlatformIndex, out ZDO? zdo, out string failure))
             {
                 if (zdo != null)
                 {
@@ -1205,6 +1208,7 @@ internal static class ZoneBlueprintCommands
         BlueprintLoadEntry item,
         long playerId,
         string playerName,
+        int creatorPlatformIndex,
         out ZDO? zdo,
         out string failure)
     {
@@ -1241,6 +1245,7 @@ internal static class ZoneBlueprintCommands
             ApplyBlueprintText(item, zdo);
             zdo.Set(ZDOVars.s_creator, playerId);
             zdo.Set(ZDOVars.s_creatorName, playerName);
+            if (creatorPlatformIndex >= 0) zdo.Set(ZDOVars.s_creatorIndex, creatorPlatformIndex);
             zdo.Set(BlueprintPlacedHash, true);
             GameObject spawned = ZNetScene.instance.CreateObject(zdo);
             if (!spawned)

@@ -22,6 +22,9 @@ foreach ($directory in @($data, 'MonoBleedingEdge')) {
     if (-not (Test-Path "$root/$directory")) { New-Item -ItemType Junction -Path "$root/$directory" -Target "$install/$directory" | Out-Null }
 }
 Get-ChildItem -LiteralPath $install -File | Where-Object { $_.Extension -in '.dll', '.exe' -or $_.Name -eq 'steam_appid.txt' } | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $root -Force }
+# The dedicated executable expects the game's App ID, not the server tool's
+# 896660. Correct only the isolated fixture; never modify the installation.
+if ($Role -eq 'server') { Set-Content -LiteralPath "$root/steam_appid.txt" -Value '892970' -Encoding ascii }
 Copy-Item -LiteralPath "$ClientInstall/winhttp.dll", "$ClientInstall/doorstop_config.ini" -Destination $root -Force
 Get-ChildItem -LiteralPath "$ClientInstall/BepInEx/core" -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination "$root/BepInEx/core" -Force }
 Copy-Item -LiteralPath "$project/bin/$Configuration/Homestead.dll", "$PSScriptRoot/RuntimeProbe/bin/Debug/net48/RuntimeProbe.dll" -Destination "$root/BepInEx/plugins" -Force

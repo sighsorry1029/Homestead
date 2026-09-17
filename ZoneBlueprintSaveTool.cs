@@ -861,6 +861,7 @@ internal static class ZoneBlueprintSaveToolMenu
 
     public static void Update()
     {
+        ZoneBlueprintHammerTable.UpdateAccess();
         ZoneBlueprintDirectoryWatcher.Update(ProcessBlueprintDirectoryChange);
         ZoneBlueprintStoreHoverPrompt.Update();
         ProcessPendingBlueprintPieceRefresh();
@@ -1815,6 +1816,7 @@ internal static class ZoneBlueprintSaveToolMenu
 
     private static void ActivateToolForMarker(Player player, ZoneBlueprintSaveToolMarker marker)
     {
+        if (!GeneralConfig.CanUseTab) return;
         if (marker.Kind == ZoneBlueprintToolKind.AreaSave)
         {
             ZoneAreaDismantleTool.Deactivate();
@@ -2069,6 +2071,8 @@ internal static class ZoneBlueprintSaveToolMenu
                 return true;
             }
 
+            if (!GeneralConfig.CanUseTab) return false;
+
             if (TryHandleDataFolderIntent(marker, oncePerSelection: false))
             {
                 return false;
@@ -2106,6 +2110,8 @@ internal static class ZoneBlueprintSaveToolMenu
                 ZoneBlueprintPlacementTool.Deactivate();
                 return true;
             }
+
+            if (!GeneralConfig.CanUseTab) return false;
 
             if (TryHandleDataFolderIntent(marker, oncePerSelection: true))
             {

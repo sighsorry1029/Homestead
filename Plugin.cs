@@ -19,7 +19,7 @@ namespace Homestead;
 public partial class HomesteadPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Homestead";
-    internal const string ModVersion = "1.2.16";
+    internal const string ModVersion = "1.2.17";
     internal const string Author = "sighsorry";
     internal const string ModGUID = $"{Author}.{ModName}";
     internal const string DataStorageFolder = "Homestead";
@@ -58,6 +58,9 @@ public partial class HomesteadPlugin : BaseUnityPlugin
     };
 
     internal static string ConnectionError = "";
+    internal static bool ServerSettingsReady => ZNet.instance != null &&
+        (ZNet.instance.IsServer() || (ConfigSync.InitialSyncDone && !ConfigSync.IsSourceOfTruth && ZNet.GetConnectionStatus() == ZNet.ConnectionStatus.Connected));
+    internal static bool HasServerAdminStatus => ServerSettingsReady && ConfigSync.IsAdmin;
     internal static HomesteadPlugin Instance { get; private set; } = null!;
 
     private readonly Harmony _harmony = new(ModGUID);

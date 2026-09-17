@@ -55,6 +55,14 @@ Build camera, dvergr circlet attached to build camera, dvergr circlet light adju
 7. Deposit the required materials.
 8. Confirm the build with `Alt + E`
 
+Server owners can configure tab access (keep **Lock Configuration = On** to enforce synced settings):
+
+- **01 - General / Homestead Tab Access**: `Everyone` (default) or `AdminsOnly`. Uses the server's ServerSync admin status, hides the hammer tab/tools for other players, and cancels active tool selection when access is removed. Existing network chests remain available. This controls the normal UI; it is not an anti-cheat restriction on modified clients or all Homestead features.
+
+Any player can confirm a construction plan chest; there is no creator-only confirmation setting. Shop listing/purchase/payout authorization is unchanged. Finished pieces keep the original chest creator. The person confirming supplies the existing knowledge/station/no-cost checks and optional inventory/AzuCraftyBoxes material pull.
+
+Confirmation obtains a server reservation before taking chest ownership. Only one confirmation can hold it per chest; authorization must be renewed while building. Missing approval or a lost connection cancels the existing build transaction. A disconnected reservation expires after 60 seconds; confirmed reservations remain blocked until the chest disappears. Both server and clients need this updated DLL. Tab visibility and confirmation access are independent: admins can place plans while other players supply materials and finish them.
+
 ### Sell A Blueprint
 
 1. Open the `Homestead` hammer tab.

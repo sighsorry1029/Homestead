@@ -530,11 +530,10 @@ internal static class ZoneMaterialEscrow
             }
 
             Inventory? inventory = preferInventory && Player.m_localPlayer != null ? Player.m_localPlayer.GetInventory() : null;
-            if (inventory != null && inventory.CanAddItem(item, stack))
-            {
-                inventory.AddItem(item);
-            }
-            else if (item.m_dropPrefab != null)
+            // CanAddItem counts stack space without quality/cheated compatibility.
+            // AddItem can reject or partly merge it; on failure m_stack is the remainder.
+            bool added = inventory != null && inventory.CanAddItem(item, stack) && inventory.AddItem(item);
+            if (!added && item.m_dropPrefab != null)
             {
                 ItemDrop.DropItem(item, 0, dropPosition + Vector3.up * 0.75f + UnityEngine.Random.insideUnitSphere * 0.25f, UnityEngine.Random.rotation);
             }

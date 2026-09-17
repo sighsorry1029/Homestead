@@ -9,6 +9,10 @@ namespace Homestead;
 
 internal static class GeneralConfig
 {
+    internal enum TabAccess { Everyone, AdminsOnly }
+    private static ConfigEntry<TabAccess> _tabAccess = null!;
+    internal static bool CanUseTab => Player.m_localPlayer != null && HomesteadPlugin.ServerSettingsReady &&
+        (_tabAccess.Value == TabAccess.Everyone || HomesteadPlugin.HasServerAdminStatus);
     private static ConfigEntry<HomesteadPlugin.Toggle> _serverConfigLocked = null!;
 
     public static void Bind(HomesteadPlugin plugin)
@@ -22,6 +26,8 @@ internal static class GeneralConfig
                 null,
                 new ConfigurationManagerAttributes { Order = 1000 }));
         _ = HomesteadPlugin.ConfigSync.AddLockingConfigEntry(_serverConfigLocked);
+        _tabAccess = plugin.config("01 - General", "Homestead Tab Access", TabAccess.Everyone,
+            "Who can see and select Homestead hammer tools. Existing chests and confirmation remain available. This is a UI restriction, not a server anti-cheat barrier.");
     }
 }
 

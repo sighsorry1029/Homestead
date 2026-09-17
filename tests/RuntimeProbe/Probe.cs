@@ -101,6 +101,7 @@ public sealed class Probe : BaseUnityPlugin
         catch (Exception ex) { Fail(ex); yield break; }
         if (!headless)
         {
+            if (!uiOnly) yield return CheckSharedBuild();
             yield return new WaitForSeconds(2f);
             try { if (!uiOnly) CaptureUi(FindObjectsByType<BuildUi>(FindObjectsInactive.Include, FindObjectsSortMode.None).First().GetComponentInParent<Canvas>().rootCanvas, "build-menu.png"); }
             catch (Exception ex) { Fail(ex); yield break; }
@@ -201,6 +202,8 @@ public sealed class Probe : BaseUnityPlugin
     private void CheckClient()
     {
         Player player = Player.m_localPlayer;
+        CheckMaterialRefunds(player);
+        CheckConfirmationPermissions(player);
         GameObject hammerPrefab = ObjectDB.instance.GetItemPrefab("Hammer");
         ItemDrop.ItemData hammer = hammerPrefab.GetComponent<ItemDrop>().m_itemData.Clone();
         hammer.m_dropPrefab = hammerPrefab;
@@ -258,6 +261,210 @@ public sealed class Probe : BaseUnityPlugin
         build.OpenBuildMenu();
         build.SelectPieceList(index);
         Check(((UnityEngine.UI.Button)buttons[index]).gameObject.activeSelf, "Homestead tab restored for hammer");
+        CheckTabAccess(build, index);
+    }
+
+    private void CheckTabAccess(BuildUi build, int index)
+    {
+        Type config = mod.GetType("Homestead.GeneralConfig");
+        var setting = (BepInEx.Configuration.ConfigEntryBase)config.GetField("_tabAccess", Any).GetValue(null);
+        object previous = setting.BoxedValue;
+        object sync = mod.GetType("Homestead.HomesteadPlugin").GetField("ConfigSync", Any).GetValue(null);
+        FieldInfo source = sync.GetType().GetField("isSourceOfTruth", Any);
+        FieldInfo exempt = sync.GetType().GetField("lockExempt", Any);
+        bool oldSource = (bool)source.GetValue(sync), oldExempt = (bool)exempt.GetValue(null);
+        var buttons = (System.Collections.IList)AccessTools.Field(typeof(BuildUi), "m_tabButtons").GetValue(build);
+        try
+        {
+            setting.BoxedValue = Enum.Parse(setting.SettingType, "AdminsOnly");
+            source.SetValue(sync, false); exempt.SetValue(null, false);
+            Call("ZoneBlueprintHammerTable", "UpdateAccess");
+            Check(!((UnityEngine.UI.Button)buttons[index]).gameObject.activeSelf, "non-admin tab hidden on live permission change (simulated ServerSync state)");
+            Check((int)AccessTools.Field(typeof(BuildUi), "m_currentPieceList").GetValue(build) == 0, "hidden selected tab returns to native tab");
+            var lists = (System.Collections.IList)AccessTools.Field(typeof(BuildUi), "m_pieceLists").GetValue(build);
+            var pieces = new System.Collections.Generic.List<Piece>();
+            ((IPieceList)lists[index]).GetAvailablePiecesWithTag(-1, Player.m_localPlayer.GetBuildTool(), pieces);
+            Check(pieces.Count == 0, "restricted Homestead list returns no tools");
+            Check(ZNetScene.instance.GetPrefab("piece_chest_wood_blueprint"), "hidden tab keeps network chest registered");
+            exempt.SetValue(null, true);
+            Call("ZoneBlueprintHammerTable", "UpdateAccess");
+            Check(((UnityEngine.UI.Button)buttons[index]).gameObject.activeSelf, "admin tab restored on live permission change");
+        }
+        finally
+        {
+            source.SetValue(sync, oldSource); exempt.SetValue(null, oldExempt);
+            setting.BoxedValue = previous;
+            Call("ZoneBlueprintHammerTable", "UpdateAccess");
+            build.SelectPieceList(index);
+        }
+    }
+
+    private IEnumerator CheckSharedBuild()
+    {
+        Player player = Player.m_localPlayer;
+        FieldInfo noCost = AccessTools.Field(typeof(Player), "m_noPlacementCost");
+        bool previousNoCost = (bool)noCost.GetValue(player);
+        GameObject chest = null;
+        GameObject[] before = FindObjectsByType<Piece>(FindObjectsSortMode.None).Select(piece => piece.gameObject).ToArray();
+        long creator = player.GetPlayerID() + 1;
+        try
+        {
+            try
+            {
+                noCost.SetValue(player, true);
+                object blueprint = Call("ZoneBlueprintFileFormat", "Deserialize", "#Name:shared_confirm_probe\n#Pieces\nwood_floor;Building;0;0;0;0;0;0;1;\"\";1;1;1\n", "shared_confirm_probe");
+                string path = (string)Call("ZoneBlueprintCommands", "GetBlueprintPath", "shared_confirm_probe");
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                mod.GetType("Homestead.ZoneBlueprintFileFormat").GetMethod("WriteFile", Any, null,
+                    new[] { typeof(string), blueprint.GetType() }, null).Invoke(null, new[] { (object)path, blueprint });
+                chest = Instantiate(ZNetScene.instance.GetPrefab("piece_chest_wood_blueprint"), player.transform.position + Vector3.right * 2f, Quaternion.identity);
+                ZDO zdo = chest.GetComponent<ZNetView>().GetZDO();
+                zdo.Set(ZDOVars.s_creator, creator); zdo.Set(ZDOVars.s_creatorName, "Original Builder");
+                Component anchor = chest.GetComponent(mod.GetType("Homestead.ZoneBlueprintPlanAnchor"));
+                anchor.GetType().GetMethod("SetPlan", Any).Invoke(anchor, new object[] { "shared_confirm_probe", player.transform.position + Vector3.right * 4f, Quaternion.identity });
+                Check((bool)anchor.GetType().GetMethod("TryConfirm", Any).Invoke(anchor, new object[] { player }), "non-creator starts actual shared confirmation");
+            }
+            catch (Exception ex) { Fail(ex); yield break; }
+            float deadline = Time.realtimeSinceStartup + 15f;
+            while (chest && Time.realtimeSinceStartup < deadline) yield return null;
+            try
+            {
+                Check(!chest, "shared confirmation consumes completed plan chest");
+                Piece[] built = FindObjectsByType<Piece>(FindObjectsSortMode.None).Where(piece => !before.Contains(piece.gameObject) &&
+                    piece.GetComponent<ZNetView>() && piece.GetComponent<ZNetView>().IsValid() &&
+                    piece.GetComponent<ZNetView>().GetZDO().GetBool("sighsorry.Homestead.blueprint_piece", false)).ToArray();
+                Check(built.Length == 1, "shared confirmation creates exactly one planned piece");
+                ZDO zdo = built[0].GetComponent<ZNetView>().GetZDO();
+                Check(zdo.GetLong(ZDOVars.s_creator) == creator && zdo.GetString(ZDOVars.s_creatorName) == "Original Builder", "finished piece retains original builder, not confirmer");
+            }
+            catch (Exception ex) { Fail(ex); yield break; }
+        }
+        finally
+        {
+            noCost.SetValue(player, previousNoCost);
+            if (chest) ZNetScene.instance.Destroy(chest);
+            foreach (Piece piece in FindObjectsByType<Piece>(FindObjectsSortMode.None))
+                if (!before.Contains(piece.gameObject) && piece.GetComponent<ZNetView>() && piece.GetComponent<ZNetView>().IsValid()) ZNetScene.instance.Destroy(piece.gameObject);
+            Call("ZoneBlueprintConfirmation", "Reset");
+        }
+    }
+
+    private void CheckConfirmationPermissions(Player player)
+    {
+        GameObject chest = Instantiate(ZNetScene.instance.GetPrefab("piece_chest_wood_blueprint"), player.transform.position + Vector3.right * 2f, Quaternion.identity);
+        ZDO zdo = chest.GetComponent<ZNetView>().GetZDO();
+        long creator = player.GetPlayerID() + 1;
+        zdo.Set(ZDOVars.s_creator, creator);
+        zdo.Set(ZDOVars.s_creatorName, "Original Builder");
+        Type permits = mod.GetType("Homestead.ZoneBlueprintConfirmation");
+        var server = (System.Collections.IDictionary)permits.GetField("Permits", Any).GetValue(null);
+        void Request(int action, string token, long sender = 0)
+        {
+            ZPackage package = new ZPackage();
+            package.Write(action); package.Write(zdo.m_uid); package.Write(token); package.Write(99); package.SetPos(0);
+            permits.GetMethod("ReceiveRequest", Any).Invoke(null, new object[] { sender, package });
+        }
+        try
+        {
+            object permit = Call("ZoneBlueprintConfirmation", "Begin", zdo);
+            Type handle = permit.GetType();
+            Check((bool)handle.GetProperty("IsValid", Any).GetValue(permit), "shared confirmation receives server permit");
+            Check((long)handle.GetField("Creator", Any).GetValue(permit) == creator &&
+                (string)handle.GetField("CreatorName", Any).GetValue(permit) == "Original Builder", "server preserves original builder identity");
+            string token = (string)handle.GetField("Token", Any).GetValue(permit);
+            Request(0, new string('a', 32));
+            object held = server[zdo.m_uid];
+            Check((string)held.GetType().GetField("Token", Any).GetValue(held) == token, "competing confirmation cannot replace permit");
+            Request(2, token, 123456L);
+            Check(server.Contains(zdo.m_uid), "another peer cannot release permit");
+            Request(2, new string('b', 32));
+            Check(server.Contains(zdo.m_uid), "stale token cannot release permit");
+            held.GetType().GetField("Expires", Any).SetValue(held, Time.realtimeSinceStartup - 1f);
+            Request(1, token);
+            Check((float)held.GetType().GetField("Expires", Any).GetValue(held) < Time.realtimeSinceStartup,
+                "expired server permit cannot be revived by renewal");
+            handle.GetField("ValidUntil", Any).SetValue(permit, Time.realtimeSinceStartup - 1f);
+            Check(!(bool)handle.GetProperty("IsValid", Any).GetValue(permit), "expired client permit stops confirmation");
+            Call("ZoneBlueprintConfirmation", "End", permit, false);
+            Check(!server.Contains(zdo.m_uid), "aborted confirmation releases permit");
+            object committed = Call("ZoneBlueprintConfirmation", "Begin", zdo);
+            Call("ZoneBlueprintConfirmation", "End", committed, true);
+            Request(0, new string('c', 32));
+            held = server[zdo.m_uid];
+            Check((bool)held.GetType().GetField("Committed", Any).GetValue(held), "commit blocks reentry before confirmed ZDO replication");
+        }
+        finally
+        {
+            Call("ZoneBlueprintConfirmation", "Reset");
+            ZNetScene.instance.Destroy(chest);
+        }
+    }
+
+    private void CheckMaterialRefunds(Player player)
+    {
+        Inventory inventory = player.GetInventory();
+        var saved = inventory.GetAllItems().ToArray();
+        FieldInfo width = AccessTools.Field(typeof(Inventory), "m_width");
+        FieldInfo height = AccessTools.Field(typeof(Inventory), "m_height");
+        int oldWidth = (int)width.GetValue(inventory);
+        int oldHeight = (int)height.GetValue(inventory);
+        GameObject prefab = ObjectDB.instance.GetItemPrefab("Wood");
+        ItemDrop.ItemData prototype = prefab.GetComponent<ItemDrop>().m_itemData.Clone();
+        prototype.m_dropPrefab = prefab;
+        prototype.m_cheated = false;
+        prototype.m_customData["homestead-refund-probe"] = "preserve";
+        try
+        {
+            height.SetValue(inventory, 1);
+            foreach (string scenario in new[] { "cheated mismatch", "partial merge", "compatible merge", "full inventory" })
+            {
+                inventory.GetAllItems().Clear();
+                width.SetValue(inventory, scenario == "partial merge" ? 2 : 1);
+                ItemDrop.ItemData existing = prototype.Clone();
+                existing.m_stack = scenario == "full inventory" ? existing.m_shared.m_maxStackSize : 1;
+                existing.m_cheated = scenario == "cheated mismatch";
+                existing.m_gridPos = new Vector2i(0, 0);
+                if (scenario == "partial merge") existing.m_stack = existing.m_shared.m_maxStackSize - 1;
+                inventory.GetAllItems().Add(existing);
+                if (scenario == "partial merge")
+                {
+                    ItemDrop.ItemData incompatible = prototype.Clone();
+                    incompatible.m_stack = 1;
+                    incompatible.m_cheated = true;
+                    incompatible.m_gridPos = new Vector2i(1, 0);
+                    inventory.GetAllItems().Add(incompatible);
+                }
+                int beforeCount = inventory.GetAllItems().Sum(item => item.m_stack);
+                int[] beforeDrops = FindObjectsByType<ItemDrop>(FindObjectsSortMode.None).Select(drop => drop.GetInstanceID()).ToArray();
+                Call("ZoneMaterialEscrow", "GiveOrDropItem", prototype, 3, player.transform.position + Vector3.up * 20f, true, prefab);
+                ItemDrop[] drops = FindObjectsByType<ItemDrop>(FindObjectsSortMode.None)
+                    .Where(drop => !beforeDrops.Contains(drop.GetInstanceID())).ToArray();
+                try
+                {
+                    int added = inventory.GetAllItems().Sum(item => item.m_stack) - beforeCount;
+                    int dropped = drops.Sum(drop => drop.m_itemData.m_stack);
+                    Check(added + dropped == 3, "refund preserves total quantity: " + scenario);
+                    int expectedAdded = scenario == "compatible merge" ? 3 : scenario == "partial merge" ? 1 : 0;
+                    Check(added == expectedAdded && dropped == 3 - expectedAdded, "refund only drops unaccepted remainder: " + scenario);
+                    Check(drops.All(drop => !drop.m_itemData.m_cheated &&
+                        drop.m_itemData.m_customData.TryGetValue("homestead-refund-probe", out string value) && value == "preserve"),
+                        "refund preserves dropped item metadata: " + scenario);
+                    Check(existing.m_cheated == (scenario == "cheated mismatch"), "refund does not change destination cheat flag: " + scenario);
+                }
+                finally
+                {
+                    foreach (ItemDrop drop in drops) ZNetScene.instance.Destroy(drop.gameObject);
+                }
+            }
+        }
+        finally
+        {
+            inventory.GetAllItems().Clear();
+            inventory.GetAllItems().AddRange(saved);
+            width.SetValue(inventory, oldWidth);
+            height.SetValue(inventory, oldHeight);
+            AccessTools.Method(typeof(Inventory), "Changed").Invoke(inventory, new object[] { true, false });
+        }
     }
 
     private void CheckStoreAndIcon()

@@ -38,12 +38,14 @@ internal static class ZoneBlueprintPlanRpc
 
     public static void Update()
     {
+        ZoneBlueprintConfirmation.Update();
         RegisterRpcs();
         ExpirePreviewRequests();
     }
 
     public static void ResetForWorldSession()
     {
+        ZoneBlueprintConfirmation.Reset();
         PreviewCache.Clear();
         PendingPreviewRequests.Clear();
     }
@@ -515,7 +517,7 @@ internal static class ZoneBlueprintPlanRpc
         ZoneBlueprintPlanChestPrefab.PlayPlaceEffect(position, rotation);
     }
 
-    private static bool TryResolveRequester(long sender, out long playerId, out Vector3 position, out string reason)
+    internal static bool TryResolveRequester(long sender, out long playerId, out Vector3 position, out string reason)
     {
         playerId = 0L;
         position = Vector3.zero;

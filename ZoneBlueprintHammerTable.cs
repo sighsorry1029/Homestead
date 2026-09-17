@@ -13,6 +13,34 @@ namespace Homestead;
 internal static class ZoneBlueprintHammerTable
 {
     private static readonly List<PieceTable> TempPieceTables = [];
+    private static bool? _lastAccess;
+    private static BuildUi? _buildUi;
+    private static readonly AccessTools.FieldRef<Player, GameObject> PlacementGhost = AccessTools.FieldRefAccess<Player, GameObject>("m_placementGhost");
+
+    internal static void UpdateAccess()
+    {
+        bool allowed = GeneralConfig.CanUseTab;
+        if (_lastAccess == allowed) return;
+        _lastAccess = allowed;
+        if (!allowed)
+        {
+            ZoneBlueprintSaveTool.Deactivate();
+            ZoneAreaDismantleTool.Deactivate();
+            ZoneBlueprintSnapPointTool.Deactivate();
+            ZoneBlueprintPlacementTool.Deactivate();
+            ZoneBlueprintStorePreviewTool.DeactivateActive();
+            Player? player = Player.m_localPlayer;
+            PieceTable? table = player?.GetBuildTool();
+            if (player != null && table?.GetSelectedPiece()?.GetComponent<ZoneBlueprintSaveToolMarker>() != null)
+            {
+                table.SetCategory(Piece.PieceCategory.Misc);
+                table.SetSelected(Vector2Int.zero);
+                if (PlacementGhost(player)) UnityEngine.Object.Destroy(PlacementGhost(player));
+                PlacementGhost(player) = null!;
+            }
+        }
+        if (_buildUi) BuildUiPatch.RefreshAccess(_buildUi);
+    }
 
     internal static Piece.PieceCategory AllocateCategory()
     {
@@ -41,6 +69,7 @@ internal static class ZoneBlueprintHammerTable
         public void UpdateAvailableTags(PieceTable pieceTable) { }
         public void GetAvailablePiecesWithTag(int tagId, PieceTable table, IList<Piece> result)
         {
+            if (!GeneralConfig.CanUseTab) return;
             // m_pieces already carries Homestead's stable menu order.
             foreach (GameObject go in table.m_pieces)
                 if (go && go.TryGetComponent<Piece>(out var piece) && table.m_availablePieces.Contains(piece) &&
@@ -80,10 +109,12 @@ internal static class ZoneBlueprintHammerTable
         private static readonly AccessTools.FieldRef<BuildUi, List<IPieceList>> Lists = AccessTools.FieldRefAccess<BuildUi, List<IPieceList>>("m_pieceLists");
         private static readonly AccessTools.FieldRef<BuildUi, List<Button>> Buttons = AccessTools.FieldRefAccess<BuildUi, List<Button>>("m_tabButtons");
         private static readonly AccessTools.FieldRef<BuildUi, TabHandler> Tabs = AccessTools.FieldRefAccess<BuildUi, TabHandler>("m_tabHandler");
+        private static readonly AccessTools.FieldRef<BuildUi, int> CurrentList = AccessTools.FieldRefAccess<BuildUi, int>("m_currentPieceList");
         [HarmonyPostfix, HarmonyPatch("Awake")]
         [HarmonyPriority(Priority.Last)]
         private static void Postfix(BuildUi __instance)
         {
+            _buildUi = __instance;
             List<IPieceList> lists = Lists(__instance);
             if (lists.Any(list => list is HomesteadPieceList)) return;
             List<Button> buttons = Buttons(__instance);
@@ -99,14 +130,24 @@ internal static class ZoneBlueprintHammerTable
             UnityEvent select = new();
             select.AddListener(() => __instance.SelectPieceList(index));
             Tabs(__instance).m_tabs.Add(new TabHandler.Tab { m_button = button, m_onClick = select });
+            button.gameObject.SetActive(GeneralConfig.CanUseTab);
         }
 
         [HarmonyPostfix, HarmonyPatch(nameof(BuildUi.OpenBuildMenu))]
         private static void AfterOpen(BuildUi __instance)
         {
+            RefreshAccess(__instance);
+        }
+
+        internal static void RefreshAccess(BuildUi __instance)
+        {
             PieceTable? table = Player.m_localPlayer?.GetBuildTool();
             foreach (Button button in Buttons(__instance))
-                if (button && button.name == "HomesteadTab") button.gameObject.SetActive(table && LooksLike(table));
+                if (button && button.name == "HomesteadTab") button.gameObject.SetActive(GeneralConfig.CanUseTab && table && LooksLike(table));
+            int current = CurrentList(__instance);
+            if (!GeneralConfig.CanUseTab && current >= 0 &&
+                current < Lists(__instance).Count && Lists(__instance)[current] is HomesteadPieceList)
+                __instance.SelectPieceList(0);
         }
     }
 

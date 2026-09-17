@@ -1,4 +1,68 @@
-# Valheim 1.0.7 / Jotunn 제거 패치
+# Valheim 호환성 기록
+
+## 1.0.12 → 1.0.14 (2026-09-17)
+
+기준: `main` / `40fd385` (Homestead 1.2.16), 작업 시작 시 변경 없음. 클라이언트
+Steam build **25364265**, 데디케이트 **25364309** 원본을 사용했다. 설치된
+`assembly_valheim`, `assembly_utils`, `assembly_guiutils`의 SHA-256을 양쪽
+1.0.14 전역 스냅샷과 대조했다. 아래 1.0.7 검토는 과거 기록으로 보존한다.
+
+### 필요한 대응
+
+- **건축 카메라 재빌드:** 기존 Release DLL은 `ZInput.GetJoyLeftStickX/Y(bool)`와
+  `GetJoyRightStickX/Y(bool)`를 호출한다. 1.0.14에는 네 bool 오버로드가 없다.
+  `ZoneBuildCamera`의 인자 없는 C# 호출은 그대로 두고 새 게임 DLL로 재컴파일했다.
+  최종 Debug DLL은 네 인자 없는 메서드를 호출한다. 입력 방향·감도 정책은 변경하지 않았다.
+- **반환 재료 소실 방지:** `ZoneMaterialEscrow.GiveOrDropItem`의 `CanAddItem` 성공을
+  실제 추가 성공으로 간주하던 처리를 수정했다. 1.0.14의 `AddItem`은 `m_cheated`가
+  다른 스택에 합치지 않지만 `CanAddItem`의 공간 계산은 이를 구분하지 않는다.
+  원본 런타임에서 변경 전 수량 소실을 재현했다. 이제 `AddItem` 실패 시 실제 남은
+  `item.m_stack`만 드롭하여 부분 병합 후에도 수량·반환 아이템 메타데이터를 보존한다.
+  기존 품질 불일치에서도 발생할 수 있었던 실패 무시 문제가 새 치트 스택 분리로 확대된 경우다.
+- **격리 서버 검사:** 설치본 `steam_appid.txt`의 896660 때문에 `Invalid APPID`로
+  종료되는 문제를 확인했다. 테스트 실행기는 격리 사본에만 게임 App ID 892970을
+  기록한다. 실제 서버 설치본은 수정하지 않았다.
+
+### 검토 범위와 유지한 계약
+
+`Plugin.cs`의 BepInEx 플러그인, 선택적 연동 선언, `Homestead.csproj`의 리소스와
+Debug 복사/Release 패키징 경로, `GameReferences.targets` 및 최종 ILRepack 입력을
+확인했다. 고정 ServerSync `valheim-1.0.7-r1`과 YamlDotNet의 기존 병합을 유지한다.
+원본 분석과 `obj` 안의 기존 publicizer 컴파일 사본을 구분했으며 설정을 일괄 교체하지 않았다.
+
+최종 병합 DLL의 게임 3개 어셈블리에 대한 MemberRef 544개를 클라이언트·서버 원본에서
+각각 해석하여 누락 0개를 확인했다. 이것만으로 모든 비공개 접근이나 간접 호출의 실행을
+보장하지 않으므로 아래 Mono/Unity 실행 검사도 수행했다.
+Harmony 대상·리플렉션 검색과 1.0.14 변경점의 교집합을 검토했다. 핫바 분기를 가정하는
+transpiler는 없고, 기존 배치 회전 transpiler의 대상 및 70개 패치 설치를 실행에서 확인했다.
+지형 지지대 생성은 실제 수정 대상 compiler가 없을 때만 기존 생성 경로를 사용하며,
+게임의 이웃 paint 조회를 옛 생성 방식으로 되돌리지 않는다. owner·권한·롤백 검사는 유지한다.
+
+설정 키/기본값, RPC·저장 형식, creator/관리자 정책, 재료 에스크로와 거래 정책은 변경하지 않았다.
+에스크로가 개별 아이템 메타데이터 대신 재료별 수량을 보관하는 기존 정책은 이번 수정과
+별개이며, 전체 거래의 치트 출처 보존을 새로 보장하는 패치가 아니다.
+다른 모드의 소스·라이브러리 업데이트, 리소스 전체 추출과 셰이더 의미 분석은 제외했다.
+
+### 검증
+
+- 기준/수정 후 `dotnet build Homestead.csproj -c Debug -p:DeployToGame=true` 성공,
+  경고/오류 0개. 병합 후 plugins의 Homestead.dll과 출력 DLL SHA-256 일치.
+- `pwsh -NoProfile -File tests/Run-RegressionChecks.ps1` 통과.
+- 원본 1.0.14 Unity/Mono 격리 클라이언트에서 수정 전 치트 표시 불일치 반환 실패를 재현.
+  수정 후 치트 표시 불일치, 부분 병합, 정상 병합, 공간 없음의 네 수량/메타데이터 검사 통과.
+- 격리 클라이언트 로컬 월드: Harmony 70개 대상, 네 상자 프리팹, 내용물 보호,
+  Homestead 탭 격리, 상점/가격 UI, 배치 모드 배타성, 휠 줌 차단, 아이콘과 UI 정리 검사 완료.
+- 격리 데디케이트: App ID 교정 후 월드 로드, Harmony 70개 대상, 프리팹/ZDO,
+  미로드 상자·진열대 보호 검사 완료. 두 보고서 모두 `COMPLETE` 확인.
+- 실제 플레이어 간 접속/거래, 2인 owner 이전, 크로스플레이, 접속 종료·재접속,
+  실제 게임패드 입력/감도, 지형 경계 변경 및 선택적 모드 조합은 **미검증**.
+
+검토 기준은 1.2.16이었으며, 확인된 대응과 후속 접근 제어 변경은 1.2.17에 포함했다.
+게임 DLL로 다시 컴파일했으므로 이 Debug DLL의 구 게임 실행 호환성을 보장하지 않는다.
+
+전역 근거: `C:/Users/blizz/.codex/references/valheim/comparisons/1.0.12--1.0.14-windows-x64/mods/Homestead-1.2.16/`.
+
+## Valheim 1.0.7 / Jotunn 제거 패치
 
 2026-09-11, Homestead 1.2.13 기준.
 

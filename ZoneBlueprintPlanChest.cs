@@ -45,6 +45,10 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private bool _absorbing;
     private bool _refundStarted;
     private bool _confirmInProgress;
+    private ZoneBlueprintConfirmation.Permit? _confirmationPermit;
+    private bool _confirmationCommitted;
+    private static readonly Func<Container, bool> LoadContainer = AccessTools.MethodDelegate<Func<Container, bool>>(
+        AccessTools.Method(typeof(Container), "Load", Type.EmptyTypes));
     private bool _confirmationCanceled;
     private string _lastReadySignature = "";
     private Color? _pendingMaterialColor;
@@ -173,10 +177,8 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return true;
         }
 
-        long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
-        if (creator != 0L && player.GetPlayerID() != creator)
+        if (player.GetPlayerID() == 0L)
         {
-            Message(player, HomesteadLocalization.Text("hs_blueprint_other_creator"), MessageHud.MessageType.Center);
             return true;
         }
 
@@ -186,50 +188,55 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return true;
         }
 
-        if (!_nview.IsOwner())
-        {
-            _nview.ClaimOwnership();
-        }
-
-        if (!_nview.IsOwner())
-        {
-            Message(player, HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete"), MessageHud.MessageType.Center);
-            return true;
-        }
-
-        Touch();
-        Tick();
-
-        string name = GetBlueprintName();
-        if (!ReloadPlan())
-        {
-            Message(player, HomesteadLocalization.Format("hs_blueprint_not_available", name), MessageHud.MessageType.Center);
-            return true;
-        }
-
-        ZoneBlueprintFile? blueprint = _blueprint;
-        if (blueprint == null)
-        {
-            Message(player, HomesteadLocalization.Format("hs_blueprint_not_available", name), MessageHud.MessageType.Center);
-            return true;
-        }
-
-        if (BlueprintConfig.AzuCraftyBoxesPullOnConfirm)
-        {
-            TryPullAvailableMaterials(player, "confirm", message: true);
-        }
-
-        Dictionary<string, int> deposited = GetDepositedMaterials();
-        if (!TryGetAnchorTransform(out Vector3 anchorPosition, out Quaternion anchorRotation))
-        {
-            Message(player, HomesteadLocalization.Format("hs_blueprint_not_available", name), MessageHud.MessageType.Center);
-            return true;
-        }
-
         _confirmationCanceled = false;
+        _confirmationCommitted = false;
         _confirmInProgress = true;
-        HomesteadPlugin.Instance.StartCoroutine(ConfirmAsync(player, name, blueprint, anchorPosition, anchorRotation, deposited));
+        HomesteadPlugin.Instance.StartCoroutine(ConfirmWithPermit(player, zdo));
         return true;
+    }
+
+    private IEnumerator ConfirmWithPermit(Player player, ZDO zdo)
+    {
+        try
+        {
+            _confirmationPermit = ZoneBlueprintConfirmation.Begin(zdo);
+            if (_confirmationPermit == null)
+            {
+                Message(player, HomesteadLocalization.Text("hs_blueprint_confirmation_in_progress"), MessageHud.MessageType.Center);
+                yield break;
+            }
+            float deadline = Time.realtimeSinceStartup + 10f;
+            while (!_confirmationPermit.Answered && !_confirmationCanceled && Time.realtimeSinceStartup < deadline)
+                yield return null;
+            if (_confirmationCanceled || !_confirmationPermit.IsValid || !_nview || !_nview.IsValid())
+            {
+                Message(player, HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete"), MessageHud.MessageType.Center);
+                yield break;
+            }
+            if (!_nview.IsOwner()) _nview.ClaimOwnership();
+            if (!_nview.IsOwner())
+            {
+                Message(player, HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete"), MessageHud.MessageType.Center);
+                yield break;
+            }
+            if (_container != null) LoadContainer(_container);
+            Touch();
+            string name = GetBlueprintName();
+            if (!ReloadPlan() || _blueprint == null || !TryGetAnchorTransform(out Vector3 anchor, out Quaternion rotation))
+            {
+                Message(player, HomesteadLocalization.Format("hs_blueprint_not_available", name), MessageHud.MessageType.Center);
+                yield break;
+            }
+            AbsorbContainerMaterials();
+            if (BlueprintConfig.AzuCraftyBoxesPullOnConfirm) TryPullAvailableMaterials(player, "confirm", message: true);
+            yield return ConfirmAsync(player, name, _blueprint, anchor, rotation, GetDepositedMaterials());
+        }
+        finally
+        {
+            if (_confirmationPermit != null) ZoneBlueprintConfirmation.End(_confirmationPermit, _confirmationCommitted);
+            _confirmationPermit = null;
+            _confirmInProgress = false;
+        }
     }
 
     private IEnumerator ConfirmAsync(
@@ -241,23 +248,20 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         Dictionary<string, int> deposited)
     {
         HomesteadCommandResult result = HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete"));
-        try
-        {
-            yield return ZoneBlueprintCommands.FinalizeBlueprintPlanAsync(
+        yield return ZoneBlueprintCommands.FinalizeBlueprintPlanAsync(
                 name,
                 blueprint,
                 player,
                 anchorPosition,
                 anchorRotation,
                 deposited,
+                _confirmationPermit!.Creator,
+                string.IsNullOrEmpty(_confirmationPermit.CreatorName) && _confirmationPermit.Creator == player.GetPlayerID()
+                    ? player.GetPlayerName() : _confirmationPermit.CreatorName,
+                _confirmationPermit.CreatorPlatformIndex,
                 () => CanContinueConfirmation(name, anchorPosition, anchorRotation),
                 () => TryCommitConfirmation(name, anchorPosition, anchorRotation),
                 value => result = value);
-        }
-        finally
-        {
-            _confirmInProgress = false;
-        }
 
         if (!result.Success)
         {
@@ -1117,6 +1121,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     {
         if (_confirmationCanceled ||
             !_confirmInProgress ||
+            _confirmationPermit == null || !_confirmationPermit.IsValid ||
             _nview == null ||
             !_nview.IsValid() ||
             !_nview.IsOwner())
@@ -1147,7 +1152,8 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
 
         zdo.Set(ConfirmedKey, true);
-        return zdo.GetBool(ConfirmedKey, false);
+        _confirmationCommitted = zdo.GetBool(ConfirmedKey, false);
+        return _confirmationCommitted;
     }
 
     private void CompleteCommittedConfirmation()
@@ -1414,6 +1420,11 @@ internal static class ZoneBlueprintPlanChestPrefab
             if (piece != null)
             {
                 piece.SetCreator(playerId, creatorPlatform);
+                Player? creatorPlayer = Player.GetAllPlayers().FirstOrDefault(candidate => candidate.GetPlayerID() == playerId);
+                ZNetPeer? creatorPeer = ZNet.instance?.GetPeer(vfxExcludePeer);
+                string creatorName = creatorPlayer != null ? creatorPlayer.GetPlayerName() :
+                    creatorPeer != null ? ZDOMan.instance?.GetZDO(creatorPeer.m_characterID)?.GetString(ZDOVars.s_playerName, "") ?? "" : "";
+                zdo.Set(ZDOVars.s_creatorName, creatorName);
             }
 
             ZoneBlueprintChestLifecycle.SetOwnerPlatformId(zdo, ownerPlatformId);
