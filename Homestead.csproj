@@ -169,6 +169,7 @@
         <Compile Include="ZoneAreaTargetOverlay.cs"/>
         <Compile Include="ZoneBuildKeyHints.cs"/>
         <Compile Include="ZoneBuildCamera.cs"/>
+        <Compile Include="ZoneBuildCameraHud.cs"/>
         <Compile Include="ZoneBuildCameraFirstPersonCompat.cs"/>
         <Compile Include="ZoneBuildCameraDemisterPatch.cs"/>
         <Compile Include="ZoneBuildCameraDvergerLight.cs"/>

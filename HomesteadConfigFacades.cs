@@ -63,15 +63,23 @@ internal static class AreaRepairConfig
 
 internal static class ClientConfig
 {
+    private static ConfigEntry<HomesteadPlugin.Toggle> _buildCameraTooltip = null!;
     private static ConfigEntry<float> _statusHudX = null!;
     private static ConfigEntry<float> _statusHudY = null!;
     private static ConfigEntry<int> _statusHudFontSize = null!;
 
     public static Vector2 StatusHudPosition => new(Mathf.Clamp(_statusHudX.Value, 0f, 3000f), -Mathf.Clamp(_statusHudY.Value, 0f, 3000f));
     public static int StatusHudFontSize => Mathf.Clamp(_statusHudFontSize.Value, 10, 64);
+    public static bool BuildCameraTooltipEnabled => _buildCameraTooltip.Value == HomesteadPlugin.Toggle.On;
 
     public static void Bind(HomesteadPlugin plugin)
     {
+        _buildCameraTooltip = plugin.config(
+            "02 - Client",
+            "Build Camera Tooltip",
+            HomesteadPlugin.Toggle.On,
+            "Show the Build Camera shortcut and current conditions above the build piece panel, independently of key hints. Client-only; changes apply immediately.",
+            synchronizedSetting: false);
         _statusHudX = plugin.config(
             "02 - Client",
             "Status HUD X Offset",

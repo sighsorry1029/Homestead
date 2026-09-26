@@ -24,7 +24,7 @@ function Assert-True([bool]$Condition, [string]$Message) {
 Assert-True (-not ($assembly.GetReferencedAssemblies() | Where-Object Name -eq 'Jotunn')) 'Final DLL still references Jotunn.'
 $manifest = Get-Content -LiteralPath (Join-Path $projectRoot 'Thunderstore/manifest.json') -Raw | ConvertFrom-Json
 Assert-True (-not ($manifest.dependencies | Where-Object { $_ -match 'Jotunn' })) 'Package still requires Jotunn.'
-Assert-True ($manifest.dependencies -contains 'denikson-BepInExPack_Valheim-5.4.2350') 'Package BepInEx dependency does not match the supported loader.'
+Assert-True ($manifest.dependencies -contains 'denikson-BepInExPack_Valheim-5.4.2351') 'Package BepInEx dependency does not match the supported loader.'
 Write-Output 'PASS: final DLL/package dependencies without Jotunn'
 
 # The old implementation truncated the GUID for long names and returned the

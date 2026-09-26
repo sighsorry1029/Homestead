@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.18
+
+- Added a one-line Build Camera hint above the build piece panel, showing the configured shortcut and current station, comfort, or active-state guidance even when key hints are disabled.
+- Added the client-only `Build Camera Tooltip` setting, enabled by default and changeable during play. The hint follows the build panel and UI scale, supports English and Korean, and hides with the HUD or blocking menus.
+- Positioned the camera hint above Groundwork's terrain-height guidance when both are visible, and shared condition refreshes with existing key hints to avoid duplicate station and comfort lookups.
+- Updated the package dependency to BepInExPack Valheim 5.4.2351.
+
 ## 1.2.17
 
 - Updated Homestead for Valheim 1.0.14, including the current controller-stick input signatures, and fixed returned blueprint materials being lost when Valheim rejects a stack merge after its inventory capacity check.

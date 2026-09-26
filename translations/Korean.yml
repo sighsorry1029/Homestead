@@ -151,6 +151,8 @@ hs_keyhint_build_camera: "건축 카메라<br>{0}"
 hs_keyhint_build_camera_lock: "건축 카메라<br>전환/주시 고정"
 
 hs_build_camera_active: "활성"
+hs_build_camera_tooltip: "{0}: 건축 카메라 — {1}"
+hs_build_camera_unbound: "키 미지정"
 hs_build_camera_need_tool: "건축 도구 필요"
 hs_build_camera_need_station: "제작대 필요"
 hs_build_camera_need_cozy: "안락함 {0} 필요"

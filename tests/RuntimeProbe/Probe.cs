@@ -13,6 +13,7 @@ public sealed class Probe : BaseUnityPlugin
 {
     private Assembly mod;
     private string report;
+    private bool failed;
     private GameObject priceChestFixture;
     private Sprite[] uiSpritesBeforeShutdown;
     private UnityEngine.Object borrowedUiFont;
@@ -37,6 +38,7 @@ public sealed class Probe : BaseUnityPlugin
         bool headless = SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null;
         bool uiOnly = Environment.GetCommandLineArgs().Contains("-homestead-ui-probe");
         bool iconOnly = Environment.GetCommandLineArgs().Contains("-homestead-icon-probe");
+        bool cameraTooltipOnly = Environment.GetCommandLineArgs().Contains("-homestead-camera-tooltip-probe");
         if (!headless)
         {
             yield return new WaitForSeconds(6f);
@@ -87,6 +89,13 @@ public sealed class Probe : BaseUnityPlugin
             Application.Quit();
             yield break;
         }
+        if (cameraTooltipOnly && !headless)
+        {
+            yield return CheckBuildCameraTooltip();
+            if (!failed) File.AppendAllText(report, "COMPLETE camera tooltip\n");
+            Application.Quit(failed ? 1 : 0);
+            yield break;
+        }
         try
         {
             Check(ZNetScene.instance, "world loaded");
@@ -101,6 +110,7 @@ public sealed class Probe : BaseUnityPlugin
         catch (Exception ex) { Fail(ex); yield break; }
         if (!headless)
         {
+            if (!uiOnly) yield return CheckBuildCameraTooltip();
             if (!uiOnly) yield return CheckSharedBuild();
             yield return new WaitForSeconds(2f);
             try { if (!uiOnly) CaptureUi(FindObjectsByType<BuildUi>(FindObjectsInactive.Include, FindObjectsSortMode.None).First().GetComponentInParent<Canvas>().rootCanvas, "build-menu.png"); }
@@ -296,6 +306,157 @@ public sealed class Probe : BaseUnityPlugin
             setting.BoxedValue = previous;
             Call("ZoneBlueprintHammerTable", "UpdateAccess");
             build.SelectPieceList(index);
+        }
+    }
+
+    private IEnumerator CheckBuildCameraTooltip()
+    {
+        Hud hud = Hud.instance;
+        Player player = Player.m_localPlayer;
+        KeyHints hints = FindFirstObjectByType<KeyHints>();
+        FieldInfo keyHintsEnabled = AccessTools.Field(typeof(KeyHints), "m_keyHintsEnabled");
+        bool previousKeyHints = (bool)keyHintsEnabled.GetValue(hints);
+        BepInEx.Configuration.ConfigEntryBase Setting(string type, string field) =>
+            (BepInEx.Configuration.ConfigEntryBase)mod.GetType("Homestead." + type).GetField(field, Any).GetValue(null);
+        var enabled = Setting("ClientConfig", "_buildCameraTooltip");
+        var cameraEnabled = Setting("BuildCameraConfig", "_enabled");
+        var comfort = Setting("BuildCameraConfig", "_minimumComfortLevel");
+        var shortcut = Setting("BuildCameraConfig", "_toggleHotkey");
+        object[] before = { enabled.BoxedValue, cameraEnabled.BoxedValue, comfort.BoxedValue, shortcut.BoxedValue };
+        FieldInfo noCost = AccessTools.Field(typeof(Player), "m_noPlacementCost");
+        bool previousNoCost = (bool)noCost.GetValue(player);
+        GameObject station = null;
+        GameObject terrainHint = null;
+        RectTransform panel = null;
+        Vector3 oldPanelPosition = Vector3.zero;
+        Vector3 oldPanelScale = Vector3.one;
+        string language = Localization.instance.GetSelectedLanguage();
+        void LoadLanguage(string value)
+        {
+            // Match SetLanguage's cache clearing without writing shared platform preferences.
+            AccessTools.Method(typeof(Localization), "Clear").Invoke(Localization.instance, null);
+            Localization.instance.SetupLanguage(value);
+        }
+        void Refresh()
+        {
+            mod.GetType("Homestead.ZoneBuildCameraHud").GetField("_nextRefresh", Any).SetValue(null, 0f);
+            mod.GetType("Homestead.ZoneBuildCamera").GetField("_nextConditionRefresh", Any).SetValue(null, 0f);
+            Call("ZoneBuildCameraHud", "Update", hud);
+            Canvas.ForceUpdateCanvases();
+        }
+        try
+        {
+            try
+            {
+                enabled.BoxedValue = Enum.Parse(enabled.SettingType, "On");
+                cameraEnabled.BoxedValue = Enum.Parse(cameraEnabled.SettingType, "On");
+                keyHintsEnabled.SetValue(hints, false);
+                LoadLanguage("English");
+                // The fixture skips the Valkyrie ride; reset its disabled intro animator too.
+                // Otherwise TextViewer.IsVisible keeps reporting the interrupted intro state.
+                TextViewer.instance.Hide();
+                TextViewer.instance.m_introRoot.SetActive(true);
+                Animator intro = TextViewer.instance.m_introRoot.GetComponent<Animator>();
+                intro.Rebind(); intro.Update(0f);
+                TextViewer.instance.HideIntro();
+                noCost.SetValue(player, true);
+                if (!player.InPlaceMode())
+                {
+                    GameObject prefab = ObjectDB.instance.GetItemPrefab("Hammer");
+                    ItemDrop.ItemData hammer = prefab.GetComponent<ItemDrop>().m_itemData.Clone();
+                    hammer.m_dropPrefab = prefab;
+                    player.GetInventory().AddItem(hammer);
+                    player.EquipItem(hammer);
+                }
+                AccessTools.Method(typeof(Player), "UpdateAvailablePiecesList").Invoke(player, null);
+                Hud.CloseBuildUi();
+                Check(player.SetSelectedPiece(ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>()), "wood wall selected for camera tooltip fixture");
+            }
+            catch (Exception ex) { Fail(ex); yield break; }
+            yield return new WaitForSeconds(1f);
+            try
+            {
+                Refresh();
+                var label = (TMPro.TextMeshProUGUI)mod.GetType("Homestead.ZoneBuildCameraHud").GetField("_label", Any).GetValue(null);
+                Check(!(bool)Call("ZoneBuildCamera", "IsInputBlocked", true), "camera tooltip fixture has no blocking menu or intro");
+                Check(label && label.gameObject.activeInHierarchy, "camera tooltip visible with key hints disabled");
+                Check(label.text.Contains((string)Call("ZoneBuildCamera", "GetConditionText", player)), "tooltip uses actual camera requirement");
+                label.ForceMeshUpdate();
+                Check(label.textInfo.lineCount == 1 && !label.raycastTarget, "camera tooltip is one noninteractive line");
+                panel = (RectTransform)label.transform.parent;
+                oldPanelPosition = panel.localPosition; oldPanelScale = panel.localScale;
+                Vector3 labelBefore = label.transform.position;
+                panel.localPosition += new Vector3(40f, 30f, 0f);
+                panel.localScale *= 0.8f;
+                Refresh();
+                Check(label.transform.position != labelBefore && label.rectTransform.anchoredPosition == new Vector2(0, 8), "tooltip follows panel movement and scaling");
+                panel.localPosition = oldPanelPosition; panel.localScale = oldPanelScale;
+                CaptureUi(hud.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "build-camera-tooltip-en.png");
+
+                enabled.BoxedValue = Enum.Parse(enabled.SettingType, "Off"); Refresh();
+                Check(!label.gameObject.activeSelf, "client toggle hides camera tooltip immediately");
+                enabled.BoxedValue = Enum.Parse(enabled.SettingType, "On"); Refresh();
+                Check(label.gameObject.activeSelf, "client toggle reuses camera tooltip");
+                shortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.K, KeyCode.LeftShift); Refresh();
+                Check(label.text.Contains("Shift+K"), "tooltip follows rebound camera shortcut");
+                cameraEnabled.BoxedValue = Enum.Parse(cameraEnabled.SettingType, "Off"); Refresh();
+                Check(!label.gameObject.activeSelf, "disabled build camera hides tooltip");
+                cameraEnabled.BoxedValue = Enum.Parse(cameraEnabled.SettingType, "On");
+
+                station = Instantiate(ZNetScene.instance.GetPrefab("piece_workbench"), player.transform.position + Vector3.right * 2f, Quaternion.identity);
+            }
+            catch (Exception ex) { Fail(ex); yield break; }
+            // CraftingStation joins the game's station list in Start, on the next frame.
+            yield return null;
+            try
+            {
+                var label = (TMPro.TextMeshProUGUI)mod.GetType("Homestead.ZoneBuildCameraHud").GetField("_label", Any).GetValue(null);
+                comfort.BoxedValue = 30; Refresh();
+                Check(label.text.Contains((string)Call("HomesteadLocalization", "Format", "hs_build_camera_need_cozy", new object[] { 30 })), "tooltip explains unmet comfort condition");
+                comfort.BoxedValue = 0; Refresh();
+                Check(label.text.Contains((string)Call("HomesteadLocalization", "Text", "hs_build_camera_station_ready")), "tooltip reflects ready station without comfort restriction");
+                Check((bool)Call("ZoneBuildCamera", "EnableBuildMode"), "camera activates for tooltip fixture"); Refresh();
+                Check(label.text.Contains((string)Call("HomesteadLocalization", "Text", "hs_build_camera_active")), "tooltip reflects active camera");
+                Call("ZoneBuildCamera", "DisableBuildMode");
+
+                terrainHint = new GameObject("Groundwork_TerrainHeightHint", typeof(RectTransform));
+                var terrainRect = (RectTransform)terrainHint.transform;
+                terrainRect.SetParent(panel, false); terrainRect.pivot = Vector2.zero;
+                terrainRect.anchoredPosition = new Vector2(0, 8); terrainRect.sizeDelta = new Vector2(400, 44); Refresh();
+                Check(label.rectTransform.anchoredPosition.y >= 56f, "tooltip clears a visible Groundwork hint fixture");
+                terrainHint.SetActive(false); Refresh();
+                Check(label.rectTransform.anchoredPosition.y == 8f, "tooltip returns when terrain hint hides");
+
+                LoadLanguage("Korean");
+                AccessTools.Method(typeof(Hud), "SetupPieceInfo").Invoke(hud, new object[] { ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>() });
+                Refresh();
+                Check(label.text.Contains("건축 카메라"), "camera tooltip localized in Korean");
+                CaptureUi(hud.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "build-camera-tooltip-ko.png");
+
+                var root = (GameObject)AccessTools.Field(typeof(Hud), "m_rootObject").GetValue(hud);
+                Vector3 rootPosition = root.transform.localPosition;
+                root.transform.localPosition = new Vector3(10000, 0, 0); Refresh();
+                Check(!label.gameObject.activeSelf, "hidden HUD also hides camera tooltip");
+                root.transform.localPosition = rootPosition;
+                var font = label.font;
+                Call("ZoneBuildCameraHud", "Shutdown"); Refresh();
+                var rebuilt = (TMPro.TextMeshProUGUI)mod.GetType("Homestead.ZoneBuildCameraHud").GetField("_label", Any).GetValue(null);
+                Check(rebuilt && rebuilt != label && font && rebuilt.font == font, "tooltip recreation preserves borrowed native font");
+                FindFirstObjectByType<BuildUi>(FindObjectsInactive.Include).OpenBuildMenu(); Refresh();
+                Check(!rebuilt.gameObject.activeSelf, "build selection menu hides camera tooltip");
+            }
+            catch (Exception ex) { Fail(ex); yield break; }
+        }
+        finally
+        {
+            Call("ZoneBuildCamera", "DisableBuildMode");
+            enabled.BoxedValue = before[0]; cameraEnabled.BoxedValue = before[1]; comfort.BoxedValue = before[2]; shortcut.BoxedValue = before[3];
+            keyHintsEnabled.SetValue(hints, previousKeyHints);
+            noCost.SetValue(player, previousNoCost);
+            LoadLanguage(language);
+            if (panel) { panel.localPosition = oldPanelPosition; panel.localScale = oldPanelScale; }
+            if (terrainHint) Destroy(terrainHint);
+            if (station) ZNetScene.instance.Destroy(station);
         }
     }
 
@@ -830,6 +991,7 @@ public sealed class Probe : BaseUnityPlugin
     }
     private void Fail(Exception ex)
     {
+        failed = true;
         File.AppendAllText(report, "FAIL " + ex + "\n");
         Logger.LogError(ex);
         Application.Quit(1);

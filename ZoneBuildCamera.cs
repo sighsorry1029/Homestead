@@ -39,6 +39,9 @@ internal static class ZoneBuildCamera
     private static float _nextMessageTime;
     private static Transform? _lookAtTarget;
     private static Vector3 _lookAtTargetOffset = Vector3.zero;
+    private static Player? _conditionPlayer;
+    private static float _nextConditionRefresh;
+    private static string _conditionText = "";
 
     internal static void Initialize(ManualLogSource logger)
     {
@@ -51,6 +54,9 @@ internal static class ZoneBuildCamera
         ZoneBuildCameraDvergerLight.CleanupAll();
         _buildActionNoiseSuppressionDepth = 0;
         _nextMessageTime = 0f;
+        _conditionPlayer = null;
+        _conditionText = "";
+        _nextConditionRefresh = 0f;
     }
 
     internal static void Update()
@@ -230,7 +236,19 @@ internal static class ZoneBuildCamera
         }
     }
 
-    internal static string GetKeyHintConditionText(Player player)
+    internal static string GetConditionText(Player player)
+    {
+        // Both HUD surfaces share the station/comfort lookup, even with key hints disabled.
+        if (_conditionPlayer != player || Time.unscaledTime >= _nextConditionRefresh)
+        {
+            _conditionPlayer = player;
+            _conditionText = EvaluateConditionText(player);
+            _nextConditionRefresh = Time.unscaledTime + 0.35f;
+        }
+        return _conditionText;
+    }
+
+    private static string EvaluateConditionText(Player player)
     {
         if (!IsEnabled() || !player)
         {
@@ -319,6 +337,7 @@ internal static class ZoneBuildCamera
     private static void ResetCameraSessionState()
     {
         ClearLookAtLock();
+        _nextConditionRefresh = 0f;
     }
 
     private static void UpdateMaxPlaceDistanceOverride()

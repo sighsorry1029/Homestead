@@ -151,6 +151,8 @@ hs_keyhint_build_camera: "Build camera<br>{0}"
 hs_keyhint_build_camera_lock: "Build camera<br>toggle/look lock"
 
 hs_build_camera_active: "Active"
+hs_build_camera_tooltip: "{0}: Build camera — {1}"
+hs_build_camera_unbound: "Unbound"
 hs_build_camera_need_tool: "Need build tool"
 hs_build_camera_need_station: "Need station"
 hs_build_camera_need_cozy: "Comfort {0} required"

@@ -5,6 +5,7 @@ param(
     [string]$ServerInstall = 'D:/SteamLibrary/steamapps/common/Valheim dedicated server',
     [switch]$UiOnly,
     [switch]$IconOnly,
+    [switch]$CameraTooltipOnly,
     [int]$Width = 1280,
     [int]$Height = 720
 )
@@ -33,6 +34,7 @@ Set-Content -LiteralPath "$root/homestead-probe.enabled" -Value 'Isolated test o
 $arguments = @('-batchmode', '-savedir', "`"$root/saves`"", '-logFile', "`"$root/unity.log`"")
 if ($UiOnly) { $arguments += '-homestead-ui-probe' }
 if ($IconOnly) { $arguments += '-homestead-icon-probe' }
+if ($CameraTooltipOnly) { $arguments += '-homestead-camera-tooltip-probe' }
 if ($Role -eq 'server') {
     $arguments += @('-nographics', '-name', 'HomesteadCompatibility', '-port', '2499', '-world', 'HomesteadCompatibility', '-password', 'codex-test-only', '-public', '0')
 } else {

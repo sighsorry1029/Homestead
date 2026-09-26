@@ -15,15 +15,11 @@ internal static class ZoneBuildKeyHints
 {
     private const string TemplatePath = "BuildHints/Keyboard/AltPlace";
     private const string FallbackTemplatePath = "BuildHints/Keyboard/Snap";
-    private const float BuildCameraConditionRefreshInterval = 0.35f;
 
     private static GameObject? _offsetHint;
     private static GameObject? _gridHint;
     private static GameObject? _buildCameraHint;
     private static readonly Dictionary<int, HintWidgets> HintWidgetCache = [];
-    private static Player? _cachedBuildCameraConditionPlayer;
-    private static float _nextBuildCameraConditionRefresh;
-    private static string _cachedBuildCameraCondition = "";
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(KeyHints), nameof(KeyHints.Awake))]
@@ -101,7 +97,7 @@ internal static class ZoneBuildKeyHints
         string buildCameraCondition = "";
         if (showBuildHints && player != null && ZoneBuildCamera.IsEnabled())
         {
-            buildCameraCondition = GetCachedBuildCameraConditionText(player);
+            buildCameraCondition = ZoneBuildCamera.GetConditionText(player);
         }
 
         SetHint(
@@ -224,18 +220,6 @@ internal static class ZoneBuildKeyHints
         {
             target.SetActive(active);
         }
-    }
-
-    private static string GetCachedBuildCameraConditionText(Player player)
-    {
-        if (_cachedBuildCameraConditionPlayer != player || Time.unscaledTime >= _nextBuildCameraConditionRefresh)
-        {
-            _cachedBuildCameraConditionPlayer = player;
-            _cachedBuildCameraCondition = ZoneBuildCamera.GetKeyHintConditionText(player);
-            _nextBuildCameraConditionRefresh = Time.unscaledTime + BuildCameraConditionRefreshInterval;
-        }
-
-        return _cachedBuildCameraCondition;
     }
 
     private static Transform? GetKeyRoot(GameObject hint, int index)

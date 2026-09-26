@@ -77,6 +77,7 @@ internal static class HomesteadFeatureBootstrap
     {
         ZoneSessionResetRegistry.ResetForWorldSession("shutdown");
         ZoneBuildCameraFirstPersonCompat.Shutdown();
+        ZoneBuildCameraHud.Shutdown();
         ZoneBlueprintChestMapPins.Shutdown();
         ZoneBlueprintChestZdoRegistry.Shutdown();
         ZoneBlueprintStoreDraftRepository.Flush(force: true);
