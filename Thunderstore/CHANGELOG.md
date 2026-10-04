@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.19
+
+- Fixed unexpected cultivator rotation changes when resizing PlantEasily's planting grid with LB + D-pad or Right Ctrl + arrow keys, and after planting.
+- Limited ordinary placement rotation, position offsets, X/Z tilt, grid snapping, and their key hints to hammer build tables so they no longer interfere with cultivators and other non-hammer tools. Blueprint, area-tool, and Build Camera controls remain unchanged.
+- Restored the previous rotation step when leaving hammer placement and during session cleanup, without overwriting a later change made by another rotation mod.
+
 ## 1.2.18
 
 - Added a one-line Build Camera hint above the build piece panel, showing the configured shortcut and current station, comfort, or active-state guidance even when key hints are disabled.

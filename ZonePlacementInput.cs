@@ -6,6 +6,12 @@ internal static class ZonePlacementInput
 {
     private const float InputEpsilon = 0.0001f;
 
+    public static bool IsHammerPlacement(Player? player)
+    {
+        PieceTable? table = player != null ? player.GetBuildTool() : null;
+        return table != null && ZoneBlueprintHammerTable.LooksLike(table);
+    }
+
     public static bool IsPlaceActionDown()
     {
         return !Hud.InRadial() &&

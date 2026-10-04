@@ -94,6 +94,7 @@ internal static class ZoneBuildKeyHints
 
         bool areaToolActive = ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive;
         bool snapPointToolActive = ZoneBlueprintSnapPointTool.IsActive;
+        bool showPlacementHints = showBuildHints && ZonePlacementInput.IsHammerPlacement(player);
         string buildCameraCondition = "";
         if (showBuildHints && player != null && ZoneBuildCamera.IsEnabled())
         {
@@ -102,7 +103,7 @@ internal static class ZoneBuildKeyHints
 
         SetHint(
             _offsetHint,
-            showBuildHints && PlacementControlConfig.PlacementAdjustEnabled && !snapPointToolActive,
+            showPlacementHints && PlacementControlConfig.PlacementAdjustEnabled && !snapPointToolActive,
             HomesteadLocalization.Text("hs_keyhint_adjust_offset"),
             "Arrows",
             "PgUp/PgDn",
@@ -110,7 +111,7 @@ internal static class ZoneBuildKeyHints
 
         SetHint(
             _gridHint,
-            showBuildHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !areaToolActive && !snapPointToolActive,
+            showPlacementHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !areaToolActive && !snapPointToolActive,
             ZoneGridSnap.IsActive
                 ? HomesteadLocalization.Format("hs_keyhint_grid_on", PlacementControlConfig.GridSnapSize)
                 : HomesteadLocalization.Text("hs_keyhint_grid_off"),

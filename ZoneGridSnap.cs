@@ -75,6 +75,7 @@ internal static class ZoneGridSnap
         Player player = Player.m_localPlayer;
         return player &&
                player.InPlaceMode() &&
+               ZonePlacementInput.IsHammerPlacement(player) &&
                !player.IsDead() &&
                player.TakeInput() &&
                !global::Console.IsVisible() &&

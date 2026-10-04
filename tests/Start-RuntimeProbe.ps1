@@ -6,12 +6,20 @@ param(
     [switch]$UiOnly,
     [switch]$IconOnly,
     [switch]$CameraTooltipOnly,
+    [switch]$PlacementOnly,
+    [string]$PlantEasilyAssemblyPath,
+    [string]$AssemblyPath,
     [int]$Width = 1280,
     [int]$Height = 720
 )
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $root = Join-Path $project "artifacts/runtime-$Role"
+if ($PlacementOnly) {
+    if ($Role -ne 'client') { throw 'The placement probe requires a graphical client.' }
+    if (-not (Test-Path -LiteralPath $PlantEasilyAssemblyPath -PathType Leaf)) { throw 'Supply the PlantEasily DLL for the placement probe.' }
+    $root = Join-Path $project 'artifacts/runtime-placement-client'
+}
 $install = if ($Role -eq 'server') { $ServerInstall } else { $ClientInstall }
 $exe = if ($Role -eq 'server') { 'valheim_server.exe' } else { 'valheim.exe' }
 $data = if ($Role -eq 'server') { 'valheim_server_Data' } else { 'valheim_Data' }
@@ -28,13 +36,17 @@ Get-ChildItem -LiteralPath $install -File | Where-Object { $_.Extension -in '.dl
 if ($Role -eq 'server') { Set-Content -LiteralPath "$root/steam_appid.txt" -Value '892970' -Encoding ascii }
 Copy-Item -LiteralPath "$ClientInstall/winhttp.dll", "$ClientInstall/doorstop_config.ini" -Destination $root -Force
 Get-ChildItem -LiteralPath "$ClientInstall/BepInEx/core" -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination "$root/BepInEx/core" -Force }
-Copy-Item -LiteralPath "$project/bin/$Configuration/Homestead.dll", "$PSScriptRoot/RuntimeProbe/bin/Debug/net48/RuntimeProbe.dll" -Destination "$root/BepInEx/plugins" -Force
+if ([string]::IsNullOrWhiteSpace($AssemblyPath)) { $AssemblyPath = "$project/bin/$Configuration/Homestead.dll" }
+Copy-Item -LiteralPath $AssemblyPath -Destination "$root/BepInEx/plugins/Homestead.dll" -Force
+Copy-Item -LiteralPath "$PSScriptRoot/RuntimeProbe/bin/Debug/net48/RuntimeProbe.dll" -Destination "$root/BepInEx/plugins" -Force
+if ($PlacementOnly) { Copy-Item -LiteralPath $PlantEasilyAssemblyPath -Destination "$root/BepInEx/plugins/Advize_PlantEasily.dll" -Force }
 Copy-Item -LiteralPath "$project/samples/sample_001.blueprint" -Destination "$root/probe.blueprint" -Force
 Set-Content -LiteralPath "$root/homestead-probe.enabled" -Value 'Isolated test only'
 $arguments = @('-batchmode', '-savedir', "`"$root/saves`"", '-logFile', "`"$root/unity.log`"")
 if ($UiOnly) { $arguments += '-homestead-ui-probe' }
 if ($IconOnly) { $arguments += '-homestead-icon-probe' }
 if ($CameraTooltipOnly) { $arguments += '-homestead-camera-tooltip-probe' }
+if ($PlacementOnly) { $arguments += '-homestead-placement-probe' }
 if ($Role -eq 'server') {
     $arguments += @('-nographics', '-name', 'HomesteadCompatibility', '-port', '2499', '-world', 'HomesteadCompatibility', '-password', 'codex-test-only', '-public', '0')
 } else {

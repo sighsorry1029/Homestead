@@ -153,13 +153,20 @@ internal static class ZoneBlueprintHammerTable
 
     public static bool LooksLike(PieceTable table)
     {
-        string name = table.name.ToLowerInvariant();
-        if (name.Contains("hammer"))
+        if (table.name.IndexOf("hammer", StringComparison.OrdinalIgnoreCase) >= 0)
         {
             return true;
         }
 
-        return table.m_pieces.Any(piece => piece && Utils.GetPrefabName(piece).Equals("piece_repair", StringComparison.OrdinalIgnoreCase));
+        foreach (GameObject piece in table.m_pieces)
+        {
+            if (piece && Utils.GetPrefabName(piece).Equals("piece_repair", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static void SanitizeLocalPlayerTables(bool removeBlueprintPieces)

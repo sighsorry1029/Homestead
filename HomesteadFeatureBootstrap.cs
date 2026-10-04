@@ -51,6 +51,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneSessionResetRegistry.Register("Blueprint plan RPC", ZoneBlueprintPlanRpc.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint store", ZoneBlueprintStore.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Build camera", ZoneBuildCamera.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Placement adjustments", ZonePlacementAdjust.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("ContentsWithin preview", ZoneContentsWithinBlueprintChestPreview.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Dvergr circlet", ZoneDvergrCirclet.ResetForWorldSession);
     }

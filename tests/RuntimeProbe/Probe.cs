@@ -39,6 +39,7 @@ public sealed class Probe : BaseUnityPlugin
         bool uiOnly = Environment.GetCommandLineArgs().Contains("-homestead-ui-probe");
         bool iconOnly = Environment.GetCommandLineArgs().Contains("-homestead-icon-probe");
         bool cameraTooltipOnly = Environment.GetCommandLineArgs().Contains("-homestead-camera-tooltip-probe");
+        bool placementOnly = Environment.GetCommandLineArgs().Contains("-homestead-placement-probe");
         if (!headless)
         {
             yield return new WaitForSeconds(6f);
@@ -72,6 +73,19 @@ public sealed class Probe : BaseUnityPlugin
             if (valkyrie && Player.m_localPlayer.InIntro()) valkyrie.DropPlayer();
             while (Player.m_localPlayer.InCutscene() && Time.realtimeSinceStartup < deadline) yield return null;
             yield return new WaitForSeconds(1f);
+        }
+        if (placementOnly && !headless)
+        {
+            IEnumerator placement = CheckCultivatorRotation();
+            while (true)
+            {
+                try { if (!placement.MoveNext()) break; }
+                catch (Exception ex) { Fail(ex); yield break; }
+                yield return placement.Current;
+            }
+            File.AppendAllText(report, "COMPLETE placement\n");
+            Application.Quit();
+            yield break;
         }
         if (iconOnly)
         {
@@ -158,6 +172,124 @@ public sealed class Probe : BaseUnityPlugin
         }
         File.AppendAllText(report, "COMPLETE\n");
         Application.Quit();
+    }
+
+    private IEnumerator CheckCultivatorRotation()
+    {
+        Player player = Player.m_localPlayer;
+        Check(player && ObjectDB.instance, "world loaded for placement probe");
+        // Keep this short fixture above water so the player's next Update does
+        // not automatically unequip the tool between coroutine frames.
+        Rigidbody body = player.GetComponent<Rigidbody>();
+        body.position = new Vector3(body.position.x, Mathf.Max(body.position.y, 100f), body.position.z);
+        body.linearVelocity = Vector3.zero;
+        // Skipping the ride leaves the disabled intro animator's visible state
+        // behind; clear it before checking the normal gameplay input gates.
+        TextViewer.instance.Hide();
+        TextViewer.instance.m_introRoot.SetActive(true);
+        Animator intro = TextViewer.instance.m_introRoot.GetComponent<Animator>();
+        intro.Rebind(); intro.Update(0f);
+        TextViewer.instance.HideIntro();
+        var plantPlugin = BepInEx.Bootstrap.Chainloader.PluginInfos["advize.PlantEasily"].Instance;
+        var rows = plantPlugin.Config.Bind("General", "Rows", 2);
+        var columns = plantPlugin.Config.Bind("General", "Columns", 2);
+        plantPlugin.Config.Bind("General", "ModActive", true).Value = true;
+        var rotation = AccessTools.Field(typeof(Player), "m_placeRotation");
+        var step = AccessTools.Field(typeof(Player), "m_placeRotationDegrees");
+        var setup = AccessTools.Method(typeof(Player), "SetupPlacementGhost");
+        var updateGhost = AccessTools.Method(typeof(Player), "UpdatePlacementGhost");
+        var config = mod.GetType("Homestead.PlacementControlConfig");
+        BepInEx.Configuration.ConfigEntryBase Setting(string name) =>
+            (BepInEx.Configuration.ConfigEntryBase)config.GetField(name, Any).GetValue(null);
+        var rotationStep = Setting("_placementRotationStep");
+        rotationStep.BoxedValue = 22.5f;
+        AccessTools.Field(typeof(Player), "m_noPlacementCost").SetValue(player, true);
+        void SwitchTool(ItemDrop.ItemData item)
+        {
+            // The isolated intro can drop the fixture into water.
+            AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
+            Check(player.EquipItem(item), "equip fixture tool: " + item.m_shared.m_name);
+            Check(player.GetBuildTool(), "build table available: " + item.m_shared.m_name);
+        }
+        ItemDrop.ItemData Equip(string name)
+        {
+            GameObject prefab = ObjectDB.instance.GetItemPrefab(name);
+            ItemDrop.ItemData item = prefab.GetComponent<ItemDrop>().m_itemData.Clone();
+            item.m_dropPrefab = prefab;
+            item.m_durability = item.GetMaxDurability();
+            Check(player.GetInventory().AddItem(item), "add fixture tool: " + name);
+            SwitchTool(item);
+            return item;
+        }
+
+        ItemDrop.ItemData cultivator = Equip("Cultivator");
+        Piece plant = player.GetBuildTool().m_pieces
+            .Where(p => p && p.GetComponent<Plant>()).Select(p => p.GetComponent<Piece>())
+            .First(p => p && p.m_randomInitBuildRotation);
+        Check(player.SetSelectedPiece(plant), "select random-initial-rotation plant: " + plant.name);
+        Check(Harmony.GetPatchInfo(setup).Owners.Contains("advize.PlantEasily"), "actual PlantEasily patches installed");
+        step.SetValue(player, 22.5f);
+        rotation.SetValue(player, 4);
+        UnityEngine.Random.InitState(2718);
+        // These are the real config events fired by PE's LB + D-pad handler.
+        // Physical controller input is not synthesized by this fixture.
+        for (int i = 0; i < 8; i++)
+        {
+            if (i % 2 == 0) rows.Value = rows.Value == 2 ? 3 : 2;
+            else columns.Value = columns.Value == 2 ? 3 : 2;
+            updateGhost.Invoke(player, new object[] { false });
+            Check((int)rotation.GetValue(player) == 4 && (float)step.GetValue(player) == 22.5f,
+                "PlantEasily resize preserves 90-degree yaw, iteration " + i);
+        }
+
+        ItemDrop.ItemData hammer = Equip("Hammer");
+        // PE clears its old Unity ghost references after deferred destruction.
+        yield return null;
+        Piece wall = ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>();
+        Check(player.SetSelectedPiece(wall), "select ordinary hammer wall");
+        rotationStep.BoxedValue = 5f;
+        updateGhost.Invoke(player, new object[] { false });
+        Check((float)step.GetValue(player) == 5f, "hammer uses configured 5-degree rotation step");
+        rotation.SetValue(player, 18);
+        SwitchTool(cultivator);
+        Check((float)step.GetValue(player) == 22.5f && (int)rotation.GetValue(player) == 4,
+            "hammer-to-cultivator restores step before PlantEasily snapshots yaw");
+        yield return null;
+        Check(player.SetSelectedPiece(plant), "reselect plant after tool change");
+        rows.Value = rows.Value == 2 ? 3 : 2;
+        updateGhost.Invoke(player, new object[] { false });
+        Check((float)step.GetValue(player) == 22.5f && (int)rotation.GetValue(player) == 4,
+            "custom hammer step does not leak into subsequent plant resize");
+
+        Setting("_placementXAxisRotation").BoxedValue = 45f;
+        Setting("_placementZAxisRotation").BoxedValue = 30f;
+        mod.GetType("Homestead.ZoneGridSnap").GetField("_active", Any).SetValue(null, true);
+        Check(!(bool)Call("ZonePlacementAdjust", "IsLocalPlacementContext", player), "cultivator excludes offsets, axis tilt and revalidation");
+        Check(!(bool)Call("ZoneGridSnap", "IsLocalPlacementContext", player), "active hammer grid excludes cultivator");
+        rows.Value = columns.Value = 1;
+        updateGhost.Invoke(player, new object[] { false });
+        player.PlacePiece(plant, player.transform.position + Vector3.forward * 3f, Quaternion.Euler(0, 90, 0), false);
+        Check((int)rotation.GetValue(player) == 4, "PlantEasily planting preserves the next preview rotation");
+
+        SwitchTool(hammer);
+        yield return null;
+        Check(player.SetSelectedPiece(wall), "hammer reselected after planting");
+        updateGhost.Invoke(player, new object[] { false });
+        Check((float)step.GetValue(player) == 5f, "hammer custom rotation restored on return");
+        Check((bool)Call("ZonePlacementAdjust", "IsLocalPlacementContext", player), "hammer placement adjustments retained");
+        Check((bool)Call("ZoneGridSnap", "IsLocalPlacementContext", player), "hammer grid retained");
+        // A later mod's write must not be undone when leaving the hammer.
+        step.SetValue(player, 15f);
+        rotation.SetValue(player, 6);
+        SwitchTool(cultivator);
+        Check((float)step.GetValue(player) == 15f && (int)rotation.GetValue(player) == 6,
+            "leaving hammer preserves a later rotation owner's step and yaw");
+        step.SetValue(player, 22.5f);
+        SwitchTool(hammer);
+        Call("ZonePlacementAdjust", "ResetForWorldSession");
+        Check((float)step.GetValue(player) == 22.5f, "session cleanup restores owned rotation step");
+        Check(mod.GetType("Homestead.ZonePlacementAdjust").GetField("_rotationStepPlayer", Any).GetValue(null) == null,
+            "session cleanup releases player reference");
     }
 
     private void CheckPrefabs()

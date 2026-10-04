@@ -20,10 +20,24 @@ internal static class ZonePlacementAdjust
     private static float _heightOffset;
     private static Vector3 _horizontalOffset;
     private static float _lastHudYaw = float.NaN;
+    private static Player? _rotationStepPlayer;
+    private static float _previousRotationStep;
+    private static float _appliedRotationStep;
 
     internal static void Initialize(ManualLogSource logger)
     {
         Log = logger;
+    }
+
+    internal static void ResetForWorldSession()
+    {
+        if (_rotationStepPlayer)
+        {
+            RestoreRotationStep(_rotationStepPlayer);
+        }
+
+        _rotationStepPlayer = null;
+        ResetOffsets();
     }
 
     [HarmonyPatch(typeof(Player), nameof(Player.UpdatePlacementGhost))]
@@ -155,6 +169,14 @@ internal static class ZonePlacementAdjust
     [HarmonyPatch(typeof(Player), nameof(Player.SetupPlacementGhost))]
     private static class PlayerSetupPlacementGhostRotationPatch
     {
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(Player __instance)
+        {
+            // Restore the previous tool's step before PlantEasily (or vanilla)
+            // captures or randomizes the new tool's rotation index.
+            ApplyNativeRotationStep(__instance);
+        }
+
         [HarmonyPriority(Priority.Last)]
         private static void Postfix(Player __instance)
         {
@@ -207,6 +229,7 @@ internal static class ZonePlacementAdjust
                Player.m_localPlayer &&
                player == Player.m_localPlayer &&
                player.InPlaceMode() &&
+               ZonePlacementInput.IsHammerPlacement(player) &&
                !player.IsDead() &&
                player.m_placementGhost;
     }
@@ -221,8 +244,14 @@ internal static class ZonePlacementAdjust
 
     private static void ApplyNativeRotationStep(Player player)
     {
-        if (!IsLocalPlayer(player) || IsComfyGizmoLoaded())
+        if (!IsLocalPlayer(player))
         {
+            return;
+        }
+
+        if (!ZonePlacementInput.IsHammerPlacement(player) || IsComfyGizmoLoaded())
+        {
+            RestoreRotationStep(player);
             return;
         }
 
@@ -233,6 +262,35 @@ internal static class ZonePlacementAdjust
             return;
         }
 
+        if (_rotationStepPlayer != player || Mathf.Abs(oldStep - _appliedRotationStep) > 0.001f)
+        {
+            _rotationStepPlayer = player;
+            _previousRotationStep = oldStep;
+        }
+
+        SetRotationStep(player, step);
+        _appliedRotationStep = step;
+    }
+
+    private static void RestoreRotationStep(Player player)
+    {
+        if (_rotationStepPlayer != player)
+        {
+            return;
+        }
+
+        // Another rotation mod may have taken over since our last write.
+        if (Mathf.Abs(player.m_placeRotationDegrees - _appliedRotationStep) <= 0.001f)
+        {
+            SetRotationStep(player, _previousRotationStep);
+        }
+
+        _rotationStepPlayer = null;
+    }
+
+    private static void SetRotationStep(Player player, float step)
+    {
+        float oldStep = player.m_placeRotationDegrees;
         if (oldStep > 0.001f)
         {
             float yaw = oldStep * player.m_placeRotation;
@@ -253,6 +311,7 @@ internal static class ZonePlacementAdjust
     {
         if (player == null ||
             !IsLocalPlayer(player) ||
+            !ZonePlacementInput.IsHammerPlacement(player) ||
             piece == null ||
             !piece.m_randomInitBuildRotation ||
             IsComfyGizmoLoaded())
