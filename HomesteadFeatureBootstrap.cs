@@ -31,6 +31,7 @@ internal static class HomesteadFeatureBootstrap
         RegisterSessionResetters();
 
         harmony.PatchAll(Assembly.GetExecutingAssembly());
+        PlantEasilyCompat.Initialize(logger, harmony);
         ZoneBuildCameraFirstPersonCompat.Initialize(logger, harmony);
         VeiledRecipesCompat.Initialize(logger);
         AzuCraftyBoxesCompat.Initialize(logger, harmony);
@@ -54,6 +55,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneSessionResetRegistry.Register("Placement adjustments", ZonePlacementAdjust.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("ContentsWithin preview", ZoneContentsWithinBlueprintChestPreview.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Dvergr circlet", ZoneDvergrCirclet.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Status HUD", ZoneAreaToolStatusHud.Shutdown);
     }
 
     public static void Update()
@@ -78,7 +80,7 @@ internal static class HomesteadFeatureBootstrap
     {
         ZoneSessionResetRegistry.ResetForWorldSession("shutdown");
         ZoneBuildCameraFirstPersonCompat.Shutdown();
-        ZoneBuildCameraHud.Shutdown();
+        PlantEasilyCompat.Shutdown();
         ZoneBlueprintChestMapPins.Shutdown();
         ZoneBlueprintChestZdoRegistry.Shutdown();
         ZoneBlueprintStoreDraftRepository.Flush(force: true);

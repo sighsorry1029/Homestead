@@ -63,7 +63,7 @@ internal static class ZoneGridSnap
         }
     }
 
-    private static bool IsLocalPlacementContext(Player player)
+    internal static bool IsLocalPlacementContext(Player player)
     {
         return IsLocalPlaceModeContext() &&
                player == Player.m_localPlayer &&
@@ -75,7 +75,6 @@ internal static class ZoneGridSnap
         Player player = Player.m_localPlayer;
         return player &&
                player.InPlaceMode() &&
-               ZonePlacementInput.IsHammerPlacement(player) &&
                !player.IsDead() &&
                player.TakeInput() &&
                !global::Console.IsVisible() &&

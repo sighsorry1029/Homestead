@@ -40,6 +40,8 @@ public sealed class Probe : BaseUnityPlugin
         bool iconOnly = Environment.GetCommandLineArgs().Contains("-homestead-icon-probe");
         bool cameraTooltipOnly = Environment.GetCommandLineArgs().Contains("-homestead-camera-tooltip-probe");
         bool placementOnly = Environment.GetCommandLineArgs().Contains("-homestead-placement-probe");
+        bool gridOnly = Environment.GetCommandLineArgs().Contains("-homestead-grid-probe");
+        bool rotationOnly = Environment.GetCommandLineArgs().Contains("-homestead-rotation-probe");
         if (!headless)
         {
             yield return new WaitForSeconds(6f);
@@ -74,16 +76,28 @@ public sealed class Probe : BaseUnityPlugin
             while (Player.m_localPlayer.InCutscene() && Time.realtimeSinceStartup < deadline) yield return null;
             yield return new WaitForSeconds(1f);
         }
-        if (placementOnly && !headless)
+        if ((placementOnly || gridOnly || rotationOnly) && !headless)
         {
-            IEnumerator placement = CheckCultivatorRotation();
-            while (true)
+            IEnumerator placement = rotationOnly ? CheckRotationControls() : gridOnly ? CheckCultivatorGrid() : CheckCultivatorRotation();
+            int runtimeErrors = 0;
+            Application.LogCallback onError = (message, stack, type) =>
             {
-                try { if (!placement.MoveNext()) break; }
-                catch (Exception ex) { Fail(ex); yield break; }
-                yield return placement.Current;
+                if (type == LogType.Exception || type == LogType.Error || type == LogType.Assert) runtimeErrors++;
+            };
+            Application.logMessageReceived += onError;
+            try
+            {
+                while (true)
+                {
+                    try { if (!placement.MoveNext()) break; }
+                    catch (Exception ex) { Fail(ex); yield break; }
+                    yield return placement.Current;
+                }
             }
-            File.AppendAllText(report, "COMPLETE placement\n");
+            finally { Application.logMessageReceived -= onError; }
+            if (runtimeErrors != 0) { Fail(new Exception("Placement runtime logged " + runtimeErrors + " errors; inspect unity.log.")); yield break; }
+            Check(true, "no Unity errors during placement checks");
+            File.AppendAllText(report, rotationOnly ? "COMPLETE rotation\n" : gridOnly ? "COMPLETE standalone grid\n" : "COMPLETE placement\n");
             Application.Quit();
             yield break;
         }
@@ -174,7 +188,7 @@ public sealed class Probe : BaseUnityPlugin
         Application.Quit();
     }
 
-    private IEnumerator CheckCultivatorRotation()
+    private void PreparePlacementPlayer()
     {
         Player player = Player.m_localPlayer;
         Check(player && ObjectDB.instance, "world loaded for placement probe");
@@ -190,6 +204,367 @@ public sealed class Probe : BaseUnityPlugin
         Animator intro = TextViewer.instance.m_introRoot.GetComponent<Animator>();
         intro.Rebind(); intro.Update(0f);
         TextViewer.instance.HideIntro();
+    }
+
+    private static KeyCode rotationHeld, rotationDown;
+    private static float rotationScroll;
+    private static bool RotationHeld(BepInEx.Configuration.KeyboardShortcut shortcut, ref bool __result)
+    {
+        __result = shortcut.MainKey != KeyCode.None && shortcut.MainKey == rotationHeld;
+        return false;
+    }
+    private static bool RotationDown(BepInEx.Configuration.KeyboardShortcut shortcut, ref bool __result)
+    {
+        __result = shortcut.MainKey != KeyCode.None && shortcut.MainKey == rotationDown;
+        return false;
+    }
+    private static bool RotationScroll(ref float __result) { __result = rotationScroll; return false; }
+
+    private IEnumerator CheckRotationControls()
+    {
+        PreparePlacementPlayer();
+        Player player = Player.m_localPlayer;
+        player.SetGodMode(true);
+        AccessTools.Field(typeof(Player), "m_noPlacementCost").SetValue(player, true);
+        ItemDrop.ItemData Equip(string name)
+        {
+            GameObject prefab = ObjectDB.instance.GetItemPrefab(name);
+            ItemDrop.ItemData item = prefab.GetComponent<ItemDrop>().m_itemData.Clone();
+            item.m_dropPrefab = prefab;
+            item.m_durability = item.GetMaxDurability();
+            Check(player.GetInventory().AddItem(item), "add rotation fixture " + name);
+            AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
+            Check(player.EquipItem(item), "equip rotation fixture " + name);
+            return item;
+        }
+        ItemDrop.ItemData hammer = Equip("Hammer");
+        yield return new WaitForSeconds(1f);
+        Vector3 center = player.transform.position + Vector3.up * 1000f;
+        player.transform.position = center;
+        player.GetComponent<Rigidbody>().position = center;
+        player.GetComponent<Rigidbody>().linearVelocity = Vector3.zero;
+        Hud.CloseBuildUi();
+        Piece wall = ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>();
+        Check(player.SetSelectedPiece(wall), "rotation fixture selects wall");
+        Type adjust = mod.GetType("Homestead.ZonePlacementAdjust");
+        Type config = mod.GetType("Homestead.PlacementControlConfig");
+        BepInEx.Configuration.ConfigEntryBase Setting(string name) => (BepInEx.Configuration.ConfigEntryBase)config.GetField(name, Any).GetValue(null);
+        Setting("_placementXAxisRotation").BoxedValue = 0f;
+        Setting("_placementZAxisRotation").BoxedValue = 0f;
+        Setting("_placementRotationStep").BoxedValue = 22.5f;
+        var index = AccessTools.Field(typeof(Player), "m_placeRotation");
+        var ghostField = AccessTools.Field(typeof(Player), "m_placementGhost");
+        var updatePlacement = AccessTools.Method(typeof(Player), "UpdatePlacement");
+        var updateGhost = AccessTools.Method(typeof(Player), "UpdatePlacementGhost");
+        GameObject Ghost() => (GameObject)ghostField.GetValue(player);
+        void GhostUpdate() => updateGhost.Invoke(player, new object[] { false });
+        var floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        floor.name = "RotationProbeFloor";
+        floor.layer = LayerMask.NameToLayer("piece");
+        floor.transform.position = center + new Vector3(0, -1f, 3);
+        floor.transform.localScale = new Vector3(15, 0.2f, 15);
+        Transform camera = GameCamera.instance.transform;
+        void Aim(Vector3 target) { camera.position = center + new Vector3(0, 2f, -2); camera.LookAt(target); Physics.SyncTransforms(); }
+        Aim(center + Vector3.forward * 3f);
+        index.SetValue(player, 0);
+        GhostUpdate();
+        Check(Ghost().activeInHierarchy, "active native placement ghost");
+        var input = new Harmony("sighsorry.Homestead.RotationInputProbe");
+        Type helpers = mod.GetType("Homestead.ConfigValueHelpers");
+        input.Patch(AccessTools.Method(helpers, "IsShortcutHeld"), prefix: new HarmonyMethod(typeof(Probe), nameof(RotationHeld)));
+        input.Patch(AccessTools.Method(helpers, "IsShortcutDown"), prefix: new HarmonyMethod(typeof(Probe), nameof(RotationDown)));
+        input.Patch(AccessTools.Method(typeof(ZInput), "GetMouseScrollWheel"), prefix: new HarmonyMethod(typeof(Probe), nameof(RotationScroll)));
+        GameObject target = null;
+        GameObject placed = null;
+        void Press(KeyCode held, KeyCode down, float scroll, bool takeInput = true)
+        {
+            // Separate simulated input frames; repeated calls below deliberately
+            // retain the frame stamp to test duplicate UpdatePlacement/ghost calls.
+            adjust.GetField("_rotationInputFrame", Any).SetValue(null, -1);
+            adjust.GetField("_rotationWheelFrame", Any).SetValue(null, -1);
+            rotationHeld = held; rotationDown = down; rotationScroll = scroll;
+            updatePlacement.Invoke(player, new object[] { takeInput, 0.016f });
+            GhostUpdate();
+        }
+        bool Same(Quaternion a, Quaternion b) => Quaternion.Angle(a, b) < 0.05f;
+        try
+        {
+            Check((bool)adjust.GetField("_rotationWheelFilterInstalled", Any).GetValue(null), "native wheel call isolated by transpiler");
+            if (BepInEx.Bootstrap.Chainloader.PluginInfos.TryGetValue("bruce.valheim.comfymods.gizmo", out var gizmo))
+            {
+                Type rotations = gizmo.Instance.GetType().Assembly.GetType("ComfyGizmo.RotationManager");
+                target = Instantiate(wall.gameObject, center + Vector3.forward * 3f, Quaternion.Euler(27, 47.3f, 18));
+                rotations.GetMethod("MatchPieceRotation").Invoke(null, new object[] { target.GetComponent<Piece>() });
+                Press(KeyCode.Mouse3, KeyCode.LeftBracket, 1f);
+                Check(!(bool)Call("ZonePlacementAdjust", "CanAdjustRotation", player), "actual Gizmo owns ordinary rotation");
+                Check(!(bool)adjust.GetField("_hasTemporaryRotation", Any).GetValue(null), "Gizmo prevents Homestead temporary rotation input");
+                Check((int)index.GetValue(player) == 1, "Gizmo wheel is not suppressed by Homestead");
+                Check(Same(Ghost().transform.rotation, (Quaternion)rotations.GetMethod("GetRotation").Invoke(null, null)), "native ghost uses actual Gizmo quaternion through both transpilers");
+                Check((string)Call("ZonePlacementAdjust", "GetRotationHelp", player) == "", "Homestead rotation help hidden for Gizmo");
+                yield break;
+            }
+            Press(KeyCode.Mouse3, KeyCode.None, 1f);
+            Check((int)index.GetValue(player) == 0 && Same(Ghost().transform.rotation, Quaternion.Euler(22.5f, 0, 0)), "X side button rotates X only, native Y unchanged");
+            updatePlacement.Invoke(player, new object[] { true, 0.016f });
+            GhostUpdate(); GhostUpdate();
+            Check(Same(Ghost().transform.rotation, Quaternion.Euler(22.5f, 0, 0)), "repeated placement/ghost updates consume input once per frame");
+            var snapIndex = AccessTools.Field(typeof(Player), "m_manualSnapPoint");
+            snapIndex.SetValue(player, 0);
+            GhostUpdate();
+            var snapPoints = new System.Collections.Generic.List<Transform>();
+            Ghost().GetComponent<Piece>().GetSnapPoints(snapPoints);
+            int mask = (int)AccessTools.Field(typeof(Player), "m_placeRayMask").GetValue(player);
+            Check(Physics.Raycast(camera.position, camera.forward, out RaycastHit snapHit, 50f, mask), "manual-snap fixture ray hits floor");
+            Check(Vector3.Distance(Ghost().transform.TransformPoint(snapPoints[0].localPosition), snapHit.point) < 0.01f,
+                "native manual snap uses the tilted quaternion before computing position");
+            snapIndex.SetValue(player, -1);
+            GhostUpdate();
+            var existingPieces = new System.Collections.Generic.HashSet<int>(FindObjectsByType<Piece>(FindObjectsSortMode.None).Select(p => p.GetInstanceID()));
+            Check(player.TryPlacePiece(wall), "native TryPlacePiece accepts tilted wall");
+            placed = FindObjectsByType<Piece>(FindObjectsSortMode.None).First(p => !existingPieces.Contains(p.GetInstanceID()) && p.name.StartsWith("woodwall")).gameObject;
+            Check(Same(placed.transform.rotation, Quaternion.Euler(22.5f, 0, 0)) && Same(placed.GetComponent<ZNetView>().GetZDO().GetRotation(), placed.transform.rotation),
+                "placed instance and original ZDO retain preview rotation without applying input twice");
+            placed.SetActive(false); placed.GetComponent<ZNetView>().Destroy(); placed = null;
+            Quaternion previous = Ghost().transform.rotation;
+            Press(KeyCode.Mouse4, KeyCode.None, -1f);
+            Check((int)index.GetValue(player) == 0 && Same(Ghost().transform.rotation, previous * Quaternion.AngleAxis(-22.5f, Vector3.forward)), "Z side button rotates local Z only");
+            previous = Ghost().transform.rotation;
+            Press(KeyCode.None, KeyCode.None, 1f);
+            Check((int)index.GetValue(player) == 1 && Same(Ghost().transform.rotation, Quaternion.AngleAxis(22.5f, Vector3.up) * previous), "unmodified wheel retains native world Y rotation");
+            Press(KeyCode.None, KeyCode.RightBracket, 1f);
+            Check((int)index.GetValue(player) == 0 && Same(Ghost().transform.rotation, Quaternion.identity), "reset clears all three axes");
+            target = Instantiate(wall.gameObject, center + Vector3.forward * 3f, Quaternion.Euler(32, 47.3f, 21));
+            target.GetComponent<WearNTear>().enabled = false;
+            Aim(target.GetComponentInChildren<Collider>().bounds.center);
+            GameObject selected = player.GetBuildTool().GetSelectedPrefab();
+            Press(KeyCode.None, KeyCode.LeftBracket, 0f);
+            Check(player.GetBuildTool().GetSelectedPrefab() == selected && Same(Ghost().transform.rotation, target.transform.rotation), "copy preserves full off-step quaternion and selected piece");
+            foreach (float pitch in new[] { 89.9f, 90f, 90.1f })
+            {
+                target.transform.rotation = Quaternion.Euler(pitch, 47.3f, 21f);
+                Aim(target.GetComponentInChildren<Collider>().bounds.center);
+                Press(KeyCode.None, KeyCode.LeftBracket, 1f);
+                Check(Same(Ghost().transform.rotation, target.transform.rotation), "full quaternion copy near X singularity: " + pitch);
+            }
+            target.transform.rotation = Quaternion.Euler(32, 47.3f, 21);
+            Aim(target.GetComponentInChildren<Collider>().bounds.center);
+            Press(KeyCode.None, KeyCode.LeftBracket, 0f);
+            Quaternion copied = Ghost().transform.rotation;
+            GhostUpdate();
+            Check(Same(Ghost().transform.rotation, copied), "copy survives repeat ghost evaluation");
+            Setting("_placementRotationStep").BoxedValue = 10f;
+            GhostUpdate();
+            Check(Same(Ghost().transform.rotation, copied), "live rotation step change preserves copied quaternion");
+            Setting("_placementRotationStep").BoxedValue = 22.5f;
+            GhostUpdate();
+            Check(player.SetSelectedPiece(ZNetScene.instance.GetPrefab("wood_beam").GetComponent<Piece>()), "switch to another ordinary piece");
+            GhostUpdate();
+            Check(Same(Ghost().transform.rotation, copied), "temporary rotation survives ordinary piece switch");
+            Check((string)Call("ZonePlacementAdjust", "GetRotationHelp", player) is string help && help.Contains("Mouse4") && help.Contains("Mouse5") && help.Contains("[") && help.Contains("]"), "rotation help includes side-button labels and bracket actions");
+            Call("HomesteadUi", "BlockInput", true);
+            try
+            {
+                Press(KeyCode.None, KeyCode.RightBracket, 0f);
+                Check(Same(Ghost().transform.rotation, copied), "custom store/UI input block prevents reset");
+            }
+            finally { Call("HomesteadUi", "BlockInput", false); }
+            Type cameraConfig = mod.GetType("Homestead.BuildCameraConfig");
+            var station = (BepInEx.Configuration.ConfigEntryBase)cameraConfig.GetField("_requireCraftingStation", Any).GetValue(null);
+            var comfort = (BepInEx.Configuration.ConfigEntryBase)cameraConfig.GetField("_minimumComfortLevel", Any).GetValue(null);
+            station.BoxedValue = Enum.Parse(station.SettingType, "Off"); comfort.BoxedValue = 0;
+            Check((bool)Call("ZoneBuildCamera", "EnableBuildMode"), "enable build camera for distant copy");
+            Vector3 targetPosition = target.transform.position;
+            target.transform.position += Vector3.forward * 30f;
+            target.transform.rotation = Quaternion.Euler(14, 73.2f, -18);
+            Physics.SyncTransforms();
+            camera.position = target.transform.position + new Vector3(0, 2f, -3);
+            camera.LookAt(target.GetComponentInChildren<Collider>().bounds.center); Physics.SyncTransforms();
+            GhostUpdate(); Press(KeyCode.None, KeyCode.LeftBracket, 0f);
+            File.AppendAllText(report, $"Camera copy: eyeDistance={Vector3.Distance(player.GetEyePoint(), target.transform.position)}, active={Ghost().activeInHierarchy}, angleError={Quaternion.Angle(Ghost().transform.rotation, target.transform.rotation)}, maxRange={player.m_maxPlaceDistance}\n");
+            Check(Vector3.Distance(player.GetEyePoint(), target.transform.position) > 20f && Same(Ghost().transform.rotation, target.transform.rotation), "build-camera copy uses camera origin rather than distant player's eye");
+            Call("ZoneBuildCamera", "DisableBuildMode");
+            target.transform.position = targetPosition; target.transform.rotation = copied;
+            Physics.SyncTransforms();
+            Aim(target.GetComponentInChildren<Collider>().bounds.center);
+            GhostUpdate(); Press(KeyCode.None, KeyCode.LeftBracket, 0f);
+            Call("ZoneAreaToolStatusHud", "EnsureInstance");
+            Type hudType = mod.GetType("Homestead.ZoneAreaToolStatusHud");
+            var hudState = Hud.instance.GetComponents(hudType).Cast<Behaviour>().First(b => b.enabled);
+            hudType.GetField("_nextContextRefresh", Any).SetValue(hudState, 0f);
+            hudType.GetMethod("Update", Any).Invoke(hudState, null);
+            var label = (TMPro.TextMeshProUGUI)hudType.GetField("_text", Any).GetValue(hudState);
+            label.ForceMeshUpdate();
+            Check(label.text.Contains("Mouse4") && label.text.Contains("RX 32") && label.preferredWidth <= label.rectTransform.rect.width, "unified HUD shows actual copied angles and rotation help within bounds");
+            CaptureUi(Hud.instance.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "rotation-hud.png");
+            Press(KeyCode.Mouse3, KeyCode.None, 1f, takeInput: false);
+            Check(Same(Ghost().transform.rotation, copied), "takeInput false blocks new rotation controls");
+            Setting("_xRotationModifier").BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.None);
+            int beforeIndex = (int)index.GetValue(player);
+            Press(KeyCode.Mouse3, KeyCode.None, 1f);
+            Check((int)index.GetValue(player) == beforeIndex + 1, "unbound axis modifier leaves native wheel available");
+            Setting("_xRotationModifier").BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.Mouse3);
+            Setting("_placementXAxisRotation").BoxedValue = 15f;
+            GhostUpdate();
+            Quaternion nativeYaw = Quaternion.Euler(0, (int)index.GetValue(player) * 22.5f, 0);
+            Check(Same(Ghost().transform.rotation, nativeYaw * Quaternion.Euler(15, 0, 0)), "live X default clears temporary rotation");
+            Press(KeyCode.None, KeyCode.RightBracket, 0f);
+            Check(Same(Ghost().transform.rotation, Quaternion.identity) && (float)Setting("_placementXAxisRotation").BoxedValue == 15f, "reset overrides nonzero default without writing it");
+            foreach (string tool in new[] { "ZoneBlueprintSaveTool", "ZoneAreaDismantleTool", "ZoneBlueprintSnapPointTool" })
+            {
+                Call(tool, "Activate", player);
+                Check(!(bool)Call("ZonePlacementAdjust", "CanAdjustRotation", player) && (string)Call("ZonePlacementAdjust", "GetRotationHelp", player) == "", "rotation controls and help excluded for " + tool);
+                Call(tool, "Deactivate");
+            }
+            ItemDrop.ItemData cultivator = Equip("Cultivator");
+            Check(!(bool)Call("ZonePlacementAdjust", "CanAdjustRotation", player) && !(bool)adjust.GetField("_hasTemporaryRotation", Any).GetValue(null), "cultivator transition releases temporary rotation");
+            AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
+            player.EquipItem(hammer);
+            Check(player.SetSelectedPiece(wall), "return to hammer wall");
+            Aim(center + Vector3.forward * 3f); GhostUpdate();
+            Press(KeyCode.Mouse3, KeyCode.None, 1f);
+            Call("ZonePlacementAdjust", "ResetForWorldSession");
+            Check(!(bool)adjust.GetField("_hasTemporaryRotation", Any).GetValue(null) && adjust.GetField("_inputPlayer", Any).GetValue(null) == null, "session cleanup releases input and quaternion state");
+        }
+        finally
+        {
+            rotationHeld = rotationDown = KeyCode.None; rotationScroll = 0;
+            input.UnpatchSelf();
+            if (target) target.GetComponent<ZNetView>().Destroy();
+            if (placed) placed.GetComponent<ZNetView>().Destroy();
+            Destroy(floor);
+        }
+    }
+
+    private IEnumerator CheckCultivatorGrid()
+    {
+        Check(!BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey("advize.PlantEasily"), "standalone grid without PlantEasily");
+        PreparePlacementPlayer();
+        Player player = Player.m_localPlayer;
+        AccessTools.Field(typeof(Player), "m_noPlacementCost").SetValue(player, true);
+        foreach (string tool in new[] { "Cultivator", "Hammer", "Cultivator" })
+        {
+            GameObject prefab = ObjectDB.instance.GetItemPrefab(tool);
+            ItemDrop.ItemData item = prefab.GetComponent<ItemDrop>().m_itemData.Clone();
+            item.m_dropPrefab = prefab;
+            item.m_durability = item.GetMaxDurability();
+            Check(player.GetInventory().AddItem(item), "add grid fixture tool: " + tool);
+            AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
+            Check(player.EquipItem(item), "equip grid fixture tool: " + tool);
+            yield return null;
+            Piece piece = tool == "Hammer"
+                ? ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>()
+                : player.GetBuildTool().m_pieces.Where(p => p && p.GetComponent<Plant>()).Select(p => p.GetComponent<Piece>()).First();
+            Check(player.SetSelectedPiece(piece), "select grid fixture: " + piece.name);
+            CheckGridSnap(player, tool == "Hammer");
+        }
+    }
+
+    // Simulate the shortcut result, not physical keyboard input. The production
+    // Update gate, toggle, ghost postfix and native hint widgets still run.
+    private static bool GridShortcutPressed(ref bool __result)
+    {
+        __result = true;
+        return false;
+    }
+
+    private void CheckGridSnap(Player player, bool hammer)
+    {
+        Type grid = mod.GetType("Homestead.ZoneGridSnap");
+        var active = grid.GetField("_active", Any);
+        var config = mod.GetType("Homestead.PlacementControlConfig");
+        var spacing = (BepInEx.Configuration.ConfigEntry<float>)config.GetField("_gridSnapSize", Any).GetValue(null);
+        var shortcut = (BepInEx.Configuration.ConfigEntry<BepInEx.Configuration.KeyboardShortcut>)config.GetField("_gridSnapToggleHotkey", Any).GetValue(null);
+        spacing.Value = 0.5f;
+        shortcut.Value = new BepInEx.Configuration.KeyboardShortcut(KeyCode.G);
+        active.SetValue(null, false);
+        var input = new Harmony("sighsorry.Homestead.GridInputProbe");
+        var shortcutMethod = AccessTools.Method(grid, "IsShortcutDownLenient");
+        input.Patch(shortcutMethod, prefix: new HarmonyMethod(typeof(Probe), nameof(GridShortcutPressed)));
+        try
+        {
+            Call("ZoneGridSnap", "Update");
+            Check((bool)active.GetValue(null), "grid shortcut toggles on: " + player.GetBuildTool().name);
+            var ghost = (GameObject)AccessTools.Field(typeof(Player), "m_placementGhost").GetValue(player);
+            Vector3 position = new Vector3(1.24f, 50.123f, -1.24f);
+            ghost.transform.position = position;
+            Quaternion rotation = ghost.transform.rotation;
+            Call("ZoneGridSnap+PlayerUpdatePlacementGhostPatch", "Postfix", player);
+            Check(Vector3.Distance(ghost.transform.position, new Vector3(1f, position.y, -1f)) < 0.0001f &&
+                  Quaternion.Angle(ghost.transform.rotation, rotation) < 0.0001f, "grid aligns crop/wall XZ without changing height or rotation");
+            AccessTools.Method(typeof(Player), "UpdatePlacementGhost").Invoke(player, new object[] { false });
+            Vector3 nativePosition = ghost.transform.position;
+            Check(Mathf.Abs(nativePosition.x * 2f - Mathf.Round(nativePosition.x * 2f)) < 0.001f &&
+                  Mathf.Abs(nativePosition.z * 2f - Mathf.Round(nativePosition.z * 2f)) < 0.001f, "native ghost update retains half-meter grid alignment");
+            if (!hammer) CheckGridBoundaries(player, ghost);
+            KeyHints hints = FindFirstObjectByType<KeyHints>();
+            AccessTools.Field(typeof(KeyHints), "m_keyHintsEnabled").SetValue(hints, true);
+            Call("ZoneBuildKeyHints", "UpdateHints", hints);
+            Type hintType = mod.GetType("Homestead.ZoneBuildKeyHints");
+            GameObject Hint(string field) => (GameObject)hintType.GetField(field, Any).GetValue(null);
+            Check(Hint("_gridHint").activeSelf && Hint("_gridHint").GetComponentsInChildren<TMPro.TMP_Text>().Any(t => t.text == "G"), "grid G hint visible");
+            Check(Hint("_offsetHint").activeSelf == hammer, "offset hint remains hammer-only");
+            AccessTools.Field(typeof(KeyHints), "m_keyHintsEnabled").SetValue(hints, false);
+            Call("ZoneBuildKeyHints", "UpdateHints", hints);
+            Check(!Hint("_gridHint").activeSelf, "grid respects disabled key hints");
+            AccessTools.Field(typeof(KeyHints), "m_keyHintsEnabled").SetValue(hints, true);
+            Call("ZoneGridSnap", "Update");
+            Check(!(bool)active.GetValue(null), "grid shortcut toggles off");
+            ghost.transform.position = position;
+            Call("ZoneGridSnap+PlayerUpdatePlacementGhostPatch", "Postfix", player);
+            Check(ghost.transform.position == position, "disabled grid leaves crop/wall position unchanged");
+        }
+        finally { input.Unpatch(shortcutMethod, HarmonyPatchType.Prefix, input.Id); }
+    }
+
+    private void CheckGridBoundaries(Player player, GameObject ghost)
+    {
+        var status = AccessTools.Field(typeof(Player), "m_placementStatus");
+        object priorStatus = status.GetValue(player);
+        Vector3 priorPosition = ghost.transform.position;
+        Vector3 inside = new Vector3(10000f, 100f, 10000f);
+        Vector3 outside = inside + new Vector3(0.24f, 0f, 0.24f);
+        GameObject noBuild = new GameObject("GridProbeNoBuild");
+        noBuild.transform.position = inside;
+        Location location = noBuild.AddComponent<Location>();
+        location.m_exteriorRadius = 0.1f;
+        GameObject ward = null;
+        void SnapAndValidate(string initialStatus)
+        {
+            status.SetValue(player, Enum.Parse(status.FieldType, initialStatus));
+            ghost.transform.position = outside;
+            Call("ZoneGridSnap+PlayerUpdatePlacementGhostPatch", "Postfix", player);
+            Call("ZonePlacementAdjust+PlayerUpdatePlacementGhostPatch", "Postfix", player);
+        }
+        try
+        {
+            Check(!Location.IsInsideNoBuildLocation(outside) && Location.IsInsideNoBuildLocation(inside), "grid fixture crosses native no-build boundary");
+            SnapAndValidate("Valid");
+            Check(status.GetValue(player).ToString() == "NoBuildZone", "snapped crop inside no-build area is rejected");
+            location.m_noBuild = false;
+            ward = Instantiate(ZNetScene.instance.GetPrefab("guard_stone"), inside, Quaternion.identity);
+            ward.GetComponent<Piece>().SetCreator(player.GetPlayerID() + 1, default);
+            ward.GetComponent<PrivateArea>().m_radius = 0.1f;
+            ward.GetComponent<ZNetView>().GetZDO().Set(ZDOVars.s_enabled, true);
+            Check(PrivateArea.CheckAccess(outside, flash: false) && !PrivateArea.CheckAccess(inside, flash: false), "grid fixture crosses native denied ward boundary");
+            SnapAndValidate("Valid");
+            Check(status.GetValue(player).ToString() == "PrivateZone", "snapped crop inside another player's ward is rejected");
+            SnapAndValidate("Invalid");
+            Check(status.GetValue(player).ToString() == "Invalid", "grid validation preserves earlier placement rejection");
+        }
+        finally
+        {
+            location.m_noBuild = false;
+            Destroy(noBuild);
+            if (ward) ward.GetComponent<ZNetView>().Destroy();
+            ghost.transform.position = priorPosition;
+            status.SetValue(player, priorStatus);
+        }
+    }
+
+    private IEnumerator CheckCultivatorRotation()
+    {
+        PreparePlacementPlayer();
+        Player player = Player.m_localPlayer;
         var plantPlugin = BepInEx.Bootstrap.Chainloader.PluginInfos["advize.PlantEasily"].Instance;
         var rows = plantPlugin.Config.Bind("General", "Rows", 2);
         var columns = plantPlugin.Config.Bind("General", "Columns", 2);
@@ -208,7 +583,7 @@ public sealed class Probe : BaseUnityPlugin
         {
             // The isolated intro can drop the fixture into water.
             AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
-            Check(player.EquipItem(item), "equip fixture tool: " + item.m_shared.m_name);
+            Check(player.IsItemEquiped(item) || player.EquipItem(item), "equip fixture tool: " + item.m_shared.m_name);
             Check(player.GetBuildTool(), "build table available: " + item.m_shared.m_name);
         }
         ItemDrop.ItemData Equip(string name)
@@ -243,7 +618,12 @@ public sealed class Probe : BaseUnityPlugin
         }
 
         ItemDrop.ItemData hammer = Equip("Hammer");
-        // PE clears its old Unity ghost references after deferred destruction.
+        // Exercise the same frame before Unity destroys the old plant root.
+        // The old PE hooks would recreate this hammer ghost and index an empty pool.
+        var playerGhost = AccessTools.Field(typeof(Player), "m_placementGhost");
+        GameObject hammerGhost = (GameObject)playerGhost.GetValue(player);
+        updateGhost.Invoke(player, new object[] { false });
+        Check((GameObject)playerGhost.GetValue(player) == hammerGhost, "same-frame cultivator-to-hammer update preserves current ghost without exceptions");
         yield return null;
         Piece wall = ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>();
         Check(player.SetSelectedPiece(wall), "select ordinary hammer wall");
@@ -264,8 +644,8 @@ public sealed class Probe : BaseUnityPlugin
         Setting("_placementXAxisRotation").BoxedValue = 45f;
         Setting("_placementZAxisRotation").BoxedValue = 30f;
         mod.GetType("Homestead.ZoneGridSnap").GetField("_active", Any).SetValue(null, true);
-        Check(!(bool)Call("ZonePlacementAdjust", "IsLocalPlacementContext", player), "cultivator excludes offsets, axis tilt and revalidation");
-        Check(!(bool)Call("ZoneGridSnap", "IsLocalPlacementContext", player), "active hammer grid excludes cultivator");
+        Check(!(bool)Call("ZonePlacementAdjust", "IsLocalPlacementContext", player), "cultivator excludes hammer offsets and axis tilt");
+        CheckGridSnap(player, false);
         rows.Value = columns.Value = 1;
         updateGhost.Invoke(player, new object[] { false });
         player.PlacePiece(plant, player.transform.position + Vector3.forward * 3f, Quaternion.Euler(0, 90, 0), false);
@@ -290,6 +670,53 @@ public sealed class Probe : BaseUnityPlugin
         Check((float)step.GetValue(player) == 22.5f, "session cleanup restores owned rotation step");
         Check(mod.GetType("Homestead.ZonePlacementAdjust").GetField("_rotationStepPlayer", Any).GetValue(null) == null,
             "session cleanup releases player reference");
+
+        var peState = plantPlugin.GetType().Assembly.GetType("Advize_PlantEasily.PlacementState");
+        var peGhost = peState.GetField("PlacementGhost", Any);
+        var peGrid = plantPlugin.GetType().Assembly.GetType("Advize_PlantEasily.GhostGrid");
+        var extraGhosts = (IList)peGrid.GetField("ExtraGhosts", Any).GetValue(null);
+        rows.Value = columns.Value = 2;
+        ItemDrop.ItemData hoe = Equip("Hoe");
+        foreach (string target in new[] { "hammer", "hoe", "cultivate", "unequip", "disabled" })
+        {
+            SwitchTool(cultivator);
+            Check(player.SetSelectedPiece(plant), "select plant before transition: " + target);
+            updateGhost.Invoke(player, new object[] { false });
+            Check(extraGhosts.Count >= 3 && (GameObject)peGhost.GetValue(null) == (GameObject)playerGhost.GetValue(player), "PlantEasily 2x2 grid rebuilt before transition: " + target);
+            if (target == "hammer") SwitchTool(hammer);
+            else if (target == "hoe") SwitchTool(hoe);
+            else if (target == "cultivate")
+                Check(player.SetSelectedPiece(player.GetBuildTool().m_pieces.Select(p => p.GetComponent<Piece>()).First(p => p && p.GetComponent<TerrainOp>())), "select cultivator terrain action");
+            else if (target == "unequip") player.UnequipItem(cultivator);
+            else
+            {
+                plantPlugin.Config.Bind("General", "ModActive", true).Value = false;
+                setup.Invoke(player, null);
+            }
+
+            GameObject currentGhost = (GameObject)playerGhost.GetValue(player);
+            updateGhost.Invoke(player, new object[] { false });
+            Check((GameObject)playerGhost.GetValue(player) == currentGhost, "same-frame update preserves ghost without exceptions: " + target);
+            yield return null;
+            updateGhost.Invoke(player, new object[] { false });
+            Check((GameObject)playerGhost.GetValue(player) == currentGhost, "next-frame update preserves ghost without exceptions: " + target);
+            plantPlugin.Config.Bind("General", "ModActive", true).Value = true;
+        }
+
+        SwitchTool(cultivator);
+        Check(player.SetSelectedPiece(plant), "return to planting after transitions");
+        rows.Value = 3;
+        updateGhost.Invoke(player, new object[] { false });
+        Check(extraGhosts.Count >= 5 && (GameObject)peGhost.GetValue(null) == (GameObject)playerGhost.GetValue(player), "PlantEasily resizing resumes after transitions");
+
+        Type peHooks = plantPlugin.GetType().Assembly.GetType("Advize_PlantEasily.PlacementPatches+PlayerUpdatePlacementGhost");
+        bool GuardInstalled(string name) => Harmony.GetPatchInfo(AccessTools.Method(peHooks, name))?.Prefixes
+            .Any(p => p.PatchMethod.DeclaringType.FullName == "Homestead.PlantEasilyCompat") == true;
+        Check(GuardInstalled("Prefix") && GuardInstalled("Postfix"), "both PlantEasily update hooks guarded");
+        Call("PlantEasilyCompat", "Shutdown");
+        Check(!GuardInstalled("Prefix") && !GuardInstalled("Postfix"), "compatibility shutdown removes only its guards");
+        Call("PlantEasilyCompat", "Initialize", mod.GetType("Homestead.HomesteadPlugin").GetField("HomesteadLogger", Any).GetValue(null), new Harmony("sighsorry.Homestead"));
+        Check(GuardInstalled("Prefix") && GuardInstalled("Postfix"), "compatibility can initialize again after shutdown");
     }
 
     private void CheckPrefabs()
@@ -450,18 +877,29 @@ public sealed class Probe : BaseUnityPlugin
         bool previousKeyHints = (bool)keyHintsEnabled.GetValue(hints);
         BepInEx.Configuration.ConfigEntryBase Setting(string type, string field) =>
             (BepInEx.Configuration.ConfigEntryBase)mod.GetType("Homestead." + type).GetField(field, Any).GetValue(null);
-        var enabled = Setting("ClientConfig", "_buildCameraTooltip");
+        var enabled = Setting("ClientConfig", "_hudControlsHelp");
         var cameraEnabled = Setting("BuildCameraConfig", "_enabled");
         var comfort = Setting("BuildCameraConfig", "_minimumComfortLevel");
         var shortcut = Setting("BuildCameraConfig", "_toggleHotkey");
-        object[] before = { enabled.BoxedValue, cameraEnabled.BoxedValue, comfort.BoxedValue, shortcut.BoxedValue };
+        var requireStation = Setting("BuildCameraConfig", "_requireCraftingStation");
+        object[] before = { enabled.BoxedValue, cameraEnabled.BoxedValue, comfort.BoxedValue, shortcut.BoxedValue, requireStation.BoxedValue };
+        var positionAdjust = Setting("PlacementControlConfig", "_placementAdjustEnabled");
+        var gridShortcut = Setting("PlacementControlConfig", "_gridSnapToggleHotkey");
+        var gridSize = Setting("PlacementControlConfig", "_gridSnapSize");
+        object[] placementBefore = { positionAdjust.BoxedValue, gridShortcut.BoxedValue, gridSize.BoxedValue };
+        FieldInfo gridActive = mod.GetType("Homestead.ZoneGridSnap").GetField("_active", Any);
+        bool previousGridActive = (bool)gridActive.GetValue(null);
+        bool previousGodMode = player.InGodMode();
         FieldInfo noCost = AccessTools.Field(typeof(Player), "m_noPlacementCost");
         bool previousNoCost = (bool)noCost.GetValue(player);
         GameObject station = null;
-        GameObject terrainHint = null;
-        RectTransform panel = null;
-        Vector3 oldPanelPosition = Vector3.zero;
-        Vector3 oldPanelScale = Vector3.one;
+        var hudX = Setting("ClientConfig", "_statusHudX");
+        var hudFont = Setting("ClientConfig", "_statusHudFontSize");
+        object previousHudX = hudX.BoxedValue, previousHudFont = hudFont.BoxedValue;
+        Type statusType = mod.GetType("Homestead.ZoneAreaToolStatusHud");
+        Component State() => hud.GetComponents(statusType).Cast<Behaviour>().First(c => c.enabled);
+        TMPro.TextMeshProUGUI Label() => (TMPro.TextMeshProUGUI)statusType.GetField("_text", Any).GetValue(State());
+        bool Visible() => Label().GetComponent<CanvasGroup>().alpha > 0f;
         string language = Localization.instance.GetSelectedLanguage();
         void LoadLanguage(string value)
         {
@@ -471,9 +909,10 @@ public sealed class Probe : BaseUnityPlugin
         }
         void Refresh()
         {
-            mod.GetType("Homestead.ZoneBuildCameraHud").GetField("_nextRefresh", Any).SetValue(null, 0f);
+            Call("ZoneAreaToolStatusHud", "EnsureInstance");
+            statusType.GetField("_nextContextRefresh", Any).SetValue(State(), 0f);
             mod.GetType("Homestead.ZoneBuildCamera").GetField("_nextConditionRefresh", Any).SetValue(null, 0f);
-            Call("ZoneBuildCameraHud", "Update", hud);
+            statusType.GetMethod("Update", Any).Invoke(State(), null);
             Canvas.ForceUpdateCanvases();
         }
         try
@@ -482,22 +921,28 @@ public sealed class Probe : BaseUnityPlugin
             {
                 enabled.BoxedValue = Enum.Parse(enabled.SettingType, "On");
                 cameraEnabled.BoxedValue = Enum.Parse(cameraEnabled.SettingType, "On");
+                requireStation.BoxedValue = Enum.Parse(requireStation.SettingType, "On");
+                comfort.BoxedValue = 0;
+                positionAdjust.BoxedValue = Enum.Parse(positionAdjust.SettingType, "On");
+                gridShortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.G);
+                gridSize.BoxedValue = 0.5f;
+                gridActive.SetValue(null, false);
                 keyHintsEnabled.SetValue(hints, false);
                 LoadLanguage("English");
-                // The fixture skips the Valkyrie ride; reset its disabled intro animator too.
-                // Otherwise TextViewer.IsVisible keeps reporting the interrupted intro state.
-                TextViewer.instance.Hide();
-                TextViewer.instance.m_introRoot.SetActive(true);
-                Animator intro = TextViewer.instance.m_introRoot.GetComponent<Animator>();
-                intro.Rebind(); intro.Update(0f);
-                TextViewer.instance.HideIntro();
+                PreparePlacementPlayer();
+                // Keep the visual fixture alive while the skipped intro fall resolves,
+                // and away from stations left by any interrupted prior probe.
+                player.SetGodMode(true);
+                player.GetComponent<Rigidbody>().position += Vector3.up * 200f;
                 noCost.SetValue(player, true);
                 if (!player.InPlaceMode())
                 {
                     GameObject prefab = ObjectDB.instance.GetItemPrefab("Hammer");
                     ItemDrop.ItemData hammer = prefab.GetComponent<ItemDrop>().m_itemData.Clone();
                     hammer.m_dropPrefab = prefab;
+                    hammer.m_durability = hammer.GetMaxDurability();
                     player.GetInventory().AddItem(hammer);
+                    AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
                     player.EquipItem(hammer);
                 }
                 AccessTools.Method(typeof(Player), "UpdateAvailablePiecesList").Invoke(player, null);
@@ -508,32 +953,97 @@ public sealed class Probe : BaseUnityPlugin
             yield return new WaitForSeconds(1f);
             try
             {
+                // Rigidbody interpolation can restore the intro pose during the first
+                // frame. Move both representations after that frame, clear of old fixtures.
+                float aboveStations = player.transform.position.y;
+                foreach (CraftingStation priorStation in (IEnumerable)AccessTools.Field(typeof(CraftingStation), "m_allStations").GetValue(null))
+                    if (priorStation) aboveStations = Mathf.Max(aboveStations, priorStation.transform.position.y + priorStation.m_rangeBuild);
+                Vector3 away = new Vector3(player.transform.position.x, aboveStations + 1000f, player.transform.position.z);
+                player.transform.position = away;
+                player.GetComponent<Rigidbody>().position = away;
+                player.GetComponent<Rigidbody>().linearVelocity = Vector3.zero;
                 Refresh();
-                var label = (TMPro.TextMeshProUGUI)mod.GetType("Homestead.ZoneBuildCameraHud").GetField("_label", Any).GetValue(null);
+                var label = Label();
                 Check(!(bool)Call("ZoneBuildCamera", "IsInputBlocked", true), "camera tooltip fixture has no blocking menu or intro");
-                Check(label && label.gameObject.activeInHierarchy, "camera tooltip visible with key hints disabled");
+                File.AppendAllText(report, $"Tooltip context: enabled={enabled.BoxedValue}, place={player.InPlaceMode()}, dead={player.IsDead()}, hud={hud.IsVisible()}, buildHud={hud.m_buildHud.activeInHierarchy}, tool={Call("ZoneBuildCamera", "ToolIsEquipped", player)}, label={(label ? label.text : "missing")}\n");
+                Check(label && Visible(), "unified HUD visible with key hints disabled");
+                Check(!hud.GetComponentsInChildren<TMPro.TMP_Text>(true).Any(t => t.name == "Homestead_BuildCameraTooltip"), "no separate piece-panel tooltip remains");
+                string cachedText = label.text;
+                DestroyImmediate(label.gameObject);
+                Call("ZoneAreaToolStatusHud", "EnsureInstance");
+                label = Label();
+                Check(label.text == cachedText, "text-only recreation restores unchanged cached content immediately");
                 Check(label.text.Contains((string)Call("ZoneBuildCamera", "GetConditionText", player)), "tooltip uses actual camera requirement");
+                Check(requireStation.DefaultValue.ToString() == "On", "station requirement defaults to existing enabled policy");
+                Check(!(bool)Call("ZoneBuildCamera", "BuildStationInRange", player), "camera fixture starts outside station range");
+                Check(!(bool)Call("ZoneBuildCamera", "EnableBuildMode"), "required station blocks camera entry without a station");
+                LoadLanguage("Korean"); Refresh();
+                Check(label.text.Contains("작업대 필요") && !label.text.Contains("제작대"), "Korean station requirement says 작업대 필요");
+                CaptureUi(hud.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "build-camera-need-station-ko.png");
+                requireStation.BoxedValue = Enum.Parse(requireStation.SettingType, "Off"); Refresh();
+                Check(label.text.Contains("사용 가능") && !label.text.Contains("작업대"), "station-free Korean tooltip shows ready");
+                Check((bool)Call("ZoneBuildCamera", "EnableBuildMode"), "station toggle off permits camera entry without a station");
+                requireStation.BoxedValue = Enum.Parse(requireStation.SettingType, "On");
+                Check(!(bool)Call("ZoneBuildCamera", "ShouldDeactivateBuildMode", player), "station requirement still applies only to entry, not an active session");
+                Call("ZoneBuildCamera", "DisableBuildMode");
+                Check(!(bool)Call("ZoneBuildCamera", "EnableBuildMode"), "live station toggle on restores the entry requirement");
+                requireStation.BoxedValue = Enum.Parse(requireStation.SettingType, "Off");
+                comfort.BoxedValue = 30; Refresh();
+                Check(label.text.Contains("안락함 30 필요") && !(bool)Call("ZoneBuildCamera", "EnableBuildMode"), "station toggle off preserves unmet comfort restriction");
+                comfort.BoxedValue = 0;
+                requireStation.BoxedValue = Enum.Parse(requireStation.SettingType, "On");
+                LoadLanguage("English"); Refresh();
                 label.ForceMeshUpdate();
-                Check(label.textInfo.lineCount == 1 && !label.raycastTarget, "camera tooltip is one noninteractive line");
-                panel = (RectTransform)label.transform.parent;
-                oldPanelPosition = panel.localPosition; oldPanelScale = panel.localScale;
-                Vector3 labelBefore = label.transform.position;
-                panel.localPosition += new Vector3(40f, 30f, 0f);
-                panel.localScale *= 0.8f;
-                Refresh();
-                Check(label.transform.position != labelBefore && label.rectTransform.anchoredPosition == new Vector2(0, 8), "tooltip follows panel movement and scaling");
-                panel.localPosition = oldPanelPosition; panel.localScale = oldPanelScale;
-                CaptureUi(hud.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "build-camera-tooltip-en.png");
+                Check(!label.raycastTarget && !label.isTextTruncated && label.preferredHeight <= label.rectTransform.rect.height, "English unified HUD fits its dynamic height");
+                Check(label.GetParsedText().Contains("↑↓←→/PgUp/PgDn: Move") && label.GetParsedText().Contains("G: Grid off 0.5m") && label.text.IndexOf("Move") < label.text.IndexOf("Build camera"), "placement and grid precede camera block");
+                Vector2 positionBefore = label.rectTransform.anchoredPosition;
+                hudX.BoxedValue = (float)previousHudX + 40f; hudFont.BoxedValue = 22; Refresh();
+                Check(Mathf.Approximately(label.rectTransform.anchoredPosition.x, positionBefore.x + 40f) && label.fontSize == 22f, "existing HUD position and font settings apply live");
+                hudX.BoxedValue = previousHudX; hudFont.BoxedValue = previousHudFont; Refresh();
+                CaptureUi(hud.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "unified-hud-en.png");
 
+                Call("ZoneAreaToolStatusHud", "ShowDefaultPlacement", Vector3.right * 0.5f, 1f, 315f, 15f, 30f, true);
                 enabled.BoxedValue = Enum.Parse(enabled.SettingType, "Off"); Refresh();
-                Check(!label.gameObject.activeSelf, "client toggle hides camera tooltip immediately");
+                Check(Visible() && label.text.Contains("RX 15") && !label.text.Contains("PgUp") && !label.text.Contains("Build camera") && !label.text.Contains("Copy rotation"), "single help toggle preserves numeric HUD");
                 enabled.BoxedValue = Enum.Parse(enabled.SettingType, "On"); Refresh();
                 Check(label.gameObject.activeSelf, "client toggle reuses camera tooltip");
                 shortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.K, KeyCode.LeftShift); Refresh();
                 Check(label.text.Contains("Shift+K"), "tooltip follows rebound camera shortcut");
                 cameraEnabled.BoxedValue = Enum.Parse(cameraEnabled.SettingType, "Off"); Refresh();
-                Check(!label.gameObject.activeSelf, "disabled build camera hides tooltip");
+                Check(label.gameObject.activeSelf && !label.text.Contains("Build camera") && label.text.Contains("Move"), "disabled camera leaves available placement help visible");
+                gridActive.SetValue(null, true); gridSize.BoxedValue = 0.75f;
+                gridShortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.H, KeyCode.LeftShift); Refresh();
+                Check(label.GetParsedText().Contains("Shift+H: Grid on 0.75m"), "placement tooltip follows grid state, spacing and rebound shortcut");
+                positionAdjust.BoxedValue = Enum.Parse(positionAdjust.SettingType, "Off"); Refresh();
+                Check(!label.text.Contains("PgUp") && label.text.Contains("Grid on"), "disabled offset hides only position help");
+                gridShortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.None); Refresh();
+                Check(!label.text.Contains("PgUp") && !label.text.Contains("Grid ") && !label.text.Contains("Build camera") && label.text.Contains("Copy rotation"), "disabled helpers leave rotation help available");
+                positionAdjust.BoxedValue = Enum.Parse(positionAdjust.SettingType, "On");
+                gridShortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.G);
+                gridSize.BoxedValue = 0.5f;
+                gridActive.SetValue(null, false);
                 cameraEnabled.BoxedValue = Enum.Parse(cameraEnabled.SettingType, "On");
+
+                foreach (string tool in new[] { "ZoneBlueprintSaveTool", "ZoneAreaDismantleTool", "ZoneBlueprintSnapPointTool" })
+                {
+                    Call(tool, "Activate", player); Refresh();
+                    Check(!label.text.Contains("Grid "), "grid help hidden for " + tool);
+                    Check(!label.text.Contains("Copy rotation"), "rotation help hidden for " + tool);
+                    Check(label.text.Contains("PgUp") == (tool != "ZoneBlueprintSnapPointTool"), "position help matches " + tool);
+                    Call(tool, "Deactivate");
+                }
+                ItemDrop.ItemData hammerItem = (ItemDrop.ItemData)AccessTools.Method(typeof(Humanoid), "GetRightItem").Invoke(player, null);
+                GameObject cultivatorPrefab = ObjectDB.instance.GetItemPrefab("Cultivator");
+                ItemDrop.ItemData cultivator = cultivatorPrefab.GetComponent<ItemDrop>().m_itemData.Clone();
+                cultivator.m_dropPrefab = cultivatorPrefab; cultivator.m_durability = cultivator.GetMaxDurability();
+                Check(player.GetInventory().AddItem(cultivator) && player.EquipItem(cultivator), "equip cultivator for tooltip");
+                Check(player.SetSelectedPiece(player.GetBuildTool().m_pieces.First(p => p && p.GetComponent<Plant>()).GetComponent<Piece>()), "select plant for tooltip");
+                Refresh();
+                Check(!label.text.Contains("PgUp") && label.GetParsedText().Contains("G: Grid off 0.5m"), "cultivator shows grid without hammer-only movement help");
+                Check(player.EquipItem(hammerItem), "restore hammer after tooltip fixture");
+                Check(player.SetSelectedPiece(ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>()), "restore wall after tooltip fixture");
+                player.GetInventory().RemoveItem(cultivator);
+                shortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.B);
 
                 station = Instantiate(ZNetScene.instance.GetPrefab("piece_workbench"), player.transform.position + Vector3.right * 2f, Quaternion.identity);
             }
@@ -542,53 +1052,141 @@ public sealed class Probe : BaseUnityPlugin
             yield return null;
             try
             {
-                var label = (TMPro.TextMeshProUGUI)mod.GetType("Homestead.ZoneBuildCameraHud").GetField("_label", Any).GetValue(null);
+                var label = Label();
                 comfort.BoxedValue = 30; Refresh();
                 Check(label.text.Contains((string)Call("HomesteadLocalization", "Format", "hs_build_camera_need_cozy", new object[] { 30 })), "tooltip explains unmet comfort condition");
                 comfort.BoxedValue = 0; Refresh();
                 Check(label.text.Contains((string)Call("HomesteadLocalization", "Text", "hs_build_camera_station_ready")), "tooltip reflects ready station without comfort restriction");
                 Check((bool)Call("ZoneBuildCamera", "EnableBuildMode"), "camera activates for tooltip fixture"); Refresh();
                 Check(label.text.Contains((string)Call("HomesteadLocalization", "Text", "hs_build_camera_active")), "tooltip reflects active camera");
-                Call("ZoneBuildCamera", "DisableBuildMode");
-
-                terrainHint = new GameObject("Groundwork_TerrainHeightHint", typeof(RectTransform));
-                var terrainRect = (RectTransform)terrainHint.transform;
-                terrainRect.SetParent(panel, false); terrainRect.pivot = Vector2.zero;
-                terrainRect.anchoredPosition = new Vector2(0, 8); terrainRect.sizeDelta = new Vector2(400, 44); Refresh();
-                Check(label.rectTransform.anchoredPosition.y >= 56f, "tooltip clears a visible Groundwork hint fixture");
-                terrainHint.SetActive(false); Refresh();
-                Check(label.rectTransform.anchoredPosition.y == 8f, "tooltip returns when terrain hint hides");
-
                 LoadLanguage("Korean");
                 AccessTools.Method(typeof(Hud), "SetupPieceInfo").Invoke(hud, new object[] { ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>() });
+                Call("ZoneAreaToolStatusHud", "ShowDefaultPlacement", new Vector3(0.5f, 0f, -0.5f), 1f, 315f, 15f, 30f, true);
+                Call("ZoneAreaToolStatusHud", "ShowBuildCameraDistance", 12f, 62f, "32+3*10(편안함)", 25f, "5+2*10(편안함)", 7f, "2+0.5*10(편안함)");
+                Call("ZoneAreaToolStatusHud", "ShowDvergrCirclet", true, 1.5f, 1.2f);
                 Refresh();
                 Check(label.text.Contains("건축 카메라"), "camera tooltip localized in Korean");
-                CaptureUi(hud.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "build-camera-tooltip-ko.png");
+                label.ForceMeshUpdate();
+                Check(!label.isTextTruncated && label.preferredHeight <= label.rectTransform.rect.height && label.preferredWidth <= label.rectTransform.rect.width, "full Korean HUD fits dynamic bounds");
+                Check(label.GetParsedText().Contains("↑↓←→/PgUp/PgDn: 위치 이동") && label.GetParsedText().Contains("G: 격자 끔 0.5m") && label.text.Contains("회전 복사") && label.text.EndsWith("조명 켬 | 범위 120% | 밝기 150%"), "grouped Korean help and final circlet row");
+                CaptureUi(hud.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "unified-hud-full-ko.png");
+                hudFont.BoxedValue = 26; Refresh(); label.ForceMeshUpdate();
+                Check(label.preferredHeight <= label.rectTransform.rect.height && label.preferredWidth <= label.rectTransform.rect.width, "larger HUD font expands content bounds");
+                hudFont.BoxedValue = previousHudFont;
+                CheckAreaRepairHud(Refresh, Label);
+                Check(player.SetSelectedPiece(ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>()), "leave repair selection"); Refresh();
+                Check(!label.text.Contains("범위 수리"), "repair status clears when another piece is selected");
+                Call("ZoneBuildCamera", "DisableBuildMode"); Refresh();
+                Check(!label.text.Contains("줍기 거리"), "camera distance rows clear on camera exit");
+
+                Call("ZoneBlueprintSaveTool", "Activate", player);
+                Call("ZoneAreaToolStatusHud", "Show", "20x16m", 315f, Vector3.right * 0.5f, 1f); Refresh();
+                Check(label.text.StartsWith("지정 범위 20m | 16m") && !label.text.Contains("RX ") && !label.text.Contains("격자"), "area layout replaces axis values and excludes grid");
+                CaptureUi(hud.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "unified-hud-area-ko.png");
+                Call("ZoneBlueprintSaveTool", "Deactivate"); Call("ZoneAreaToolStatusHud", "Hide"); Refresh();
+                Check(!label.text.Contains("지정 범위"), "area status clears on tool exit");
 
                 var root = (GameObject)AccessTools.Field(typeof(Hud), "m_rootObject").GetValue(hud);
                 Vector3 rootPosition = root.transform.localPosition;
                 root.transform.localPosition = new Vector3(10000, 0, 0); Refresh();
-                Check(!label.gameObject.activeSelf, "hidden HUD also hides camera tooltip");
+                Check(!Visible(), "hidden HUD hides the unified display");
+                statusType.GetField("_dvergrHideAfter", Any).SetValue(State(), Time.unscaledTime - 1f);
                 root.transform.localPosition = rootPosition;
+                Refresh(); Check(!label.text.Contains("조명"), "expired circlet row does not return after HUD is shown");
                 var font = label.font;
-                Call("ZoneBuildCameraHud", "Shutdown"); Refresh();
-                var rebuilt = (TMPro.TextMeshProUGUI)mod.GetType("Homestead.ZoneBuildCameraHud").GetField("_label", Any).GetValue(null);
-                Check(rebuilt && rebuilt != label && font && rebuilt.font == font, "tooltip recreation preserves borrowed native font");
+                Call("ZoneAreaToolStatusHud", "Shutdown"); Refresh();
+                var rebuilt = Label();
+                Check(rebuilt && rebuilt != label && font && rebuilt.font == font && !rebuilt.text.Contains("RX "), "HUD recreation preserves native font and clears old session values");
                 FindFirstObjectByType<BuildUi>(FindObjectsInactive.Include).OpenBuildMenu(); Refresh();
-                Check(!rebuilt.gameObject.activeSelf, "build selection menu hides camera tooltip");
+                Check(!rebuilt.text.Contains("건축 카메라") && !rebuilt.text.Contains("PgUp"), "build selection menu hides build information");
+                Hud.CloseBuildUi();
+                player.UnequipAllItems();
+                Call("ZoneAreaToolStatusHud", "ShowDvergrCirclet", false, 1.1f, 1.3f); Refresh();
+                Check(Visible() && rebuilt.text == "조명 끔 | 범위 130% | 밝기 110%", "circlet feedback remains outside build mode");
+            }
+            catch (Exception ex) { Fail(ex); yield break; }
+            yield return new WaitForSeconds(1.2f);
+            try
+            {
+                Refresh();
+                Check(!Visible(), "circlet feedback expires after one second outside build mode");
+                Check(hud.GetComponents(statusType).Length == 1 && hud.GetComponentsInChildren<TMPro.TMP_Text>(true).Count(t => t.name == "HomesteadUnifiedStatusHud") == 1, "one HUD component and text remain after deferred destruction");
             }
             catch (Exception ex) { Fail(ex); yield break; }
         }
         finally
         {
             Call("ZoneBuildCamera", "DisableBuildMode");
-            enabled.BoxedValue = before[0]; cameraEnabled.BoxedValue = before[1]; comfort.BoxedValue = before[2]; shortcut.BoxedValue = before[3];
+            enabled.BoxedValue = before[0]; cameraEnabled.BoxedValue = before[1]; comfort.BoxedValue = before[2]; shortcut.BoxedValue = before[3]; requireStation.BoxedValue = before[4];
+            positionAdjust.BoxedValue = placementBefore[0]; gridShortcut.BoxedValue = placementBefore[1]; gridSize.BoxedValue = placementBefore[2];
+            gridActive.SetValue(null, previousGridActive);
+            player.SetGodMode(previousGodMode);
+            Call("ZoneBlueprintSaveTool", "Deactivate"); Call("ZoneAreaDismantleTool", "Deactivate"); Call("ZoneBlueprintSnapPointTool", "Deactivate");
             keyHintsEnabled.SetValue(hints, previousKeyHints);
             noCost.SetValue(player, previousNoCost);
             LoadLanguage(language);
-            if (panel) { panel.localPosition = oldPanelPosition; panel.localScale = oldPanelScale; }
-            if (terrainHint) Destroy(terrainHint);
+            hudX.BoxedValue = previousHudX; hudFont.BoxedValue = previousHudFont;
             if (station) ZNetScene.instance.Destroy(station);
+        }
+    }
+
+    private static int hudRepairComfort;
+    private static bool HudRepairComfortPrefix(ref int __result)
+    {
+        __result = hudRepairComfort;
+        return false;
+    }
+
+    private void CheckAreaRepairHud(Action refresh, Func<TMPro.TextMeshProUGUI> label)
+    {
+        Player player = Player.m_localPlayer;
+        BepInEx.Configuration.ConfigEntryBase Setting(string type, string field) =>
+            (BepInEx.Configuration.ConfigEntryBase)mod.GetType("Homestead." + type).GetField(field, Any).GetValue(null);
+        var baseRadius = Setting("AreaRepairConfig", "_baseRadius");
+        var scale = Setting("AreaRepairConfig", "_comfortRadiusScale");
+        var help = Setting("ClientConfig", "_hudControlsHelp");
+        object[] before = { baseRadius.BoxedValue, scale.BoxedValue, help.BoxedValue };
+        Piece selectedBefore = player.GetBuildTool().GetSelectedPiece();
+        Piece repair = player.GetBuildTool().m_pieces.Select(p => p.GetComponent<Piece>()).First(p => p && p.m_repairPiece);
+        var harmony = new Harmony("sighsorry.Homestead.UnifiedHudProbe");
+        MethodInfo comfortMethod = AccessTools.Method(mod.GetType("Homestead.ZoneAreaRepair"), "GetComfortBonusLevel");
+        // Control only the environment input; production radius calculation and HUD still run.
+        harmony.Patch(comfortMethod, prefix: new HarmonyMethod(typeof(Probe), nameof(HudRepairComfortPrefix)));
+        const string externalGuid = "Azumatt.AzuAreaRepair";
+        var plugins = BepInEx.Bootstrap.Chainloader.PluginInfos;
+        bool hadExternal = plugins.TryGetValue(externalGuid, out var external);
+        try
+        {
+            Check(player.SetSelectedPiece(repair), "select native repair tool for unified HUD");
+            baseRadius.BoxedValue = 0f; scale.BoxedValue = 4f; hudRepairComfort = 10; refresh();
+            string text = label().text;
+            Check(text.Contains("범위 수리 반경 8.6m") && text.Contains("0+4*세제곱근(10 편안함)"), "repair HUD uses production cube-root radius");
+            Check(text.IndexOf("범위 수리") > text.IndexOf("줍기 거리") && !text.Contains("PgUp") && !text.Contains("격자"), "repair follows pickup range without ineffective placement controls");
+            AccessTools.Method(typeof(Hud), "SetupPieceInfo").Invoke(Hud.instance, new object[] { repair });
+            Check(Hud.instance.m_pieceDescription.text == Localization.instance.Localize(repair.m_description), "repair piece description remains vanilla");
+            CaptureUi(Hud.instance.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "unified-hud-repair-ko.png");
+            help.BoxedValue = Enum.Parse(help.SettingType, "Off"); refresh();
+            Check(label().text.Contains("범위 수리 반경") && label().text.Contains("줍기 거리") && !label().text.Contains("건축 카메라"), "help toggle retains repair and camera values");
+            Call("ZoneBuildCamera", "DisableBuildMode"); refresh();
+            Check(label().text.Contains("범위 수리 반경") && !label().text.Contains("줍기 거리"), "repair remains when camera is off");
+            hudRepairComfort = 0; refresh();
+            Check(label().text.Contains("범위 수리 — 안락한 상태 필요"), "zero effective radius explains cozy requirement");
+            baseRadius.BoxedValue = 3f; refresh();
+            Check(label().text.Contains("범위 수리 반경 3m") && !label().text.Contains("안락한 상태 필요"), "non-cozy base radius remains available");
+            scale.BoxedValue = 0f; refresh();
+            Check(label().text.Contains("범위 수리 반경 3m"), "fixed-radius configuration is displayed");
+            baseRadius.BoxedValue = 0f; refresh();
+            Check(!label().text.Contains("범위 수리"), "disabled repair has no HUD row");
+            baseRadius.BoxedValue = 3f;
+            plugins[externalGuid] = null; refresh();
+            Check(!label().text.Contains("범위 수리"), "external area repair suppresses Homestead repair row");
+        }
+        finally
+        {
+            harmony.UnpatchSelf();
+            if (hadExternal) plugins[externalGuid] = external; else plugins.Remove(externalGuid);
+            baseRadius.BoxedValue = before[0]; scale.BoxedValue = before[1]; help.BoxedValue = before[2];
+            player.SetSelectedPiece(selectedBefore); refresh();
         }
     }
 

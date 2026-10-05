@@ -29,46 +29,28 @@ internal static class ZoneAreaRepair
         _logger = logger;
     }
 
-    public static bool TryBuildRepairPieceDescription(Piece piece, out string description)
+    internal static string GetStatusText(Player player)
     {
-        description = "";
-        if (!AreaRepairConfig.Enabled || HasExternalAreaRepair() || !IsRepairPiece(piece))
+        if (!AreaRepairConfig.Enabled || HasExternalAreaRepair() || !player.InRepairMode() ||
+            !IsRepairPiece(player.GetBuildTool()?.GetSelectedPiece()))
         {
-            return false;
+            return "";
         }
 
-        Player? player = Player.m_localPlayer;
-        float baseRadius = AreaRepairConfig.BaseRadius;
-        float comfortRadiusScale = AreaRepairConfig.ComfortRadiusScale;
         int comfort = GetComfortBonusLevel(player);
-
-        if (comfortRadiusScale <= 0f)
-        {
-            return false;
-        }
-
-        if (comfort <= 0)
-        {
-            description = baseRadius > 0f
-                ? HomesteadLocalization.Text("hs_area_repair_increase_range_desc")
-                : HomesteadLocalization.Text("hs_area_repair_need_cozy_desc");
-            return true;
-        }
-
         float radius = GetRadius(comfort);
         if (radius <= 0f)
         {
-            return false;
+            return HomesteadLocalization.Text("hs_area_repair_need_cozy_hud");
         }
 
-        description = HomesteadLocalization.Format(
-            "hs_area_repair_ready_desc",
+        return HomesteadLocalization.Format(
+            "hs_area_repair_radius_hud",
             FormatMeters(radius),
-            FormatMeters(baseRadius),
-            FormatMeters(comfortRadiusScale),
+            FormatMeters(AreaRepairConfig.BaseRadius),
+            FormatMeters(AreaRepairConfig.ComfortRadiusScale),
             comfort,
             HomesteadLocalization.Text("hs_common_comfort"));
-        return true;
     }
 
     private static bool TryAreaRepair(Player player, ItemDrop.ItemData toolItem, Piece repairPiece)
@@ -280,7 +262,7 @@ internal static class ZoneAreaRepair
         return nearFire && shelterOrSitting && !enemyAlert && !coldOrFreezing && !wetWithoutWarmth && !burning;
     }
 
-    private static bool IsRepairPiece(Piece piece)
+    private static bool IsRepairPiece(Piece? piece)
     {
         return piece &&
                string.Equals(Utils.GetPrefabName(piece.gameObject), "piece_repair", StringComparison.OrdinalIgnoreCase);
@@ -312,19 +294,6 @@ internal static class ZoneAreaRepair
         NoNeed,
         MissingStation,
         NoAccess
-    }
-
-    [HarmonyPatch(typeof(Hud), nameof(Hud.SetupPieceInfo))]
-    private static class HudSetupRepairPieceInfoPatch
-    {
-        private static void Postfix(Hud __instance, Piece piece)
-        {
-            if (__instance?.m_pieceDescription != null &&
-                TryBuildRepairPieceDescription(piece, out string repairDescription))
-            {
-                __instance.m_pieceDescription.text = repairDescription;
-            }
-        }
     }
 
     [HarmonyPatch(typeof(Player), nameof(Player.Repair))]

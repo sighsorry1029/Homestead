@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0
+
+- Restored Homestead Grid Snap and its guidance for cultivators, including setups without PlantEasily, while keeping ordinary hammer rotation and position offsets out of planting controls. Snapped placement still checks protected and no-build areas.
+- Fixed PlantEasily placement-ghost exceptions during tool changes with an optional compatibility guard, without changing its planting grid or resource accounting.
+- Added configurable local X/Z rotation with the two mouse side buttons plus the wheel (shown as Mouse4/Mouse5), `[` to copy an aimed-at piece's complete rotation without changing the selected piece, and `]` to reset all rotation axes. Bindings can be disabled with `None`; ordinary-piece rotation continues to defer to ComfyGizmo when installed.
+- Combined area size, placement values and controls, Grid Snap, Build Camera conditions and ranges, area repair radius, and temporary circlet feedback in the upper-left status HUD. Removed the separate Build Camera hint above piece descriptions and kept repair piece descriptions vanilla.
+- Replaced the client-only `Build Camera Tooltip` setting with `HUD Controls Help`, enabled by default. It controls HUD shortcut guidance independently of game key hints while retaining numeric status and repair information when disabled. The old setting is no longer read or migrated.
+- Unified HUD shortcut labels as `key: action` with orange keys and native mouse-wheel icons. Set new-config HUD offsets to X=30 and Y=150, retaining the existing font size and saved position settings.
+- Added the server-synced `Require Crafting Station` setting for entering Build Camera, enabled by default. Disabling it preserves comfort restrictions and ordinary building requirements. Corrected Korean workbench guidance to `작업대 필요`.
+- Changed the Area Save Creator Mode default to `AllCreators`. Existing config values and server settings are preserved; Area Dismantle ownership restrictions are unchanged.
+
 ## 1.2.19
 
 - Fixed unexpected cultivator rotation changes when resizing PlantEasily's planting grid with LB + D-pad or Right Ctrl + arrow keys, and after planting.

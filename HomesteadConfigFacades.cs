@@ -63,33 +63,33 @@ internal static class AreaRepairConfig
 
 internal static class ClientConfig
 {
-    private static ConfigEntry<HomesteadPlugin.Toggle> _buildCameraTooltip = null!;
+    private static ConfigEntry<HomesteadPlugin.Toggle> _hudControlsHelp = null!;
     private static ConfigEntry<float> _statusHudX = null!;
     private static ConfigEntry<float> _statusHudY = null!;
     private static ConfigEntry<int> _statusHudFontSize = null!;
 
     public static Vector2 StatusHudPosition => new(Mathf.Clamp(_statusHudX.Value, 0f, 3000f), -Mathf.Clamp(_statusHudY.Value, 0f, 3000f));
     public static int StatusHudFontSize => Mathf.Clamp(_statusHudFontSize.Value, 10, 64);
-    public static bool BuildCameraTooltipEnabled => _buildCameraTooltip.Value == HomesteadPlugin.Toggle.On;
+    public static bool HudControlsHelpEnabled => _hudControlsHelp.Value == HomesteadPlugin.Toggle.On;
 
     public static void Bind(HomesteadPlugin plugin)
     {
-        _buildCameraTooltip = plugin.config(
+        _hudControlsHelp = plugin.config(
             "02 - Client",
-            "Build Camera Tooltip",
+            "HUD Controls Help",
             HomesteadPlugin.Toggle.On,
-            "Show the Build Camera shortcut and current conditions above the build piece panel, independently of key hints. Client-only; changes apply immediately.",
+            "Show Build Camera conditions and available placement/grid shortcuts in the unified status HUD, independently of key hints. This single toggle controls the help lines; numeric status and area repair information remain visible. Client-only; changes apply immediately.",
             synchronizedSetting: false);
         _statusHudX = plugin.config(
             "02 - Client",
             "Status HUD X Offset",
-            28f,
+            30f,
             new ConfigDescription("Client-only X offset in pixels from the top-left corner for the unified status HUD.", new AcceptableValueRange<float>(0f, 3000f)),
             synchronizedSetting: false);
         _statusHudY = plugin.config(
             "02 - Client",
             "Status HUD Y Offset",
-            116f,
+            150f,
             new ConfigDescription("Client-only Y offset in pixels from the top-left corner for the unified status HUD.", new AcceptableValueRange<float>(0f, 3000f)),
             synchronizedSetting: false);
         _statusHudFontSize = plugin.config(
@@ -492,7 +492,7 @@ internal static class BlueprintConfig
         _areaSaveCreatorMode = plugin.config(
             "06 - Area Tools",
             "Area Save Creator Mode",
-            BlueprintAreaSaveCreatorMode.OwnedAndCreatorless,
+            BlueprintAreaSaveCreatorMode.AllCreators,
             "Controls which WearNTear objects the Area Save tool can select. AllCreators saves your own, creator=0, and other creators' WearNTear. OwnedAndCreatorless saves your own plus creator=0 WearNTear. OwnedOnly saves only WearNTear with your playerID.");
         _areaDismantleMaxSide = plugin.config(
             "06 - Area Tools",
@@ -626,6 +626,7 @@ internal static class BlueprintConfig
 internal static class BuildCameraConfig
 {
     private static ConfigEntry<HomesteadPlugin.Toggle> _enabled = null!;
+    private static ConfigEntry<HomesteadPlugin.Toggle> _requireCraftingStation = null!;
     private static ConfigEntry<float> _resourcePickupRange = null!;
     private static ConfigEntry<float> _resourcePickupRangePerComfortLevel = null!;
     private static ConfigEntry<float> _maxPlaceDistance = null!;
@@ -640,6 +641,7 @@ internal static class BuildCameraConfig
     private static ConfigEntry<float> _helmetLightOffsetUp = null!;
 
     public static bool Enabled => _enabled.Value.IsOn();
+    public static bool RequireCraftingStation => _requireCraftingStation.Value.IsOn();
     public static float ResourcePickupRange => Mathf.Clamp(_resourcePickupRange.Value, 0f, 100f);
     public static float ResourcePickupRangePerComfortLevel => Mathf.Clamp(_resourcePickupRangePerComfortLevel.Value, 0f, 10f);
     public static float MaxPlaceDistance => Mathf.Clamp(_maxPlaceDistance.Value, 5f, 100f);
@@ -663,6 +665,14 @@ internal static class BuildCameraConfig
                 "If on, Homestead includes BuildCameraCHE-style free build camera mode. Disable this if the standalone BuildCameraCHE mod is installed.",
                 null,
                 new ConfigurationManagerAttributes { Order = 1000 }));
+        _requireCraftingStation = plugin.config(
+            "05 - Build Camera",
+            "Require Crafting Station",
+            HomesteadPlugin.Toggle.On,
+            new ConfigDescription(
+                "If on, entering build camera mode requires a nearby crafting station, such as a workbench. Turning this off leaves the comfort restriction and ordinary piece crafting-station requirements unchanged.",
+                null,
+                new ConfigurationManagerAttributes { Order = 995 }));
         _minimumComfortLevel = plugin.config(
             "05 - Build Camera",
             "Restriction Mode Minimum Comfort Level",
@@ -771,6 +781,10 @@ internal static class PlacementControlConfig
     private static ConfigEntry<float> _placementRotationStep = null!;
     private static ConfigEntry<float> _placementXAxisRotation = null!;
     private static ConfigEntry<float> _placementZAxisRotation = null!;
+    private static ConfigEntry<KeyboardShortcut> _xRotationModifier = null!;
+    private static ConfigEntry<KeyboardShortcut> _zRotationModifier = null!;
+    private static ConfigEntry<KeyboardShortcut> _copyRotationHotkey = null!;
+    private static ConfigEntry<KeyboardShortcut> _resetRotationHotkey = null!;
 
     public static KeyboardShortcut GridSnapToggleHotkey => _gridSnapToggleHotkey.Value;
     public static float GridSnapSize => Mathf.Round(Mathf.Clamp(_gridSnapSize.Value, 0.05f, 1f) * 20f) / 20f;
@@ -781,6 +795,10 @@ internal static class PlacementControlConfig
     public static float XAxisRotation => RoundHalfDegree(Mathf.Clamp(_placementXAxisRotation.Value, -180f, 180f));
     public static float ZAxisRotation => RoundHalfDegree(Mathf.Clamp(_placementZAxisRotation.Value, -180f, 180f));
     public static bool HasPlacementAxisRotation => Mathf.Abs(XAxisRotation) > 0.001f || Mathf.Abs(ZAxisRotation) > 0.001f;
+    public static KeyboardShortcut XRotationModifier => _xRotationModifier.Value;
+    public static KeyboardShortcut ZRotationModifier => _zRotationModifier.Value;
+    public static KeyboardShortcut CopyRotationHotkey => _copyRotationHotkey.Value;
+    public static KeyboardShortcut ResetRotationHotkey => _resetRotationHotkey.Value;
 
     public static void Bind(HomesteadPlugin plugin)
     {
@@ -831,6 +849,22 @@ internal static class PlacementControlConfig
             "Z Axis Rotation",
             0f,
             new ConfigDescription("Client-only default Z-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Ignored while ComfyGizmo is loaded. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
+            synchronizedSetting: false);
+        _xRotationModifier = plugin.config(
+            "04 - Placement Controls", "X Rotation Modifier", new KeyboardShortcut(KeyCode.Mouse3),
+            "Client-only modifier held with the wheel to rotate an ordinary hammer piece around its local X axis, using Rotation Step. Mouse3 is the first side button (shown as Mouse4 in the HUD). Ignored while ComfyGizmo is loaded. Set to None to disable.",
+            synchronizedSetting: false);
+        _zRotationModifier = plugin.config(
+            "04 - Placement Controls", "Z Rotation Modifier", new KeyboardShortcut(KeyCode.Mouse4),
+            "Client-only modifier held with the wheel to rotate an ordinary hammer piece around its local Z axis, using Rotation Step. Mouse4 is the second side button (shown as Mouse5 in the HUD). X takes priority if both are held. Ignored while ComfyGizmo is loaded. Set to None to disable.",
+            synchronizedSetting: false);
+        _copyRotationHotkey = plugin.config(
+            "04 - Placement Controls", "Copy Rotation Hotkey", new KeyboardShortcut(KeyCode.LeftBracket),
+            "Client-only hotkey that copies the aimed-at piece's complete rotation without changing the selected hammer piece. Ignored while ComfyGizmo is loaded. Set to None to disable.",
+            synchronizedSetting: false);
+        _resetRotationHotkey = plugin.config(
+            "04 - Placement Controls", "Reset Rotation Hotkey", new KeyboardShortcut(KeyCode.RightBracket),
+            "Client-only hotkey that resets all three placement rotation axes to zero without changing saved X/Z defaults. Temporary rotation persists between ordinary hammer pieces and clears when leaving ordinary placement; changing an X/Z default also clears it. Ignored while ComfyGizmo is loaded. Set to None to disable.",
             synchronizedSetting: false);
     }
 
@@ -1003,6 +1037,9 @@ internal static class ConfigValueHelpers
         {
             return mouseButton;
         }
+
+        if (key == KeyCode.LeftBracket) return "[";
+        if (key == KeyCode.RightBracket) return "]";
 
         return key.ToString()
             .Replace("LeftControl", "Ctrl")

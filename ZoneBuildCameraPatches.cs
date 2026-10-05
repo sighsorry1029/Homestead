@@ -152,11 +152,6 @@ internal static class ZoneBuildCameraPlayerUpdatePatch
             return;
         }
 
-        if (!ZoneBuildCamera.BuildStationInRange(__instance))
-        {
-            return;
-        }
-
         ZoneBuildCamera.EnableBuildMode();
     }
 

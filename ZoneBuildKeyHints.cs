@@ -111,7 +111,7 @@ internal static class ZoneBuildKeyHints
 
         SetHint(
             _gridHint,
-            showPlacementHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !areaToolActive && !snapPointToolActive,
+            showBuildHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !areaToolActive && !snapPointToolActive,
             ZoneGridSnap.IsActive
                 ? HomesteadLocalization.Format("hs_keyhint_grid_on", PlacementControlConfig.GridSnapSize)
                 : HomesteadLocalization.Text("hs_keyhint_grid_off"),

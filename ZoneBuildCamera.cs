@@ -104,6 +104,11 @@ internal static class ZoneBuildCamera
             return false;
         }
 
+        if (BuildCameraConfig.RequireCraftingStation && !BuildStationInRange(player))
+        {
+            return false;
+        }
+
         if (ShouldRestrictCameraEntry() && !MeetsComfortGate())
         {
             NotifyNeedCozyForCurrentMode();
@@ -265,8 +270,7 @@ internal static class ZoneBuildCamera
             return HomesteadLocalization.Text("hs_build_camera_need_tool");
         }
 
-        bool stationInRange = BuildStationInRange(player);
-        if (!stationInRange)
+        if (BuildCameraConfig.RequireCraftingStation && !BuildStationInRange(player))
         {
             return HomesteadLocalization.Text("hs_build_camera_need_station");
         }
@@ -275,11 +279,13 @@ internal static class ZoneBuildCamera
         {
             int minimumComfortLevel = BuildCameraConfig.MinimumComfortLevel;
             return MeetsComfortGate()
-                ? HomesteadLocalization.Format("hs_build_camera_station_cozy", minimumComfortLevel)
+                ? HomesteadLocalization.Format(BuildCameraConfig.RequireCraftingStation
+                    ? "hs_build_camera_station_cozy" : "hs_build_camera_cozy_ready", minimumComfortLevel)
                 : HomesteadLocalization.Format("hs_build_camera_need_cozy", minimumComfortLevel);
         }
 
-        return HomesteadLocalization.Text("hs_build_camera_station_ready");
+        return HomesteadLocalization.Text(BuildCameraConfig.RequireCraftingStation
+            ? "hs_build_camera_station_ready" : "hs_build_camera_ready");
     }
 
     internal static void UpdateBuildCamera(float dt, GameCamera camera)

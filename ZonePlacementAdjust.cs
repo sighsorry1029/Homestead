@@ -23,6 +23,18 @@ internal static class ZonePlacementAdjust
     private static Player? _rotationStepPlayer;
     private static float _previousRotationStep;
     private static float _appliedRotationStep;
+    private static readonly AccessTools.FieldRef<Player, int> PlaceRotation = AccessTools.FieldRefAccess<Player, int>("m_placeRotation");
+    private static readonly AccessTools.FieldRef<Player, float> PlaceRotationDegrees = AccessTools.FieldRefAccess<Player, float>("m_placeRotationDegrees");
+    private static readonly AccessTools.FieldRef<Player, GameObject> PlacementGhost = AccessTools.FieldRefAccess<Player, GameObject>("m_placementGhost");
+    private static readonly AccessTools.FieldRef<Player, int> RemoveRayMask = AccessTools.FieldRefAccess<Player, int>("m_removeRayMask");
+    private static Player? _inputPlayer;
+    private static int _rotationInputFrame = -1;
+    private static int _rotationWheelFrame = -1;
+    private static bool _rotationWheelFilterInstalled;
+    private static bool _hasTemporaryRotation;
+    private static Quaternion _temporaryRotation = Quaternion.identity;
+    private static float _defaultX;
+    private static float _defaultZ;
 
     internal static void Initialize(ManualLogSource logger)
     {
@@ -37,7 +49,155 @@ internal static class ZonePlacementAdjust
         }
 
         _rotationStepPlayer = null;
+        _inputPlayer = null;
+        _rotationInputFrame = _rotationWheelFrame = -1;
+        ClearTemporaryRotation();
         ResetOffsets();
+    }
+
+    [HarmonyPatch(typeof(Player), "UpdatePlacement")]
+    private static class PlayerRotationInputPatch
+    {
+        private static void Prefix(Player __instance, bool takeInput)
+        {
+            if (!IsLocalPlayer(__instance)) return;
+            ApplyNativeRotationStep(__instance);
+            RefreshRotationDefaults();
+            if (!CanAdjustRotation(__instance))
+            {
+                ClearTemporaryRotation();
+                return;
+            }
+            if (!takeInput || ZInput.IsGamepadActive() || ShouldBlockInput() || HomesteadUi.InputBlocked ||
+                Hud.InRadial() || !PlacementGhost(__instance).activeInHierarchy) return;
+            HandleRotationInput(__instance);
+        }
+
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var code = new List<CodeInstruction>(instructions);
+            MethodInfo scroll = AccessTools.Method(typeof(ZInput), nameof(ZInput.GetMouseScrollWheel));
+            int index = code.FindIndex(instruction => instruction.Calls(scroll));
+            _rotationWheelFilterInstalled = index >= 0 && code.FindLastIndex(instruction => instruction.Calls(scroll)) == index;
+            if (!_rotationWheelFilterInstalled)
+            {
+                Log.LogWarning("Could not isolate native placement wheel input; Homestead X/Z wheel controls are disabled.");
+                return code;
+            }
+            code.InsertRange(index + 1, new[]
+            {
+                new CodeInstruction(OpCodes.Ldarg_0),
+                new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(ZonePlacementAdjust), nameof(FilterRotationWheel)))
+            });
+            return code;
+        }
+    }
+
+    private static float FilterRotationWheel(float scroll, Player player)
+    {
+        return _inputPlayer == player && _rotationWheelFrame == Time.frameCount && !IsComfyGizmoLoaded() ? 0f : scroll;
+    }
+
+    internal static bool CanAdjustRotation(Player player)
+    {
+        if (!IsLocalPlayer(player) || !player.InPlaceMode() || !ZonePlacementInput.IsHammerPlacement(player) || IsComfyGizmoLoaded()) return false;
+        if (ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive ||
+            ZoneBlueprintSnapPointTool.IsActive || ZoneBlueprintPlacementTool.IsActive) return false;
+        GameObject ghost = PlacementGhost(player);
+        return ghost && !ShouldSkipGhost(ghost) && ghost.GetComponent<Piece>().m_canRotate;
+    }
+
+    internal static string GetRotationHelp(Player player)
+    {
+        if (!CanAdjustRotation(player)) return "";
+        var axes = new List<string>(2);
+        if (_rotationWheelFilterInstalled)
+        {
+            if (PlacementControlConfig.XRotationModifier.MainKey != KeyCode.None)
+                axes.Add(HomesteadLocalization.Format("hs_placement_rotation_axis", ConfigValueHelpers.FormatShortcut(PlacementControlConfig.XRotationModifier), ZoneBlueprintToolIcons.MouseWheelInputLabel, "X"));
+            if (PlacementControlConfig.ZRotationModifier.MainKey != KeyCode.None)
+                axes.Add(HomesteadLocalization.Format("hs_placement_rotation_axis", ConfigValueHelpers.FormatShortcut(PlacementControlConfig.ZRotationModifier), ZoneBlueprintToolIcons.MouseWheelInputLabel, "Z"));
+        }
+        var actions = new List<string>(2);
+        if (PlacementControlConfig.CopyRotationHotkey.MainKey != KeyCode.None)
+            actions.Add(HomesteadLocalization.Format("hs_placement_rotation_copy", ConfigValueHelpers.FormatShortcut(PlacementControlConfig.CopyRotationHotkey)));
+        if (PlacementControlConfig.ResetRotationHotkey.MainKey != KeyCode.None)
+            actions.Add(HomesteadLocalization.Format("hs_placement_rotation_reset", ConfigValueHelpers.FormatShortcut(PlacementControlConfig.ResetRotationHotkey)));
+        string axisLine = string.Join(" | ", axes);
+        string actionLine = string.Join(" | ", actions);
+        return axisLine.Length > 0 && actionLine.Length > 0 ? axisLine + "\n" + actionLine : axisLine + actionLine;
+    }
+
+    private static void HandleRotationInput(Player player)
+    {
+        if (_inputPlayer == player && _rotationInputFrame == Time.frameCount) return;
+        if (_inputPlayer != player) ClearTemporaryRotation();
+        _inputPlayer = player;
+        _rotationInputFrame = Time.frameCount;
+
+        bool x = ConfigValueHelpers.IsShortcutHeld(PlacementControlConfig.XRotationModifier, allowUnbound: false);
+        bool z = ConfigValueHelpers.IsShortcutHeld(PlacementControlConfig.ZRotationModifier, allowUnbound: false);
+        float scroll = _rotationWheelFilterInstalled && (x || z) ? ZInput.GetMouseScrollWheel() : 0f;
+        if (Mathf.Abs(scroll) > 0.001f)
+        {
+            _rotationWheelFrame = Time.frameCount;
+            ZoneAreaCameraZoomGuard.SuppressWheelZoomThisFrame();
+        }
+        // Reset wins over copy/rotation if keys are pressed together.
+        if (ConfigValueHelpers.IsShortcutDown(PlacementControlConfig.ResetRotationHotkey))
+        {
+            PlaceRotation(player) = 0;
+            _temporaryRotation = Quaternion.identity;
+            _hasTemporaryRotation = true;
+            _rotationWheelFrame = Time.frameCount;
+            ZoneAreaCameraZoomGuard.SuppressWheelZoomThisFrame();
+        }
+        else if (ConfigValueHelpers.IsShortcutDown(PlacementControlConfig.CopyRotationHotkey))
+        {
+            if (CopyTargetRotation(player))
+            {
+                _rotationWheelFrame = Time.frameCount;
+                ZoneAreaCameraZoomGuard.SuppressWheelZoomThisFrame();
+            }
+        }
+        else if (Mathf.Abs(scroll) > 0.001f)
+        {
+            _temporaryRotation = GetAxisRotation() * Quaternion.AngleAxis(Mathf.Sign(scroll) * GetRotationStep(), x ? Vector3.right : Vector3.forward);
+            _hasTemporaryRotation = true;
+        }
+    }
+
+    private static bool CopyTargetRotation(Player player)
+    {
+        GameCamera camera = GameCamera.instance;
+        if (!camera) return false;
+        Vector3 origin = ZoneBuildCamera.TryGetBuildCameraOrigin(out Vector3 cameraOrigin) ? cameraOrigin : player.GetEyePoint();
+        if (!Physics.Raycast(camera.transform.position, camera.transform.forward, out RaycastHit hit, 50f, RemoveRayMask(player)) ||
+            Vector3.Distance(origin, hit.point) >= player.m_maxPlaceDistance) return false;
+        Piece target = hit.collider.GetComponentInParent<Piece>();
+        if (!target) return false;
+        Quaternion rotation = target.transform.rotation;
+        float step = PlaceRotationDegrees(player);
+        PlaceRotation(player) = Mathf.RoundToInt(rotation.eulerAngles.y / step);
+        // Keep the residual yaw as well as X/Z, including rotations between snap steps.
+        _temporaryRotation = Quaternion.Inverse(Quaternion.Euler(0f, PlaceRotation(player) * step, 0f)) * rotation;
+        _hasTemporaryRotation = true;
+        return true;
+    }
+
+    private static void ClearTemporaryRotation()
+    {
+        _hasTemporaryRotation = false;
+        _temporaryRotation = Quaternion.identity;
+    }
+
+    private static void RefreshRotationDefaults()
+    {
+        float x = PlacementControlConfig.XAxisRotation;
+        float z = PlacementControlConfig.ZAxisRotation;
+        if (_defaultX != x || _defaultZ != z) ClearTemporaryRotation();
+        _defaultX = x;
+        _defaultZ = z;
     }
 
     [HarmonyPatch(typeof(Player), nameof(Player.UpdatePlacementGhost))]
@@ -48,6 +208,7 @@ internal static class ZonePlacementAdjust
         {
             _axisRotationAppliedBeforeSnapThisUpdate = false;
             ApplyNativeRotationStep(__instance);
+            if (IsLocalPlayer(__instance)) RefreshRotationDefaults();
         }
 
         [HarmonyPriority(Priority.Low)]
@@ -56,6 +217,15 @@ internal static class ZonePlacementAdjust
             if (!IsLocalPlacementContext(__instance))
             {
                 ResetOffsets();
+                // Cultivators retain grid snapping without hammer adjustments.
+                // Check the final position after the grid and other normal-priority postfixes.
+                if (ZoneGridSnap.IsActive &&
+                    ZoneGridSnap.IsLocalPlacementContext(__instance) &&
+                    !ZonePlacementInput.IsHammerPlacement(__instance) &&
+                    !ShouldSkipGhost(__instance.m_placementGhost))
+                {
+                    RevalidateFinalPlacement(__instance, __instance.m_placementGhost);
+                }
                 return;
             }
 
@@ -98,8 +268,8 @@ internal static class ZonePlacementAdjust
                 _horizontalOffset,
                 _heightOffset,
                 currentYaw,
-                hasAxisRotation ? PlacementControlConfig.XAxisRotation : 0f,
-                hasAxisRotation ? PlacementControlConfig.ZAxisRotation : 0f,
+                hasAxisRotation ? Mathf.DeltaAngle(0f, ghost.transform.eulerAngles.x) : 0f,
+                hasAxisRotation ? Mathf.DeltaAngle(0f, ghost.transform.eulerAngles.z) : 0f,
                 keepVisible);
         }
 
@@ -182,6 +352,7 @@ internal static class ZonePlacementAdjust
         {
             ApplyNativeRotationStep(__instance);
             RandomizeFullCircleRotationForGhost(__instance);
+            if (IsLocalPlayer(__instance) && !CanAdjustRotation(__instance)) ClearTemporaryRotation();
         }
     }
 
@@ -219,6 +390,7 @@ internal static class ZonePlacementAdjust
             if (Input.GetKeyDown(KeyCode.Escape) || !__instance.InPlaceMode() || !__instance.m_placementGhost || __instance.IsDead())
             {
                 ResetOffsets();
+                ClearTemporaryRotation();
             }
         }
     }
@@ -290,14 +462,19 @@ internal static class ZonePlacementAdjust
 
     private static void SetRotationStep(Player player, float step)
     {
-        float oldStep = player.m_placeRotationDegrees;
+        float oldStep = PlaceRotationDegrees(player);
         if (oldStep > 0.001f)
         {
-            float yaw = oldStep * player.m_placeRotation;
-            player.m_placeRotation = Mathf.RoundToInt(yaw / step);
+            float yaw = oldStep * PlaceRotation(player);
+            PlaceRotation(player) = Mathf.RoundToInt(yaw / step);
+            if (_hasTemporaryRotation)
+            {
+                float roundedYaw = PlaceRotation(player) * step;
+                _temporaryRotation = Quaternion.AngleAxis(yaw - roundedYaw, Vector3.up) * _temporaryRotation;
+            }
         }
 
-        player.m_placeRotationDegrees = step;
+        PlaceRotationDegrees(player) = step;
     }
 
     private static void RandomizeFullCircleRotationForGhost(Player player)
@@ -447,7 +624,7 @@ internal static class ZonePlacementAdjust
 
     private static bool HasActiveAxisRotation()
     {
-        if (!PlacementControlConfig.HasPlacementAxisRotation)
+        if (!(_hasTemporaryRotation ? Quaternion.Angle(_temporaryRotation, Quaternion.identity) > 0.001f : PlacementControlConfig.HasPlacementAxisRotation))
         {
             return false;
         }
@@ -498,6 +675,7 @@ internal static class ZonePlacementAdjust
 
     private static Quaternion GetAxisRotation()
     {
+        if (_hasTemporaryRotation) return _temporaryRotation;
         return Quaternion.Euler(
             PlacementControlConfig.XAxisRotation,
             0f,

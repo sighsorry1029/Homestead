@@ -59,7 +59,11 @@ Server owners can configure tab access (keep **Lock Configuration = On** to enfo
 
 - **01 - General / Homestead Tab Access**: `Everyone` (default) or `AdminsOnly`. Uses the server's ServerSync admin status, hides the hammer tab/tools for other players, and cancels active tool selection when access is removed. Existing network chests remain available. This controls the normal UI; it is not an anti-cheat restriction on modified clients or all Homestead features.
 
-**02 - Client / Build Camera Tooltip** (default `On`) shows the configured camera shortcut and current station/comfort requirement or active state in one line above the build piece panel. It works with key hints disabled, follows the panel's position and UI scale, and can be toggled locally during play.
+The upper-left status HUD groups selected area size, placement values and controls, Grid Snap, build camera conditions and ranges, and area repair radius. Circlet adjustments appear briefly at the bottom. Its position and font size use the existing **02 - Client / Status HUD** settings, and its height follows the visible content. New configs default to X=30, Y=150 and font size 18; saved values are preserved. Shortcuts use orange keys in a `key: action` format.
+
+**02 - Client / HUD Controls Help** (default `On`) controls the camera, arrow/PgUp/PgDn, rotation and Grid Snap help lines in this HUD. Turning it off keeps numeric status and area repair information. It replaces `Build Camera Tooltip` without reading or migrating that old setting, and works independently of Valheim's key hints. Cultivators show grid help without hammer-only movement controls; Area Save/Dismantle show movement help without grid. Keyboard placement help is hidden while using a controller.
+
+Selecting repair shows its actual radius below the camera ranges, even with the camera off, and leaves the game's original repair description intact. The radius is base radius plus comfort scale times the cube root of cozy comfort; without cozy comfort only the base radius applies. This information is hidden when Homestead area repair is disabled or another supported area repair mod handles it.
 
 Any player can confirm a construction plan chest; there is no creator-only confirmation setting. Shop listing/purchase/payout authorization is unchanged. Finished pieces keep the original chest creator. The person confirming supplies the existing knowledge/station/no-cost checks and optional inventory/AzuCraftyBoxes material pull.
 
@@ -94,6 +98,8 @@ Area Save and Area Dismantle use the same rectangle controls:
 - `Mouse5 + Wheel`: adjust width.
 - `Arrows` / `PgUp` / `PgDn`: nudge the tool or preview without a modifier key.
 
+`06 - Area Tools / Area Save Creator Mode` defaults to `AllCreators`, allowing Area Save to include pieces built by you, other players, or no recorded creator. Existing config values and server-synced settings are preserved.
+
 Area Dismantle is intentionally conservative:
 
 - only matching player-owned pieces are dismantled
@@ -126,6 +132,8 @@ Notifications appear for store events such as new listings, offers, accepted off
 
 Build camera helps with tall, wide, or awkward builds by letting the camera move away from the player while building.
 
+**05 - Build Camera / Require Crafting Station** (default `On`, synced with the server) controls whether a nearby crafting station, such as a workbench, is required to enter build camera mode. Set it to `Off` to enter without a station. The comfort restriction and normal building requirements still apply. As before, moving the camera beyond station range does not end an active camera session.
+
 It supports:
 
 - configurable distance
@@ -143,6 +151,10 @@ Homestead adds small controls that make regular building less fussy:
 - adjustable rotation step
 - X/Z rotation offsets
 - key hints for Homestead controls
+
+Ordinary hammer pieces also support local X/Z rotation with the side mouse buttons + wheel, rotation-only copying with `[`, and resetting all axes to zero with `]`. These are configurable under **04 - Placement Controls**; set a shortcut to `None` to disable it. The X/Z defaults use Unity's `Mouse3`/`Mouse4`, displayed as `Mouse4`/`Mouse5` in the HUD. If both modifiers are held, X takes priority. Rotation uses **Rotation Step**, and copying preserves the complete aimed-at rotation without changing the selected piece.
+
+Temporary rotation stays between ordinary hammer pieces and clears on leaving ordinary placement, Escape, death, or world exit. Changing either saved X/Z default clears the temporary rotation and applies the new defaults. These controls do not write rotation changes back to the config. They are disabled while ComfyGizmo is loaded and do not handle cultivators, terrain tools, or Homestead blueprint/area tools. Their HUD help follows **HUD Controls Help**.
 
 ## Dvergr Circlet
 

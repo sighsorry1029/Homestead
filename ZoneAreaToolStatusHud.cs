@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Linq;
+using HarmonyLib;
 using TMPro;
 using UnityEngine;
 
@@ -17,6 +18,11 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     private string _placementLine = "";
     private string _dvergrLine = "";
     private string _buildCameraLine = "";
+    private string _placementHelp = "";
+    private string _cameraHelp = "";
+    private string _repairLine = "";
+    private bool _showBuildInfo;
+    private float _nextContextRefresh;
     private string _lastAreaLine = "";
     private string _lastPlacementLine = "";
     private string _lastDvergrLine = "";
@@ -24,6 +30,10 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     private string? _renderedPlacementLine;
     private string? _renderedDvergrLine;
     private string? _renderedBuildCameraLine;
+    private string? _renderedPlacementHelp;
+    private string? _renderedCameraHelp;
+    private string? _renderedRepairLine;
+    private bool _renderedBuildInfo;
     private string _renderedText = "";
     private float _areaHideAfter = float.MinValue;
     private float _placementHideAfter = float.MinValue;
@@ -33,9 +43,37 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     private Vector2 _appliedPosition;
     private float _appliedFontSize;
 
+    [HarmonyPatch(typeof(Hud), "Update")]
+    private static class HudUpdatePatch
+    {
+        private static void Postfix()
+        {
+            // Help must also appear before any placement value has changed.
+            if (!_instance || !_instance!._text) EnsureInstance();
+        }
+    }
+
+    public static void Shutdown()
+    {
+        if (!_instance) return;
+        ZoneAreaToolStatusHud instance = _instance!;
+        _instance = null;
+        instance.enabled = false;
+        if (instance._text) instance._text!.gameObject.SetActive(false);
+        Object.Destroy(instance);
+    }
+
+    private void OnDestroy()
+    {
+        // The text is a sibling under Hud, not a child of this component.
+        if (_text) Object.Destroy(_text!.gameObject);
+        if (_instance == this) _instance = null;
+    }
+
     public static void Show(string size, float yaw, Vector3 horizontalOffset, float heightOffset)
     {
-        ShowPlacementLine(horizontalOffset, heightOffset, yaw, FormatAreaSize(size));
+        ShowPlacementLine(horizontalOffset, heightOffset, yaw,
+            HomesteadLocalization.Format("hs_hud_area", FormatAreaSize(size)));
     }
 
     public static void ShowBlueprint(float yaw, Vector3 horizontalOffset, float heightOffset)
@@ -68,8 +106,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         EnsureInstance();
         _instance?.SetDvergrLine(
             HomesteadLocalization.Format(
-                "hs_dvergr_hud",
-                lightOn ? HomesteadLocalization.Text("hs_common_on") : HomesteadLocalization.Text("hs_common_off"),
+                lightOn ? "hs_dvergr_hud_on" : "hs_dvergr_hud_off",
                 rangeMultiplier * 100f,
                 intensityMultiplier * 100f),
             1f);
@@ -96,7 +133,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         string cameraLine = HomesteadLocalization.Format("hs_build_camera_distance_hud", FormatMeters(currentDistance), FormatMeters(maxDistance), suffix);
         string placeLine = HomesteadLocalization.Format("hs_build_camera_place_distance_hud", FormatMeters(maxPlaceDistance), placeSuffix);
         string pickupLine = HomesteadLocalization.Format("hs_build_camera_pickup_range_hud", FormatMeters(resourcePickupRange), pickupSuffix);
-        _instance?.SetBuildCameraLine(cameraLine + "\n" + placeLine + "\n" + pickupLine);
+        _instance?.SetBuildCameraLine(DimFormula(cameraLine) + "\n" + DimFormula(placeLine) + "\n" + DimFormula(pickupLine));
     }
 
     public static void HideBuildCameraDistance()
@@ -176,7 +213,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         }
 
         _instance = Hud.instance.GetComponent<ZoneAreaToolStatusHud>();
-        if (_instance == null)
+        if (_instance == null || !_instance.enabled)
         {
             _instance = Hud.instance.gameObject.AddComponent<ZoneAreaToolStatusHud>();
         }
@@ -186,7 +223,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private void Update()
     {
-        bool changed = false;
+        bool changed = UpdateContext();
         if (!string.IsNullOrEmpty(_areaLine) && Time.unscaledTime > _areaHideAfter)
         {
             _areaLine = "";
@@ -218,6 +255,70 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
         ApplyVisibility();
         ApplyLayout();
+    }
+
+    private bool UpdateContext()
+    {
+        Player player = Player.m_localPlayer;
+        Hud hud = Hud.instance;
+        bool visible = player && !player.IsDead() && player.InPlaceMode() && hud && hud.IsVisible() &&
+                       hud.m_buildHud && hud.m_buildHud.activeInHierarchy &&
+                       !ZoneBuildCamera.IsInputBlocked(blockPieceSelection: true);
+        bool changed = _showBuildInfo != visible;
+        _showBuildInfo = visible;
+        if (!visible || player == null)
+        {
+            _nextContextRefresh = 0f;
+            return changed;
+        }
+
+        // Disabling the help config takes effect without waiting for a refresh.
+        if (!ClientConfig.HudControlsHelpEnabled && (_placementHelp.Length > 0 || _cameraHelp.Length > 0))
+        {
+            _placementHelp = _cameraHelp = "";
+            _nextContextRefresh = 0f;
+            changed = true;
+        }
+        if (Time.unscaledTime < _nextContextRefresh) return changed;
+        _nextContextRefresh = Time.unscaledTime + 0.35f;
+
+        string repair = ZoneAreaRepair.GetStatusText(player);
+        string camera = "";
+        string placement = "";
+        if (ClientConfig.HudControlsHelpEnabled)
+        {
+            if (ZoneBuildCamera.IsEnabled())
+            {
+                string shortcut = BuildCameraConfig.ToggleHotkey.MainKey == KeyCode.None
+                    ? HomesteadLocalization.Text("hs_build_camera_unbound")
+                    : ConfigValueHelpers.FormatShortcut(BuildCameraConfig.ToggleHotkey);
+                camera = HomesteadLocalization.Format("hs_build_camera_tooltip", shortcut, ZoneBuildCamera.GetConditionText(player));
+            }
+            Piece selected = player.GetBuildTool().GetSelectedPiece();
+            if (!ZInput.IsGamepadActive() && selected && !player.InRepairMode() &&
+                !ZoneBlueprintSaveToolMenu.IsStoreToolSelected(player) && !ZoneBlueprintSnapPointTool.IsActive &&
+                selected.GetComponent<ZoneBlueprintSaveToolMarker>() is not { Kind: ZoneBlueprintToolKind.DataFolder })
+            {
+                if (PlacementControlConfig.PlacementAdjustEnabled && ZonePlacementInput.IsHammerPlacement(player) &&
+                    !selected.GetComponent<TerrainOp>())
+                    placement = HomesteadLocalization.Text("hs_placement_tooltip_offset");
+                string rotation = ZonePlacementAdjust.GetRotationHelp(player);
+                if (rotation.Length > 0) placement = placement.Length > 0 ? placement + "\n" + rotation : rotation;
+                if (PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None &&
+                    !ZoneBlueprintSaveTool.IsActive && !ZoneAreaDismantleTool.IsActive)
+                {
+                    string grid = HomesteadLocalization.Format(
+                        ZoneGridSnap.IsActive ? "hs_placement_tooltip_grid_on" : "hs_placement_tooltip_grid_off",
+                        ConfigValueHelpers.FormatShortcut(PlacementControlConfig.GridSnapToggleHotkey), PlacementControlConfig.GridSnapSize);
+                    placement = placement.Length > 0 ? placement + "\n" + grid : grid;
+                }
+            }
+        }
+        changed |= _placementHelp != placement || _cameraHelp != camera || _repairLine != repair;
+        _placementHelp = placement;
+        _cameraHelp = camera;
+        _repairLine = repair;
+        return changed;
     }
 
     private void SetAreaLine(string line, bool keepVisible)
@@ -332,25 +433,42 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         if (_renderedAreaLine != _areaLine ||
             _renderedPlacementLine != _placementLine ||
             _renderedDvergrLine != _dvergrLine ||
-            _renderedBuildCameraLine != _buildCameraLine)
+            _renderedBuildCameraLine != _buildCameraLine ||
+            _renderedPlacementHelp != _placementHelp || _renderedCameraHelp != _cameraHelp ||
+            _renderedRepairLine != _repairLine || _renderedBuildInfo != _showBuildInfo)
         {
             _renderedAreaLine = _areaLine;
             _renderedPlacementLine = _placementLine;
             _renderedDvergrLine = _dvergrLine;
             _renderedBuildCameraLine = _buildCameraLine;
-            string[] lines = [_areaLine, _placementLine, _dvergrLine, _buildCameraLine];
-            _renderedText = string.Join("\n", lines.Where(line => !string.IsNullOrEmpty(line)));
+            _renderedPlacementHelp = _placementHelp;
+            _renderedCameraHelp = _cameraHelp;
+            _renderedRepairLine = _repairLine;
+            _renderedBuildInfo = _showBuildInfo;
+            string placement = _showBuildInfo ? JoinLines(_areaLine, _placementLine, Dim(_placementHelp)) : "";
+            string camera = _showBuildInfo ? JoinLines(Dim(_cameraHelp), _buildCameraLine, DimFormula(_repairLine)) : "";
+            _renderedText = string.Join("\n\n", new[] { placement, camera, _dvergrLine }.Where(line => line.Length > 0));
         }
 
         // A recreated text element must still receive the cached lines.
         if (_text!.text != _renderedText)
         {
+            Localization.instance?.RemoveTextFromCache(_text);
             _text.text = _renderedText;
+            _layoutApplied = false;
         }
 
         ApplyVisibility();
         _text.transform.SetAsLastSibling();
         ApplyLayout();
+    }
+
+    private static string JoinLines(params string[] lines) => string.Join("\n", lines.Where(line => line.Length > 0));
+    private static string Dim(string text) => text.Length == 0 ? "" : "<color=#D6CEAE>" + text + "</color>";
+    private static string DimFormula(string text)
+    {
+        int index = text.IndexOf(" = ", System.StringComparison.Ordinal);
+        return index < 0 ? text : text.Substring(0, index) + Dim(text.Substring(index));
     }
 
     private void ApplyVisibility()
@@ -360,7 +478,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
             return;
         }
 
-        _canvasGroup.alpha = !string.IsNullOrEmpty(_text.text) && !Hud.IsUserHidden() ? 1f : 0f;
+        _canvasGroup.alpha = !string.IsNullOrEmpty(_text.text) && Hud.instance && Hud.instance.IsVisible() && !Hud.IsUserHidden() ? 1f : 0f;
     }
 
     private void EnsureElements()
@@ -399,13 +517,14 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
             _canvasGroup.alpha = 0f;
 
             _text.color = new Color(1f, 0.86f, 0.45f, 1f);
-            _text.alignment = TextAlignmentOptions.Left;
+            _text.alignment = TextAlignmentOptions.TopLeft;
+            _text.richText = true;
             _text.enableAutoSizing = false;
             _text.textWrappingMode = TextWrappingModes.NoWrap;
             _text.overflowMode = TextOverflowModes.Overflow;
             _text.margin = Vector4.zero;
             _text.raycastTarget = false;
-            _text.text = string.Empty;
+            _text.text = _renderedText;
             _layoutApplied = false;
         }
 
@@ -439,7 +558,9 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
         _rectTransform.anchoredPosition = position;
         _text.fontSize = fontSize;
-        _rectTransform.sizeDelta = CalculateHudSize(fontSize);
+        float width = Mathf.Clamp(fontSize * 34f, 220f, 1800f);
+        float height = _text.GetPreferredValues(_renderedText, width, Mathf.Infinity).y + 8f;
+        _rectTransform.sizeDelta = new Vector2(width, Mathf.Max(fontSize * 1.45f, height));
         _appliedPosition = position;
         _appliedFontSize = fontSize;
         _layoutApplied = true;
@@ -466,14 +587,6 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
         _missingFontLogged = true;
         HomesteadPlugin.HomesteadLogger.LogWarning("Homestead status HUD could not find a TextMeshPro font asset.");
-    }
-
-    private static Vector2 CalculateHudSize(float fontSize)
-    {
-        float height = fontSize * 7f * 1.45f + 12f;
-        return new Vector2(
-            Mathf.Clamp(fontSize * 34f, 220f, 1800f),
-            Mathf.Clamp(height, 40f, 420f));
     }
 
     private static string Format(float value)
