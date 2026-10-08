@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- Fixed ZenRedecorate Ctrl-click movement failing when started from repair mode and leaving the player stuck in its moving/encumbered state. Homestead now checks the source prefab before the movement preview exists; ZenRedecorate's normal carrying penalty and movement restrictions remain unchanged.
+
 ## 1.3.1
 
 - Added optional Infinity Hammer position compatibility and the client-only `Position Control Priority` setting, shown first in Placement Controls and defaulting to `Homestead`. Select `InfinityHammer` to delegate ordinary hammer positioning; changes apply during play and existing saved settings are preserved.

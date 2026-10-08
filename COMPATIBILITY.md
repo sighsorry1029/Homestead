@@ -1,5 +1,79 @@
 # Valheim 호환성 기록
 
+## Homestead 1.3.2 릴리스 검증 (2026-10-09)
+
+`main`의 기준 `e4c2349`(1.3.1) 이후 ZenRedecorate 이동 미리보기 초기화 수정과
+해당 회귀 검사를 1.3.2로 묶었다. 플러그인/assembly/manifest 버전과 changelog를
+갱신했으며 기존 ServerSync 버전 검사 정책은 유지한다.
+
+- Debug/Release 빌드·최종 DLL 병합 모두 경고/오류 0개. 두 구성의 자동 회귀 검사 통과.
+  Release의 Debug 전용 catalog clone 검사만 예정대로 생략했다.
+- 이번 **1.3.2 Release DLL**로 원본 Valheim 1.0.17 Unity/Mono 격리 클라이언트에서
+  ZenRedecorate 1.5.0 + Infinity Hammer 1.87 병용 27개 검사와 완료를 확인했다.
+  실제 이동 API/배치 경로, 이동·취소, 상자/ZDO/내용물 보존, 무게 정책과 도구 전환이
+  포함된다. 테스트 경로에서 Unity 오류가 없었으며 Jotunn의 기존 asset 이름 경고
+  3개는 남아 있다. 실제 Ctrl+클릭 입력과 원격 멀티플레이는 미검증이다.
+- Debug DLL과 로컬 plugins DLL SHA-256 일치:
+  `A2CE715948D9232BD2FFF4F18BD8BBEC362114A4E5EE67578D300A6313707955`.
+- Release DLL의 assembly version은 `1.3.2.0`, SHA-256은
+  `73F7FBA512E693E60A5A97BDF7191E1FA460F4BFCCB484B3D0E355C2432171D8`다.
+  Thunderstore/Nexus ZIP 내부 DLL이 이 파일과 일치하며, Thunderstore의 manifest
+  버전·BepInEx 5.4.2351 의존성·문서/아이콘/영문 번역 일치와 외부 모드·테스트 DLL
+  미포함을 확인했다. 업로더 상태나 사이트 게시 여부는 확인하지 않았다.
+
+## ZenRedecorate 이동 미리보기 초기화 (2026-10-09)
+
+Valheim 1.0.17 원본 DLL과 사용자가 제공한 ZenRedecorate 1.5.0을 분석했다.
+Zen DLL SHA-256은 `3508299DC3408507E864DAF111B98AEBB0B4B033243A4B2145E9F20167AB2A5B`다.
+실행 의존성은 같은 프로필의 Zen.ModLib 1.14.21과 Jotunn 2.30.2다.
+Homestead의 새 의존성으로 추가하거나 배포 DLL에 병합하지 않는다.
+
+Zen은 이동 시작 시 원본 부품을 저장한 다음 `Player.SetupPlacementGhost`를 호출한다.
+그동안 `PieceTable.GetSelectedPiece`는 아직 생성되지 않은 이동 고스트를 반환하려고 한다.
+Homestead의 `PlayerSetupPlacementGhostPatch.Prefix`가 이 함수를 먼저 호출하면서
+수리 모드에서 NullReferenceException이 발생하고 Zen의 이동 상태가 남았다.
+수정 전 Debug DLL로 이 호출 스택을 격리 클라이언트에서 재현했다.
+
+해당 prefix의 marker 조회만 `GetSelectedPrefab` → `Piece`로 바꿨다.
+이것은 원본 `Player.SetupPlacementGhost`도 사용하는 생성 대상이며, Zen 이동 중에는
+고스트 대신 원본 부품을 돌려준다. 이후 Homestead marker의 권한·활성화·정리는 그대로다.
+Zen의 운반 중 encumbrance 설정, 이동 권한·거리·RPC와 Homestead 배치 제어는 바꾸지 않는다.
+
+- 기준/수정 Debug 빌드·병합과 기존 자동 회귀 검사 통과. 경고/오류 0개.
+- 원본 Valheim 1.0.17 Unity/Mono 격리 클라이언트에서 Zen 병용 27개 검사 및
+  `COMPLETE ZenRedecorate`를 확인했다. 수리/일반 부품 선택에서 이동 시작,
+  건축 메뉴를 통한 취소, native `TryPlacePiece`를 통한 이동 확정, 같은 상자와 ZDO 유지,
+  상자 내용물·개수 보존, 무게 페널티 적용/해제, creator 없는 부품의 기존 거부 정책,
+  Homestead Area Save와 일반 부품 간 전환을 검사했다.
+- Infinity Hammer 1.87 + Server Devcommands 1.115 + World Edit Commands 1.81을
+  추가한 별도 격리 클라이언트에서도 같은 27개 검사와 완료를 확인했다. IH는 선택용
+  부품을 복제하므로 일반 부품 선택 복원은 원본과의 객체 동일성이 아닌 prefab 식별자와
+  piece 이름으로 검사한다. IH DLL SHA-256:
+  `990A9BD7BEA6562024B3094A45249837262AAAAA55510E9BD9511600C135ADB4`.
+- 테스트 개발 중 무적 모드에서는 Zen.ModLib의 `AdminUnencumberedGods` 정책이
+  무게 페널티를 해제함을 확인해 일반 플레이어 상태로 검사했다. 목재 벽은 명시적으로
+  해금하며, creator 거부 검사는 기존 creator를 지울 수 없는 `Piece.SetCreator` 대신
+  새 creator 없는 부품을 사용한다. 이 보정은 테스트 코드에만 적용했다.
+- 검사 중 Unity 오류가 없었다. Jotunn의 중복 asset 이름 경고 3개는 남아 있으며
+  이번 Homestead 수정 대상에 포함하지 않았다.
+- 최종 Debug DLL과 로컬 게임 plugins DLL의 SHA-256 일치:
+  `DFC4CB856DD655E7A3EC9BCDED68B03A8CFA1D1B57C99A727F05455DDEBEFA49`.
+- 실제 키보드 Ctrl+클릭 입력, 데디케이트 서버/원격 멀티플레이, 전체 사용자 모드 구성은
+  미검증이다. 검사는 격리 로컬 월드에서 실제 Zen 이동 API와 게임 배치 경로를 호출한다.
+  이 Debug 수정 단계에서는 사용자 Gale 프로필 DLL/설정, 모드 버전, Release 산출물을 변경하지 않았다.
+
+격리 실행 재현 명령(기존 사용자 프로필·월드·설정은 수정하지 않음):
+
+```powershell
+dotnet build Homestead.sln -c Debug -p:DeployToGame=true
+dotnet build tests/RuntimeProbe/RuntimeProbe.csproj -c Debug
+./tests/Run-RegressionChecks.ps1
+./tests/Start-RuntimeProbe.ps1 -Role client -ZenRedecorateOnly `
+  -ZenRedecorateAssemblyPath '<프로필>/BepInEx/plugins/ZenDragon-ZenRedecorate/ZenRedecorate.dll'
+# 같은 시나리오에 Infinity Hammer를 추가하려면 같은 프로필의 DLL을 지정:
+# -InfinityHammerAssemblyPath '<프로필>/BepInEx/plugins/JereKuusela-Infinity_Hammer/InfinityHammer.dll'
+```
+
 ## Homestead 1.3.1 릴리스 검증 (2026-10-08)
 
 `main`의 기준 `e7af05f`(1.3.0) 이후 이 대화에서 구현한 변경을 1.3.1로 묶었다.

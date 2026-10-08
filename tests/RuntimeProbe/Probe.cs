@@ -43,6 +43,7 @@ public sealed class Probe : BaseUnityPlugin
         bool gridOnly = Environment.GetCommandLineArgs().Contains("-homestead-grid-probe");
         bool rotationOnly = Environment.GetCommandLineArgs().Contains("-homestead-rotation-probe");
         bool infinityHammerOnly = Environment.GetCommandLineArgs().Contains("-homestead-infinityhammer-probe");
+        bool zenOnly = Environment.GetCommandLineArgs().Contains("-homestead-zen-probe");
         if (!headless)
         {
             yield return new WaitForSeconds(6f);
@@ -62,7 +63,7 @@ public sealed class Probe : BaseUnityPlugin
                 Game.SetProfile("homestead_probe", FileHelpers.FileSource.Local);
                 // Rotation probes place networked pieces. A prior interrupted run
                 // can leave those pieces in the saved world and obstruct later rays.
-                string worldName = rotationOnly || infinityHammerOnly
+                string worldName = rotationOnly || infinityHammerOnly || zenOnly
                     ? "HomesteadProbe-" + Guid.NewGuid().ToString("N") : "HomesteadProbe";
                 World world = World.GetCreateWorld(worldName, FileHelpers.FileSource.Local);
                 ZNet.SetServer(true, false, false, "HomesteadProbe", "", world);
@@ -81,9 +82,9 @@ public sealed class Probe : BaseUnityPlugin
             while (Player.m_localPlayer.InCutscene() && Time.realtimeSinceStartup < deadline) yield return null;
             yield return new WaitForSeconds(1f);
         }
-        if ((placementOnly || gridOnly || rotationOnly || infinityHammerOnly) && !headless)
+        if ((placementOnly || gridOnly || rotationOnly || infinityHammerOnly || zenOnly) && !headless)
         {
-            IEnumerator placement = infinityHammerOnly ? CheckInfinityHammerPlacement() : rotationOnly ? CheckRotationControls() : gridOnly ? CheckCultivatorGrid() : CheckCultivatorRotation();
+            IEnumerator placement = zenOnly ? CheckZenRedecorate() : infinityHammerOnly ? CheckInfinityHammerPlacement() : rotationOnly ? CheckRotationControls() : gridOnly ? CheckCultivatorGrid() : CheckCultivatorRotation();
             int runtimeErrors = 0;
             Application.LogCallback onError = (message, stack, type) =>
             {
@@ -102,7 +103,7 @@ public sealed class Probe : BaseUnityPlugin
             finally { Application.logMessageReceived -= onError; }
             if (runtimeErrors != 0) { Fail(new Exception("Placement runtime logged " + runtimeErrors + " errors; inspect unity.log.")); yield break; }
             Check(true, "no Unity errors during placement checks");
-            File.AppendAllText(report, infinityHammerOnly ? "COMPLETE Infinity Hammer\n" : rotationOnly ? "COMPLETE rotation\n" : gridOnly ? "COMPLETE standalone grid\n" : "COMPLETE placement\n");
+            File.AppendAllText(report, zenOnly ? "COMPLETE ZenRedecorate\n" : infinityHammerOnly ? "COMPLETE Infinity Hammer\n" : rotationOnly ? "COMPLETE rotation\n" : gridOnly ? "COMPLETE standalone grid\n" : "COMPLETE placement\n");
             Application.Quit();
             yield break;
         }
@@ -432,6 +433,135 @@ public sealed class Probe : BaseUnityPlugin
             input.UnpatchSelf();
             if (target) target.GetComponent<ZNetView>().Destroy();
             if (placed) placed.GetComponent<ZNetView>().Destroy();
+            Destroy(floor);
+        }
+    }
+
+    private IEnumerator CheckZenRedecorate()
+    {
+        Check(BepInEx.Bootstrap.Chainloader.PluginInfos.TryGetValue("ZenDragon.ZenRedecorate", out var zenPlugin), "original ZenRedecorate loaded");
+        Type zen = zenPlugin.Instance.GetType().Assembly.GetType("ZenRedecorate.Redecorate");
+        object Zen(string method, params object[] args) => AccessTools.Method(zen, method).Invoke(null, args);
+        bool Moving() => (bool)zen.GetProperty("IsMoving").GetValue(null);
+        var encumbered = zenPlugin.Instance.Config.First(e => e.Key.Key == "Encumbered When Redecorating").Value;
+        object savedEncumbered = encumbered.BoxedValue;
+        PreparePlacementPlayer();
+        Player player = Player.m_localPlayer;
+        player.SetGodMode(true);
+        GameObject hammerPrefab = ObjectDB.instance.GetItemPrefab("Hammer");
+        ItemDrop.ItemData hammer = hammerPrefab.GetComponent<ItemDrop>().m_itemData.Clone();
+        hammer.m_dropPrefab = hammerPrefab;
+        hammer.m_durability = hammer.GetMaxDurability();
+        Check(player.GetInventory().AddItem(hammer), "add Zen fixture hammer");
+        AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
+        Check(player.EquipItem(hammer), "equip Zen fixture hammer");
+        yield return new WaitForSeconds(1f);
+        Vector3 center = player.transform.position + Vector3.up * 100f;
+        player.transform.position = center;
+        player.GetComponent<Rigidbody>().position = center;
+        player.GetComponent<Rigidbody>().linearVelocity = Vector3.zero;
+        Hud.CloseBuildUi();
+        var ghostField = AccessTools.Field(typeof(Player), "m_placementGhost");
+        GameObject Ghost() => (GameObject)ghostField.GetValue(player);
+        Piece repair = player.GetBuildTool().m_pieces.Select(p => p.GetComponent<Piece>()).First(p => p && p.m_repairPiece);
+        Piece wall = ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>();
+        AccessTools.Method(typeof(Player), "AddKnownPiece").Invoke(player, new object[] { wall });
+        AccessTools.Method(typeof(Player), "UpdateAvailablePiecesList").Invoke(player, null);
+        var floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        floor.name = "ZenProbeFloor";
+        floor.layer = LayerMask.NameToLayer("piece");
+        floor.transform.position = center + new Vector3(0, -1, 3);
+        floor.transform.localScale = new Vector3(15, 0.2f, 15);
+        GameObject source = Instantiate(ZNetScene.instance.GetPrefab("piece_chest_wood"), center + Vector3.forward * 3, Quaternion.identity);
+        Piece piece = source.GetComponent<Piece>();
+        piece.SetCreator(player.GetPlayerID(), default);
+        WearNTear wear = source.GetComponent<WearNTear>();
+        wear.enabled = false;
+        // The synthetic floor is above terrain; initialize the connection normally
+        // present on settled pieces before Zen refreshes it during a move.
+        Heightmap terrain = Heightmap.FindHeightmap(center);
+        Check(terrain, "Zen fixture has loaded terrain below its synthetic floor");
+        AccessTools.Field(typeof(WearNTear), "m_connectedHeightMap").SetValue(wear, terrain);
+        ZDO zdo = source.GetComponent<ZNetView>().GetZDO();
+        Inventory inventory = source.GetComponent<Container>().GetInventory();
+        ItemDrop.ItemData wood = ObjectDB.instance.GetItemPrefab("Wood").GetComponent<ItemDrop>().m_itemData.Clone();
+        wood.m_stack = 7;
+        Check(inventory.AddItem(wood), "fill Zen chest fixture");
+        AccessTools.Method(typeof(Container), "Save").Invoke(source.GetComponent<Container>(), null);
+        string Contents() { var package = new ZPackage(); inventory.Save(package); return package.GetBase64(); }
+        string contents = Contents();
+        int NetworkChests() => FindObjectsByType<Container>(FindObjectsInactive.Include, FindObjectsSortMode.None)
+            .Count(c => c.name.StartsWith("piece_chest_wood") && c.GetComponent<ZNetView>()?.GetZDO() != null);
+        int chests = NetworkChests();
+        try
+        {
+            // Zen.ModLib deliberately removes encumbrance from gods. Test the
+            // ordinary player's transport policy after preparing a safe floor.
+            player.SetGodMode(false);
+            encumbered.BoxedValue = true;
+            Check(!player.IsEncumbered(), "player is not encumbered before moving");
+            Check(player.SetSelectedPiece(repair) && !Ghost(), "repair selected with no placement ghost");
+            Vector3 originalPosition = source.transform.position;
+            Zen("PickupPiece", piece);
+            Check(Moving() && Ghost() && Ghost().GetComponent<Piece>() && !source.activeSelf, "Zen pickup from repair creates ghost and hides original");
+            Piece cached = (Piece)zen.GetProperty("CachedBuildPiece").GetValue(null);
+            Check(player.IsEncumbered(), "Zen encumbrance preserved during movement");
+            Check(cached == repair, "Zen cached repair selection preserved");
+            AccessTools.Method(typeof(Hud), "TogglePieceSelection").Invoke(Hud.instance, null);
+            Check(!Moving() && source.activeSelf && source.transform.position == originalPosition &&
+                  player.GetSelectedPiece() == repair && !Ghost(), "build-menu cancel restores original chest and repair selection");
+            Check(!player.IsEncumbered() && Contents() == contents && NetworkChests() == chests, "cancel releases encumbrance without changing chest contents or count");
+            Zen("PickupPiece", piece);
+            Transform camera = GameCamera.instance.transform;
+            camera.position = center + new Vector3(0, 2, -2);
+            camera.LookAt(center + new Vector3(2, -0.9f, 3));
+            Physics.SyncTransforms();
+            AccessTools.Method(typeof(Player), "UpdatePlacementGhost").Invoke(player, new object[] { false });
+            Check(Ghost().activeInHierarchy && AccessTools.Field(typeof(Player), "m_placementStatus").GetValue(player).ToString() == "Valid", "Zen moving chest has valid native placement");
+            Vector3 destination = Ghost().transform.position;
+            bool placed = player.TryPlacePiece(Ghost().GetComponent<Piece>());
+            // Zen returns false even on successful movement to avoid vanilla resource consumption.
+            Check(!placed && !Moving(), "Zen intercepts native TryPlacePiece without creating a new piece");
+            yield return null;
+            Check(source && source.activeSelf && source.GetComponent<ZNetView>().GetZDO() == zdo &&
+                  Vector3.Distance(source.transform.position, destination) < 0.01f && Vector3.Distance(zdo.GetPosition(), destination) < 0.01f,
+                "same chest and ZDO move to preview destination");
+            Check(!player.IsEncumbered() && Contents() == contents && NetworkChests() == chests &&
+                  player.GetSelectedPiece() == repair, "confirmed move preserves inventory and restores repair without duplicates");
+            Check(player.SetSelectedPiece(wall) && Ghost(), "ordinary wall selected with an existing ghost");
+            Zen("PickupPiece", piece);
+            Check(Moving() && Ghost() && !source.activeSelf, "Zen pickup also works from an ordinary piece selection");
+            Zen("AbortMove", false);
+            Piece restoredSelection = player.GetSelectedPiece();
+            // Infinity Hammer creates a selection clone with the prefab's name;
+            // restored selection need not be the ZNetScene prefab instance.
+            Check(!Moving() && source.activeSelf && restoredSelection &&
+                  Utils.GetPrefabName(restoredSelection.gameObject.name) == wall.gameObject.name && restoredSelection.m_name == wall.m_name,
+                "abort restores ordinary piece selection");
+            // SetCreator cannot erase an existing creator. Use a fresh world
+            // piece with no creator to exercise Zen's existing rejection policy.
+            GameObject unowned = Instantiate(ZNetScene.instance.GetPrefab("piece_chest_wood"), center + Vector3.left * 3, Quaternion.identity);
+            try
+            {
+                Piece unownedPiece = unowned.GetComponent<Piece>();
+                Check(!unownedPiece.IsPlacedByPlayer(), "unowned fixture has no player creator");
+                Zen("PickupPiece", unownedPiece);
+                Check(!Moving() && unowned.activeSelf && source.activeSelf && Contents() == contents, "Zen still rejects a piece not placed by a player");
+            }
+            finally { if (unowned) unowned.GetComponent<ZNetView>().Destroy(); }
+            Piece area = player.GetBuildTool().m_pieces.Select(p => p.GetComponent<Piece>())
+                .First(p => p && p.GetComponent(mod.GetType("Homestead.ZoneBlueprintSaveToolMarker")) is Component marker &&
+                    marker.GetType().GetField("Kind").GetValue(marker).ToString() == "AreaSave");
+            Check(player.SetSelectedPiece(area) && !Ghost() && (bool)mod.GetType("Homestead.ZoneBlueprintSaveTool").GetProperty("IsActive", Any).GetValue(null),
+                "Homestead Area Save still activates through its selected prefab");
+            Check(player.SetSelectedPiece(wall) && Ghost() && !(bool)mod.GetType("Homestead.ZoneBlueprintSaveTool").GetProperty("IsActive", Any).GetValue(null),
+                "ordinary selection releases Homestead area tool");
+        }
+        finally
+        {
+            if (Moving()) Zen("AbortMove", false);
+            encumbered.BoxedValue = savedEncumbered;
+            if (source) source.GetComponent<ZNetView>().Destroy();
             Destroy(floor);
         }
     }

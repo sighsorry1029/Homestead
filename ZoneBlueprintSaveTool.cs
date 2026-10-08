@@ -2099,7 +2099,10 @@ internal static class ZoneBlueprintSaveToolMenu
     {
         private static bool Prefix(Player __instance)
         {
-            ZoneBlueprintSaveToolMarker? marker = GetMarker(__instance.m_buildPieces?.GetSelectedPiece());
+            // Use the construction source before a ghost exists. ZenRedecorate's
+            // GetSelectedPiece returns the moving ghost, which is not created yet.
+            GameObject? prefab = __instance.m_buildPieces?.GetSelectedPrefab();
+            ZoneBlueprintSaveToolMarker? marker = GetMarker(prefab ? prefab.GetComponent<Piece>() : null);
             if (marker == null)
             {
                 _dataFolderSelectionHandled = false;
