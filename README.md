@@ -130,6 +130,8 @@ Notifications appear for store events such as new listings, offers, accepted off
 
 ## Build Camera
 
+**05 - Build Camera / Build Camera Tool Blacklist** defaults to `Hoe, Cultivator` and is synced with the server. It matches exact item prefab names without case sensitivity, ignoring spaces around comma-separated entries. Other tools with a build menu, including mod-added hammers, remain allowed; an empty list excludes none. Changes apply while playing. Switching to a blocked tool exits the camera and restores the original placement distance. Camera HUD/key hints are hidden for blocked tools; Grid Snap and other tool features remain available.
+
 Build camera helps with tall, wide, or awkward builds by letting the camera move away from the player while building.
 
 **05 - Build Camera / Require Crafting Station** (default `On`, synced with the server) controls whether a nearby crafting station, such as a workbench, is required to enter build camera mode. Set it to `Off` to enter without a station. The comfort restriction and normal building requirements still apply. As before, moving the camera beyond station range does not end an active camera session.
@@ -154,7 +156,13 @@ Homestead adds small controls that make regular building less fussy:
 
 Ordinary hammer pieces also support local X/Z rotation with the side mouse buttons + wheel, rotation-only copying with `[`, and resetting all axes to zero with `]`. These are configurable under **04 - Placement Controls**; set a shortcut to `None` to disable it. The X/Z defaults use Unity's `Mouse3`/`Mouse4`, displayed as `Mouse4`/`Mouse5` in the HUD. If both modifiers are held, X takes priority. Rotation uses **Rotation Step**, and copying preserves the complete aimed-at rotation without changing the selected piece.
 
-Temporary rotation stays between ordinary hammer pieces and clears on leaving ordinary placement, Escape, death, or world exit. Changing either saved X/Z default clears the temporary rotation and applies the new defaults. These controls do not write rotation changes back to the config. They are disabled while ComfyGizmo is loaded and do not handle cultivators, terrain tools, or Homestead blueprint/area tools. Their HUD help follows **HUD Controls Help**.
+Temporary rotation stays between ordinary hammer pieces and clears on leaving ordinary placement, Escape, death, or world exit. X/Z tilt starts at zero; the former numeric `X Axis Rotation` and `Z Axis Rotation` settings are no longer read. These controls do not write rotation changes back to the config. They are disabled while ComfyGizmo is loaded and do not handle cultivators, terrain tools, or Homestead blueprint/area tools. Their HUD help follows **HUD Controls Help**. Position Control Priority appears first in Placement Controls, followed by grid, position, then rotation controls.
+
+With supported Infinity Hammer positioning loaded, **04 - Placement Controls / Position Control Priority** selects the position controls for ordinary hammer pieces. The default `Homestead` uses Homestead's arrow/PgUp/PgDn controls, step settings and XYZ display. In this mode Infinity Hammer position application and movement/freeze commands are suppressed for ordinary hammer pieces, even when Homestead's **Position Adjust** is off. Select `InfinityHammer` to delegate movement to Infinity Hammer: Homestead clears its own ordinary offsets, shows `Position: Infinity Hammer` instead of its movement help, and hides its XYZ values while rotation remains available. The priority is client-only and changes while playing; without Infinity Hammer, Homestead handles movement as usual. Existing saved priority settings are retained.
+
+Homestead blueprints, area tools, and active Store previews retain their own movement under either priority. Infinity Hammer position application and movement/freeze commands are suppressed in those Homestead contexts without rewriting its config or stored offsets; its normal unfreeze cleanup remains intact. Switching back to `InfinityHammer` can resume its stored offset/frozen position. This integration follows the loaded position implementation, since Infinity Hammer 1.87's movement commands remain registered even when its general `Enabled` setting is off.
+
+Homestead Grid Snap pauses for ordinary hammer pieces while Infinity Hammer owns position control and has a nonzero offset or frozen position, preventing the grid from rounding away precise nudges. The HUD and key hint explain the pause; the G toggle retains its state and snapping resumes when the offset/freeze is cleared or priority changes to `Homestead`. Cultivator and Homestead preview grids are unaffected. Infinity Hammer remains optional and is not bundled.
 
 ## Dvergr Circlet
 

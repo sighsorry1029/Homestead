@@ -54,7 +54,7 @@ internal static class ZoneGridSnap
                 return;
             }
 
-            if (!_active)
+            if (!_active || InfinityHammerCompat.SuspendsGrid(__instance))
             {
                 return;
             }

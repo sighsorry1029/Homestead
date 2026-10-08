@@ -157,6 +157,7 @@
         <Compile Include="ZoneHammerRefreshScheduler.cs"/>
         <Compile Include="Plugin.cs"/>
         <Compile Include="PlantEasilyCompat.cs"/>
+        <Compile Include="InfinityHammerCompat.cs"/>
         <Compile Include="Properties\HomesteadAssemblyInfo.cs"/>
         <Compile Include="VeiledRecipesCompat.cs"/>
         <Compile Include="VersionHandshake.cs"/>

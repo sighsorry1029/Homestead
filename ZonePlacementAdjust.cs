@@ -33,8 +33,6 @@ internal static class ZonePlacementAdjust
     private static bool _rotationWheelFilterInstalled;
     private static bool _hasTemporaryRotation;
     private static Quaternion _temporaryRotation = Quaternion.identity;
-    private static float _defaultX;
-    private static float _defaultZ;
 
     internal static void Initialize(ManualLogSource logger)
     {
@@ -62,7 +60,6 @@ internal static class ZonePlacementAdjust
         {
             if (!IsLocalPlayer(__instance)) return;
             ApplyNativeRotationStep(__instance);
-            RefreshRotationDefaults();
             if (!CanAdjustRotation(__instance))
             {
                 ClearTemporaryRotation();
@@ -191,15 +188,6 @@ internal static class ZonePlacementAdjust
         _temporaryRotation = Quaternion.identity;
     }
 
-    private static void RefreshRotationDefaults()
-    {
-        float x = PlacementControlConfig.XAxisRotation;
-        float z = PlacementControlConfig.ZAxisRotation;
-        if (_defaultX != x || _defaultZ != z) ClearTemporaryRotation();
-        _defaultX = x;
-        _defaultZ = z;
-    }
-
     [HarmonyPatch(typeof(Player), nameof(Player.UpdatePlacementGhost))]
     private static class PlayerUpdatePlacementGhostPatch
     {
@@ -208,7 +196,6 @@ internal static class ZonePlacementAdjust
         {
             _axisRotationAppliedBeforeSnapThisUpdate = false;
             ApplyNativeRotationStep(__instance);
-            if (IsLocalPlayer(__instance)) RefreshRotationDefaults();
         }
 
         [HarmonyPriority(Priority.Low)]
@@ -237,7 +224,17 @@ internal static class ZonePlacementAdjust
             }
 
             ResetOffsetsForGhost(GetStableGhostName(ghost));
-            HandleInput(__instance);
+            if (CanAdjustPosition(__instance))
+            {
+                HandleInput(__instance);
+            }
+            else
+            {
+                // Rotation can keep this context alive after position control is
+                // disabled or handed to another mod. Never keep applying old nudges.
+                _heightOffset = 0f;
+                _horizontalOffset = Vector3.zero;
+            }
 
             bool hasOffset = Mathf.Abs(_heightOffset) >= 0.0001f || _horizontalOffset.sqrMagnitude >= 0.0001f;
             bool hasAxisRotation = HasActiveAxisRotation();
@@ -444,6 +441,9 @@ internal static class ZonePlacementAdjust
         _appliedRotationStep = step;
     }
 
+    internal static bool CanAdjustPosition(Player? player) => player && PlacementControlConfig.PlacementAdjustEnabled &&
+        !InfinityHammerCompat.OwnsOrdinaryPosition(player);
+
     private static void RestoreRotationStep(Player player)
     {
         if (_rotationStepPlayer != player)
@@ -624,7 +624,7 @@ internal static class ZonePlacementAdjust
 
     private static bool HasActiveAxisRotation()
     {
-        if (!(_hasTemporaryRotation ? Quaternion.Angle(_temporaryRotation, Quaternion.identity) > 0.001f : PlacementControlConfig.HasPlacementAxisRotation))
+        if (!_hasTemporaryRotation || Quaternion.Angle(_temporaryRotation, Quaternion.identity) <= 0.001f)
         {
             return false;
         }
@@ -638,7 +638,7 @@ internal static class ZonePlacementAdjust
         {
             _comfyGizmoWarningLogged = true;
             Log.LogWarning(
-                "ComfyGizmo is loaded. Homestead's ordinary-piece Rotation Step, random rotation correction, and X/Z Axis Rotation are ignored to avoid overlapping rotation systems. Rotation Step remains active for area tools and blueprints.");
+                "ComfyGizmo is loaded. Homestead's ordinary-piece rotation controls are ignored to avoid overlapping rotation systems. Rotation Step remains active for area tools and blueprints.");
         }
 
         return false;
@@ -655,8 +655,7 @@ internal static class ZonePlacementAdjust
         Quaternion offsetRotation = ghostTransform.rotation;
         if (hasAxisRotation && _axisRotationAppliedBeforeSnapThisUpdate)
         {
-            // Preserve the previous offset frame: offsets were applied after
-            // native/third-party rotation but before Homestead's fixed X/Z tilt.
+            // Keep nudges in the base placement frame, before Homestead's tilt.
             offsetRotation *= Quaternion.Inverse(GetAxisRotation());
         }
 
@@ -675,11 +674,7 @@ internal static class ZonePlacementAdjust
 
     private static Quaternion GetAxisRotation()
     {
-        if (_hasTemporaryRotation) return _temporaryRotation;
-        return Quaternion.Euler(
-            PlacementControlConfig.XAxisRotation,
-            0f,
-            PlacementControlConfig.ZAxisRotation);
+        return _temporaryRotation;
     }
 
     private static void RevalidateFinalPlacement(Player player, GameObject ghost)

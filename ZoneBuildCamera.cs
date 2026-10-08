@@ -42,6 +42,8 @@ internal static class ZoneBuildCamera
     private static Player? _conditionPlayer;
     private static float _nextConditionRefresh;
     private static string _conditionText = "";
+    private static GameObject? _toolPrefab;
+    private static string _toolPrefabName = "";
 
     internal static void Initialize(ManualLogSource logger)
     {
@@ -57,6 +59,8 @@ internal static class ZoneBuildCamera
         _conditionPlayer = null;
         _conditionText = "";
         _nextConditionRefresh = 0f;
+        _toolPrefab = null;
+        _toolPrefabName = "";
     }
 
     internal static void Update()
@@ -99,7 +103,7 @@ internal static class ZoneBuildCamera
     internal static bool EnableBuildMode()
     {
         Player player = Player.m_localPlayer;
-        if (!IsEnabled() || !player)
+        if (!IsEnabled() || !player || !ToolIsEquipped(player))
         {
             return false;
         }
@@ -140,8 +144,18 @@ internal static class ZoneBuildCamera
 
     internal static bool ToolIsEquipped(Player player)
     {
-        ItemDrop.ItemData item = player.m_rightItem;
-        return item != null && item.m_shared != null && item.m_shared.m_buildPieces;
+        ItemDrop.ItemData item = player.GetRightItem();
+        if (item?.m_shared?.m_buildPieces == null) return false;
+        GameObject prefab = item.m_dropPrefab;
+        // A blacklist only excludes identified entries; missing metadata does
+        // not turn it into an implicit whitelist for third-party build tools.
+        if (!prefab) return true;
+        if (_toolPrefab != prefab)
+        {
+            _toolPrefab = prefab;
+            _toolPrefabName = prefab.name;
+        }
+        return !BuildCameraConfig.IsToolBlocked(_toolPrefabName);
     }
 
     internal static bool ShouldDeactivateBuildMode(Player player)

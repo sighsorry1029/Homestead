@@ -32,6 +32,7 @@ internal static class HomesteadFeatureBootstrap
 
         harmony.PatchAll(Assembly.GetExecutingAssembly());
         PlantEasilyCompat.Initialize(logger, harmony);
+        InfinityHammerCompat.Initialize(logger, harmony);
         ZoneBuildCameraFirstPersonCompat.Initialize(logger, harmony);
         VeiledRecipesCompat.Initialize(logger);
         AzuCraftyBoxesCompat.Initialize(logger, harmony);
@@ -81,6 +82,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneSessionResetRegistry.ResetForWorldSession("shutdown");
         ZoneBuildCameraFirstPersonCompat.Shutdown();
         PlantEasilyCompat.Shutdown();
+        InfinityHammerCompat.Shutdown();
         ZoneBlueprintChestMapPins.Shutdown();
         ZoneBlueprintChestZdoRegistry.Shutdown();
         ZoneBlueprintStoreDraftRepository.Flush(force: true);

@@ -15,12 +15,13 @@ namespace Homestead;
 [BepInDependency("sighsorry.VeiledRecipes", BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency("Azumatt.AzuCraftyBoxes", BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency(PlantEasilyCompat.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency(InfinityHammerCompat.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency("Azumatt.FirstPersonMode", BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency("com.geronimo.valheim.immersivefirstperson", BepInDependency.DependencyFlags.SoftDependency)]
 public partial class HomesteadPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Homestead";
-    internal const string ModVersion = "1.3.0";
+    internal const string ModVersion = "1.3.1";
     internal const string Author = "sighsorry";
     internal const string ModGUID = $"{Author}.{ModName}";
     internal const string DataStorageFolder = "Homestead";

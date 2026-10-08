@@ -23,6 +23,7 @@ internal sealed class ZoneBlueprintStorePreviewTool : MonoBehaviour
     }
 
     private static ZoneBlueprintStorePreviewTool? _instance;
+    internal static bool IsActive => _instance && _instance!._active;
 
     private readonly ZoneBlueprintSnapResolver _snapResolver = new();
     private readonly Dictionary<string, LockedPreview> _lockedPreviews = new(StringComparer.Ordinal);

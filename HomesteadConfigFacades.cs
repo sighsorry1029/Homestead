@@ -626,6 +626,9 @@ internal static class BlueprintConfig
 internal static class BuildCameraConfig
 {
     private static ConfigEntry<HomesteadPlugin.Toggle> _enabled = null!;
+    private static ConfigEntry<string> _toolBlacklist = null!;
+    private static string? _cachedToolBlacklist;
+    private static HashSet<string> _blockedTools = new(StringComparer.OrdinalIgnoreCase);
     private static ConfigEntry<HomesteadPlugin.Toggle> _requireCraftingStation = null!;
     private static ConfigEntry<float> _resourcePickupRange = null!;
     private static ConfigEntry<float> _resourcePickupRangePerComfortLevel = null!;
@@ -655,6 +658,19 @@ internal static class BuildCameraConfig
     public static float HelmetLightOffsetForward => Mathf.Clamp(_helmetLightOffsetForward.Value, -5f, 5f);
     public static float HelmetLightOffsetUp => Mathf.Clamp(_helmetLightOffsetUp.Value, -5f, 5f);
 
+    public static bool IsToolBlocked(string prefabName)
+    {
+        string value = _toolBlacklist.Value;
+        // Read the current value so local edits, reloads and ServerSync all
+        // invalidate the parsed list without event subscriptions or per-frame splits.
+        if (!string.Equals(value, _cachedToolBlacklist, StringComparison.Ordinal))
+        {
+            _blockedTools = ConfigValueHelpers.SplitPrefabList(value);
+            _cachedToolBlacklist = value;
+        }
+        return _blockedTools.Contains(prefabName);
+    }
+
     public static void Bind(HomesteadPlugin plugin)
     {
         _enabled = plugin.config(
@@ -665,6 +681,14 @@ internal static class BuildCameraConfig
                 "If on, Homestead includes BuildCameraCHE-style free build camera mode. Disable this if the standalone BuildCameraCHE mod is installed.",
                 null,
                 new ConfigurationManagerAttributes { Order = 1000 }));
+        _toolBlacklist = plugin.config(
+            "05 - Build Camera",
+            "Build Camera Tool Blacklist",
+            "Hoe, Cultivator",
+            new ConfigDescription(
+                "Comma-separated item prefab names that cannot use the build camera. Exact names are matched without case sensitivity; surrounding spaces are ignored. Other tools with a build menu, including mod-added hammers, remain allowed. Leave empty to exclude none. Changes apply while playing; equipping a blocked tool exits the camera and hides only its help, leaving Grid Snap available.",
+                null,
+                new ConfigurationManagerAttributes { Order = 997 }));
         _requireCraftingStation = plugin.config(
             "05 - Build Camera",
             "Require Crafting Station",
@@ -773,14 +797,14 @@ internal static class BuildCameraConfig
 
 internal static class PlacementControlConfig
 {
+    internal enum PositionControlPriority { InfinityHammer, Homestead }
     private static ConfigEntry<KeyboardShortcut> _gridSnapToggleHotkey = null!;
     private static ConfigEntry<float> _gridSnapSize = null!;
     private static ConfigEntry<HomesteadPlugin.Toggle> _placementAdjustEnabled = null!;
+    private static ConfigEntry<PositionControlPriority> _positionControlPriority = null!;
     private static ConfigEntry<float> _placementAdjustHeightStep = null!;
     private static ConfigEntry<float> _placementAdjustHorizontalStep = null!;
     private static ConfigEntry<float> _placementRotationStep = null!;
-    private static ConfigEntry<float> _placementXAxisRotation = null!;
-    private static ConfigEntry<float> _placementZAxisRotation = null!;
     private static ConfigEntry<KeyboardShortcut> _xRotationModifier = null!;
     private static ConfigEntry<KeyboardShortcut> _zRotationModifier = null!;
     private static ConfigEntry<KeyboardShortcut> _copyRotationHotkey = null!;
@@ -789,12 +813,10 @@ internal static class PlacementControlConfig
     public static KeyboardShortcut GridSnapToggleHotkey => _gridSnapToggleHotkey.Value;
     public static float GridSnapSize => Mathf.Round(Mathf.Clamp(_gridSnapSize.Value, 0.05f, 1f) * 20f) / 20f;
     public static bool PlacementAdjustEnabled => _placementAdjustEnabled.Value.IsOn();
+    public static bool PreferHomesteadPosition => _positionControlPriority.Value == PositionControlPriority.Homestead;
     public static float HeightStep => Mathf.Clamp(_placementAdjustHeightStep.Value, 0.01f, 10f);
     public static float HorizontalStep => Mathf.Clamp(_placementAdjustHorizontalStep.Value, 0.01f, 10f);
     public static float RotationStep => RoundHalfDegree(Mathf.Clamp(_placementRotationStep.Value, 0.5f, 90f));
-    public static float XAxisRotation => RoundHalfDegree(Mathf.Clamp(_placementXAxisRotation.Value, -180f, 180f));
-    public static float ZAxisRotation => RoundHalfDegree(Mathf.Clamp(_placementZAxisRotation.Value, -180f, 180f));
-    public static bool HasPlacementAxisRotation => Mathf.Abs(XAxisRotation) > 0.001f || Mathf.Abs(ZAxisRotation) > 0.001f;
     public static KeyboardShortcut XRotationModifier => _xRotationModifier.Value;
     public static KeyboardShortcut ZRotationModifier => _zRotationModifier.Value;
     public static KeyboardShortcut CopyRotationHotkey => _copyRotationHotkey.Value;
@@ -806,65 +828,59 @@ internal static class PlacementControlConfig
             "04 - Placement Controls",
             "Grid Snap Toggle Hotkey",
             new KeyboardShortcut(KeyCode.G),
-            "Client-only hotkey that toggles grid snapping on or off while placing build pieces or Homestead blueprints. The default is G.",
+            new ConfigDescription("Client-only hotkey that toggles grid snapping on or off while placing build pieces or Homestead blueprints. The default is G. For ordinary hammer pieces, snapping pauses while Infinity Hammer owns position control and has a position offset or frozen position.", null, new ConfigurationManagerAttributes { Order = 1000 }),
             synchronizedSetting: false);
         _gridSnapSize = plugin.config(
             "04 - Placement Controls",
             "Grid Size",
             0.5f,
-            new ConfigDescription("Client-only grid spacing in meters. Values are clamped and rounded to 0.05m steps between 0.05 and 1.0.", new AcceptableValueRange<float>(0.05f, 1f)),
+            new ConfigDescription("Client-only grid spacing in meters. Values are clamped and rounded to 0.05m steps between 0.05 and 1.0.", new AcceptableValueRange<float>(0.05f, 1f), new ConfigurationManagerAttributes { Order = 990 }),
             synchronizedSetting: false);
         _placementAdjustEnabled = plugin.config(
             "04 - Placement Controls",
             "Position Adjust",
             HomesteadPlugin.Toggle.On,
-            "If on, hammer pieces, Homestead blueprints, and area tools can be nudged directly with PgUp/PgDn and arrow keys without a modifier key.",
+            new ConfigDescription("If on, hammer pieces, Homestead blueprints, and area tools can be nudged directly with PgUp/PgDn and arrow keys without a modifier key. Position Control Priority selects which mod handles ordinary hammer pieces when Infinity Hammer compatibility is active. Homestead retains its own tools and previews.", null, new ConfigurationManagerAttributes { Order = 980 }),
+            synchronizedSetting: false);
+        _positionControlPriority = plugin.config(
+            "04 - Placement Controls",
+            "Position Control Priority",
+            PositionControlPriority.Homestead,
+            new ConfigDescription("Client-only priority for ordinary hammer position control when supported Infinity Hammer is loaded. Homestead (default) uses this mod's movement settings and suppresses Infinity Hammer position application and movement/freeze commands for ordinary hammer pieces, including when Position Adjust is off. InfinityHammer delegates position control to Infinity Hammer. Changes apply while playing. Infinity Hammer's stored offsets are preserved and can resume when switching back. Without Infinity Hammer, Homestead handles movement as usual. Rotation and Homestead-specific tools are unaffected.", null, new ConfigurationManagerAttributes { Order = 1010 }),
             synchronizedSetting: false);
         _placementAdjustHeightStep = plugin.config(
             "04 - Placement Controls",
             "Position Height Step",
             0.5f,
-            new ConfigDescription("Client-only vertical offset step in meters for PgUp/PgDn while adjusting placement.", new AcceptableValueRange<float>(0.01f, 10f)),
+            new ConfigDescription("Client-only vertical offset step in meters for PgUp/PgDn while adjusting placement.", new AcceptableValueRange<float>(0.01f, 10f), new ConfigurationManagerAttributes { Order = 960 }),
             synchronizedSetting: false);
         _placementAdjustHorizontalStep = plugin.config(
             "04 - Placement Controls",
             "Position Horizontal Step",
             0.5f,
-            new ConfigDescription("Client-only horizontal offset step in meters for arrow keys while adjusting placement.", new AcceptableValueRange<float>(0.01f, 10f)),
+            new ConfigDescription("Client-only horizontal offset step in meters for arrow keys while adjusting placement.", new AcceptableValueRange<float>(0.01f, 10f), new ConfigurationManagerAttributes { Order = 970 }),
             synchronizedSetting: false);
         _placementRotationStep = plugin.config(
             "04 - Placement Controls",
             "Rotation Step",
             22.5f,
-            new ConfigDescription("Client-only rotation step in degrees shared by Area Save, Area Dismantle, blueprint yaw rotation, and ordinary hammer placement. While ComfyGizmo is loaded, ordinary hammer placement and its random rotation correction are left to ComfyGizmo; area and blueprint rotation remain unchanged. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(0.5f, 90f)),
-            synchronizedSetting: false);
-        _placementXAxisRotation = plugin.config(
-            "04 - Placement Controls",
-            "X Axis Rotation",
-            0f,
-            new ConfigDescription("Client-only default X-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Ignored while ComfyGizmo is loaded. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
-            synchronizedSetting: false);
-        _placementZAxisRotation = plugin.config(
-            "04 - Placement Controls",
-            "Z Axis Rotation",
-            0f,
-            new ConfigDescription("Client-only default Z-axis rotation in degrees applied to ordinary hammer build piece previews and final placement. Ignored while ComfyGizmo is loaded. Terrain tools and Homestead area tools are ignored. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(-180f, 180f)),
+            new ConfigDescription("Client-only rotation step in degrees shared by Area Save, Area Dismantle, blueprint yaw rotation, and ordinary hammer placement. While ComfyGizmo is loaded, ordinary hammer placement and its random rotation correction are left to ComfyGizmo; area and blueprint rotation remain unchanged. Values are rounded to 0.5 degree steps.", new AcceptableValueRange<float>(0.5f, 90f), new ConfigurationManagerAttributes { Order = 950 }),
             synchronizedSetting: false);
         _xRotationModifier = plugin.config(
             "04 - Placement Controls", "X Rotation Modifier", new KeyboardShortcut(KeyCode.Mouse3),
-            "Client-only modifier held with the wheel to rotate an ordinary hammer piece around its local X axis, using Rotation Step. Mouse3 is the first side button (shown as Mouse4 in the HUD). Ignored while ComfyGizmo is loaded. Set to None to disable.",
+            new ConfigDescription("Client-only modifier held with the wheel to rotate an ordinary hammer piece around its local X axis, using Rotation Step. Mouse3 is the first side button (shown as Mouse4 in the HUD). Ignored while ComfyGizmo is loaded. Set to None to disable.", null, new ConfigurationManagerAttributes { Order = 940 }),
             synchronizedSetting: false);
         _zRotationModifier = plugin.config(
             "04 - Placement Controls", "Z Rotation Modifier", new KeyboardShortcut(KeyCode.Mouse4),
-            "Client-only modifier held with the wheel to rotate an ordinary hammer piece around its local Z axis, using Rotation Step. Mouse4 is the second side button (shown as Mouse5 in the HUD). X takes priority if both are held. Ignored while ComfyGizmo is loaded. Set to None to disable.",
+            new ConfigDescription("Client-only modifier held with the wheel to rotate an ordinary hammer piece around its local Z axis, using Rotation Step. Mouse4 is the second side button (shown as Mouse5 in the HUD). X takes priority if both are held. Ignored while ComfyGizmo is loaded. Set to None to disable.", null, new ConfigurationManagerAttributes { Order = 930 }),
             synchronizedSetting: false);
         _copyRotationHotkey = plugin.config(
             "04 - Placement Controls", "Copy Rotation Hotkey", new KeyboardShortcut(KeyCode.LeftBracket),
-            "Client-only hotkey that copies the aimed-at piece's complete rotation without changing the selected hammer piece. Ignored while ComfyGizmo is loaded. Set to None to disable.",
+            new ConfigDescription("Client-only hotkey that copies the aimed-at piece's complete rotation without changing the selected hammer piece. Ignored while ComfyGizmo is loaded. Set to None to disable.", null, new ConfigurationManagerAttributes { Order = 920 }),
             synchronizedSetting: false);
         _resetRotationHotkey = plugin.config(
             "04 - Placement Controls", "Reset Rotation Hotkey", new KeyboardShortcut(KeyCode.RightBracket),
-            "Client-only hotkey that resets all three placement rotation axes to zero without changing saved X/Z defaults. Temporary rotation persists between ordinary hammer pieces and clears when leaving ordinary placement; changing an X/Z default also clears it. Ignored while ComfyGizmo is loaded. Set to None to disable.",
+            new ConfigDescription("Client-only hotkey that resets all three placement rotation axes to zero. Temporary rotation persists between ordinary hammer pieces and clears when leaving ordinary placement. Ignored while ComfyGizmo is loaded. Set to None to disable.", null, new ConfigurationManagerAttributes { Order = 910 }),
             synchronizedSetting: false);
     }
 

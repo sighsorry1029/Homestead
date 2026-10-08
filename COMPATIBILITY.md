@@ -1,5 +1,135 @@
 # Valheim 호환성 기록
 
+## Homestead 1.3.1 릴리스 검증 (2026-10-08)
+
+`main`의 기준 `e7af05f`(1.3.0) 이후 이 대화에서 구현한 변경을 1.3.1로 묶었다.
+`Position Control Priority`는 기본값 `Homestead`를 유지하고 Order를 1010으로
+올려 Placement Controls에서 격자·위치·회전 설정보다 먼저 표시한다.
+
+- Debug/Release 빌드·최종 DLL 병합 모두 경고/오류 0개. 두 구성의 자동 회귀 검사 통과.
+  Release에서는 Debug 전용 catalog clone 검사만 예정대로 생략했다.
+- 원본 Valheim 1.0.17 Unity/Mono 격리 클라이언트에서 이번 **1.3.1 Debug DLL**로
+  IH 병용 검사 106개 및 `COMPLETE Infinity Hammer`를 확인했다. 새 기본값,
+  양방향 우선순위 전환, 특수 도구 경계, HUD/격자, 실제 부품 배치/ZDO 회전과
+  종료 정리가 포함된다. 실행·종료 로그에 BepInEx 오류/경고가 없었다.
+- Debug DLL과 로컬 plugins DLL SHA-256 일치:
+  `AE0A5C3BDF4C4C8D78374913A22226D8585DE619BB364F390D4F2305166D82E7`.
+- Release DLL의 assembly version은 `1.3.1.0`, SHA-256은
+  `72C9D5465E66059A6F605B45DC63DAF3F8F27CD027A7FBD28BB3FCD29F788CFA`다.
+  Thunderstore/Nexus ZIP 내부 DLL이 이 파일과 일치한다. Thunderstore의 manifest 버전,
+  BepInEx 5.4.2351 의존성, README/changelog/아이콘/영문 번역의 원본 일치와
+  외부 모드·테스트 DLL 미포함을 확인했다.
+- Release DLL로 게임 실행, 실제 키보드/컨트롤러 입력, 원격 멀티플레이와
+  사이트 게시 여부는 이번 검증 범위에 포함하지 않았다.
+
+## 위치 조정 우선순위 기본값 변경 (2026-10-08)
+
+사용자 요청에 따라 `Position Control Priority`의 기본값을 `Homestead`로 변경했다.
+기존 설정 파일에 저장된 값은 유지하며, enum 값·설정 키·동작·동기화 범위는 그대로다.
+설정 설명과 README를 맞추고, 런타임 검사는 새 기본값을 확인한 뒤 IH 시나리오에서
+`InfinityHammer`를 명시적으로 선택하도록 수정했다.
+
+- Debug 빌드·병합과 기존 자동 회귀 검사 통과. 런타임 검사 프로젝트도 컴파일 성공.
+- 로컬 plugins DLL 갱신 및 SHA-256 일치:
+  `071603BE70731774915522C4ED4A953F8D6E107264FA9C77A7ABD228CB732D16`.
+- 이번 기본값 변경 후 실제 게임 실행은 반복하지 않았다. 아래 실행 검증은 기본값
+  변경 전 결과이며, 두 우선순위 모드의 동작을 모두 포함한다.
+
+## Infinity Hammer 위치 조정 우선순위 (2026-10-08)
+
+기존 미릴리스 변경을 보존하고 `04 - Placement Controls / Position Control Priority`를
+추가했다. 도입 당시 기본값 `InfinityHammer`는 이전 위임 동작을 유지했다. 클라이언트 전용 설정이며
+`Homestead`로 바꾸면 일반 망치 부품의 위치 이동·XYZ HUD·격자를 Homestead가 처리한다.
+IH 위치 적용과 이동/고정 명령은 이 배치 문맥에서 차단한다. `Position Adjust = Off`여도
+IH로 제어권을 자동 반환하지 않으며, 청사진/영역 도구의 기존 제어와 회전 정책은 유지한다.
+설정 변경은 플레이 중 반영하고 IH 자체 설정·오프셋·고정 위치는 덮어쓰지 않는다.
+따라서 IH 우선으로 복귀하면 보존된 위치 상태가 다시 적용될 수 있다. IH의 원래
+`Unfreeze` 정리 경로는 유지한다. 지원되는 IH가 없으면 기존 Homestead 동작을 사용한다.
+
+- 기준/수정 Debug 빌드·병합 성공, 경고/오류 0개. 자동 회귀 검사와 diff 검사 통과.
+- 원본 Valheim **1.0.17** Unity/Mono 격리 클라이언트에서 IH 1.87 병용 **106개 검사**와
+  `COMPLETE Infinity Hammer`, 단독 회전 **42개 검사**와 `COMPLETE rotation`을 확인했다.
+  양방향 live 전환, 각 모드의 이동 간격과 중복 적용 방지, IH 상태 보존, HUD/key hint,
+  격자 중지/복귀, Position Adjust off, 배치 밖의 IH 명령, 특수 도구 경계,
+  회전·복사·실제 부품/ZDO 회전 및 패치 정리를 검사했다. 최종 실행에 Unity 오류가 없었다.
+- 중간 회귀 검사는 재사용한 테스트 월드에 남은 벽을 조준해 실패했다. 충돌 대상이
+  현재 고스트가 아닌 기존 `woodwall(Clone)`임을 확인했다. 회전/IH 테스트는 매 실행
+  별도 월드를 사용하고 바닥 Raycast의 실제 Collider까지 확인하도록 보완한 뒤 통과했다.
+  모드의 회전 동작은 이번 작업에서 변경하지 않았다.
+- 최종 DLL과 로컬 게임 plugins DLL의 SHA-256 일치:
+  `4AAF139A8C7BCB7DF06390054AF26B33BF6763F4E173139CA512721C04182C3B`.
+- 입력은 자동 호출/주입으로 검사했다. 실제 키보드·컨트롤러 조작과 원격 멀티플레이는
+  미검증이다. 버전·Release·커밋·push는 변경하지 않았다. 재현 명령과 외부 DLL의
+  출처/해시는 아래 기존 배치 설정 정리 기록을 따른다.
+
+## Build Camera 도구 blacklist (2026-10-08)
+
+이전 배치 설정/IH 미릴리스 변경을 보존한 추가 구현이다.
+`05 - Build Camera / Build Camera Tool Blacklist`의 기본값은 `Hoe, Cultivator`이며,
+기존 카메라 조건과 동일하게 ServerSync 설정으로 등록한다. 실제 아이템 프리팹 이름을
+대소문자 구분 없이 완전 일치로 비교한다. 빈 목록은 어떤 건축 도구도 제외하지 않는다.
+이름 추측으로 추가 모드 망치를 제한하지 않으며, 건축 목록이 없는 아이템은 여전히 사용할 수 없다.
+
+공통 도구 판정을 직접 진입·현재 세션 종료·HUD·key hint에 적용했다. 핫바 처리 후에도
+다시 확인하여 차단 도구의 배치 처리 전에 카메라를 종료하고 원래 건축 거리를 복원한다.
+HUD의 카메라 도움말은 기존 조건 조회 주기를 기다리지 않고 숨긴다. Grid Snap과
+다른 도구 기능은 유지한다. 파싱한 목록은 설정값 변경 시 갱신하고, 현재 도구의
+프리팹 이름 캐시는 도구 변경/세션 초기화에 맞춰 갱신·해제한다.
+
+- 기준/수정 Debug 빌드·병합 성공, 경고/오류 0개. 자동 회귀 검사 통과.
+- 원본 Valheim **1.0.17** 격리 클라이언트의 `-CameraTooltipOnly` 실행에서
+  `COMPLETE camera tooltip`과 정상 종료를 확인했다. 기본 두 도구 차단, 직접 진입,
+  live 변경/빈 목록/공백/중복/대소문자/부분 이름 불일치, 임의 모드 프리팹 식별자,
+  같은 프레임의 도구 교체·배치 호출 차단·거리 복구, HUD/key hint와 재배기 격자 및
+  기존 작업대/편안함 조건을 검사했다. 최종 실행 로그에 오류·경고가 없었다.
+- 이번 최종 DLL과 로컬 plugins DLL의 SHA-256 일치:
+  `5FC42B93727856C1B7D29E0373811C59627BD1BFB38D20C05B4F6E0ACEA227AD`.
+- 도구 교체는 실제 장착 API를 테스트 입력으로 호출했다. 실제 키보드/컨트롤러 조작,
+  여러 모드 망치 각각의 실행 및 원격 ServerSync 접속 검증은 하지 않았다.
+  버전·Release·커밋·push는 변경하지 않았다.
+
+## 배치 설정 정리 / Infinity Hammer 위치 조정 (2026-10-08)
+
+기준 `main` / `e7af05f`, Homestead 1.3.0 이후의 미릴리스 변경이다. 숫자형
+`X Axis Rotation`/`Z Axis Rotation` 설정만 제거했으며 임시 X/Z 회전·복사·초기화와
+ComfyGizmo 우선권은 유지한다. 설정 표시 순서는 격자→위치→회전으로 지정했다.
+
+제공된 원본 Infinity Hammer **1.87**의 `Position` 필드와 정확한 메서드 오버로드를
+확인했다. DLL SHA-256은 `990A9BD7BEA6562024B3094A45249837262AAAAA55510E9BD9511600C135ADB4`다.
+일반 망치 위치는 IH에 맡기고 Homestead 도구·청사진·상점 미리보기에서는 IH 위치
+적용과 이동/고정 명령을 막는다. IH 설정·오프셋을 직접 덮어쓰지 않으며 `Unfreeze`는
+원래 정리 경로를 유지한다. 필드 접근자는 초기화 때 캐시하고 종료 시 패치를 해제한다.
+일반 부품에 IH 오프셋/위치 고정이 있으면 Homestead 격자만 일시 중지하고 HUD에 표시한다.
+
+### 이번 검증
+
+- Debug 빌드·최종 DLL 병합·자동 회귀 검사 통과, 빌드 경고/오류 0개.
+- 설치된 원본 Unity/Mono **Valheim 1.0.17** 격리 클라이언트에서 단독 회전,
+  IH 1.87 + Server Devcommands 1.115 + World Edit Commands 1.80,
+  ComfyGizmo 1.16.0 조합을 각각 실행했다. 원본 `assembly_valheim.dll` 해시는
+  `25A0A107DCE4D834C44C2B72D0EAFD5CB7793933BDA81816ACCFA1EA9543DACE`다.
+  전역의 기존 1.0.16 분석 자료와 현재 설치본을 구분하며 전체 버전 대응 검토로 확대하지 않았다.
+- IH 실행은 86개 검사와 `COMPLETE Infinity Hammer`, 단독/Gizmo 실행은 각각
+  `COMPLETE rotation`을 확인했다. 실제 원본 메서드 호출로 이중 이동 방지,
+  격자 중지/복귀, 특수 도구의 IH 상태 보존, 선택 첫 프레임, HUD 렌더링과 패치 정리를 검증했다.
+  단독 및 IH 병용에서 X/Z·Y 회전, 복사·초기화, 실제 부품 배치/ZDO 회전도 확인했다.
+- 최종 Debug DLL과 로컬 게임 plugins DLL의 SHA-256 일치:
+  `728D36BA771F59D55F95D5D5371C09DC33B9FC43A1973B960553E70064621415`.
+- 중간 테스트의 같은 프레임 연속 도구 활성/비활성 직후 종료에서 세션 정리 경고가
+  한 번 기록되었다. 최종 전체 실행과 정상 종료에서는 재현되지 않았다. 스택 없는
+  종료 경고의 원인을 확정하거나 별도 HUD 수명주기 수정을 섞지 않았다.
+
+재현은 기존 `Start-RuntimeProbe.ps1 -Role client -RotationOnly` 및
+`-RotationOnly -GizmoAssemblyPath <DLL>`을 사용한다. IH 검사는
+`-InfinityHammerOnly -InfinityHammerAssemblyPath <DLL>`이며 같은 프로필의 두 필수
+의존 DLL도 격리 폴더로 복사한다. 테스트 전 `tests/RuntimeProbe/RuntimeProbe.csproj`를
+Debug 빌드한다. 보고서는 `artifacts/runtime-rotation-client`,
+`runtime-rotation-gizmo-client`, `runtime-infinityhammer-client` 아래에 있다.
+
+입력은 자동화된 호출/입력 주입이며 실제 키보드·컨트롤러 조작, 데디케이트 접속과
+멀티플레이는 이번에 검증하지 않았다. 생성물·외부 모드 코드는 수정하거나 배포하지 않았다.
+버전 변경·Release ZIP 생성·커밋·push는 수행하지 않았다.
+
 ## 1.0.12 → 1.0.14 (2026-09-17)
 
 기준: `main` / `40fd385` (Homestead 1.2.16), 작업 시작 시 변경 없음. 클라이언트

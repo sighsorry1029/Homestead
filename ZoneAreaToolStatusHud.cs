@@ -279,6 +279,14 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
             _nextContextRefresh = 0f;
             changed = true;
         }
+        bool cameraToolEquipped = ZoneBuildCamera.ToolIsEquipped(player);
+        if (!cameraToolEquipped && _cameraHelp.Length > 0)
+        {
+            // Hide camera help on a tool/config change without waiting for the
+            // slower station/comfort refresh. Other placement help stays intact.
+            _cameraHelp = "";
+            changed = true;
+        }
         if (Time.unscaledTime < _nextContextRefresh) return changed;
         _nextContextRefresh = Time.unscaledTime + 0.35f;
 
@@ -287,7 +295,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         string placement = "";
         if (ClientConfig.HudControlsHelpEnabled)
         {
-            if (ZoneBuildCamera.IsEnabled())
+            if (ZoneBuildCamera.IsEnabled() && cameraToolEquipped)
             {
                 string shortcut = BuildCameraConfig.ToggleHotkey.MainKey == KeyCode.None
                     ? HomesteadLocalization.Text("hs_build_camera_unbound")
@@ -299,15 +307,18 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
                 !ZoneBlueprintSaveToolMenu.IsStoreToolSelected(player) && !ZoneBlueprintSnapPointTool.IsActive &&
                 selected.GetComponent<ZoneBlueprintSaveToolMarker>() is not { Kind: ZoneBlueprintToolKind.DataFolder })
             {
-                if (PlacementControlConfig.PlacementAdjustEnabled && ZonePlacementInput.IsHammerPlacement(player) &&
+                if (ZonePlacementAdjust.CanAdjustPosition(player) && ZonePlacementInput.IsHammerPlacement(player) &&
                     !selected.GetComponent<TerrainOp>())
                     placement = HomesteadLocalization.Text("hs_placement_tooltip_offset");
+                else if (InfinityHammerCompat.OwnsOrdinaryPosition(player))
+                    placement = HomesteadLocalization.Text("hs_placement_infinity_hammer");
                 string rotation = ZonePlacementAdjust.GetRotationHelp(player);
                 if (rotation.Length > 0) placement = placement.Length > 0 ? placement + "\n" + rotation : rotation;
                 if (PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None &&
                     !ZoneBlueprintSaveTool.IsActive && !ZoneAreaDismantleTool.IsActive)
                 {
                     string grid = HomesteadLocalization.Format(
+                        ZoneGridSnap.IsActive && InfinityHammerCompat.SuspendsGrid(player) ? "hs_placement_tooltip_grid_infinity_hammer" :
                         ZoneGridSnap.IsActive ? "hs_placement_tooltip_grid_on" : "hs_placement_tooltip_grid_off",
                         ConfigValueHelpers.FormatShortcut(PlacementControlConfig.GridSnapToggleHotkey), PlacementControlConfig.GridSnapSize);
                     placement = placement.Length > 0 ? placement + "\n" + grid : grid;
@@ -606,7 +617,11 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
 
     private static string FormatDefaultPlacementLine(Vector3 horizontalOffset, float heightOffset, float yaw, float xAxisRotation, float zAxisRotation)
     {
-        string line = $"X {Format(horizontalOffset.x)} | Y {Format(heightOffset)} | Z {Format(horizontalOffset.z)} | \u03b8 {FormatDegree(yaw)}";
+        // Infinity Hammer owns a separate offset; our zeros must not look like
+        // the effective position. Rotation remains Homestead/Gizmo's own display.
+        string line = InfinityHammerCompat.OwnsOrdinaryPosition(Player.m_localPlayer)
+            ? $"\u03b8 {FormatDegree(yaw)}"
+            : $"X {Format(horizontalOffset.x)} | Y {Format(heightOffset)} | Z {Format(horizontalOffset.z)} | \u03b8 {FormatDegree(yaw)}";
         if (Mathf.Abs(xAxisRotation) >= 0.001f)
         {
             line += $" | RX {FormatDegree(xAxisRotation)}";

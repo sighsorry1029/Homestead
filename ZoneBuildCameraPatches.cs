@@ -121,6 +121,13 @@ internal static class ZoneBuildCameraPlayerUpdatePatch
         }
 
         UpdateHotbarAndHideInputs(__instance);
+        // Hotbar input can equip a blocked tool after the entry check above.
+        // Keep the original Update skipped: its hotbar input was already consumed.
+        if (!ZoneBuildCamera.ToolIsEquipped(__instance))
+        {
+            ZoneBuildCamera.DisableBuildMode();
+            return;
+        }
         __instance.UpdatePlacement(takeInput: true, Time.deltaTime);
     }
 

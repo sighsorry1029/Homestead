@@ -95,15 +95,17 @@ internal static class ZoneBuildKeyHints
         bool areaToolActive = ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive;
         bool snapPointToolActive = ZoneBlueprintSnapPointTool.IsActive;
         bool showPlacementHints = showBuildHints && ZonePlacementInput.IsHammerPlacement(player);
+        bool showBuildCamera = showBuildHints && player != null && ZoneBuildCamera.IsEnabled() &&
+                               ZoneBuildCamera.ToolIsEquipped(player);
         string buildCameraCondition = "";
-        if (showBuildHints && player != null && ZoneBuildCamera.IsEnabled())
+        if (showBuildCamera && player != null)
         {
             buildCameraCondition = ZoneBuildCamera.GetConditionText(player);
         }
 
         SetHint(
             _offsetHint,
-            showPlacementHints && PlacementControlConfig.PlacementAdjustEnabled && !snapPointToolActive,
+            showPlacementHints && ZonePlacementAdjust.CanAdjustPosition(player) && !snapPointToolActive,
             HomesteadLocalization.Text("hs_keyhint_adjust_offset"),
             "Arrows",
             "PgUp/PgDn",
@@ -112,7 +114,9 @@ internal static class ZoneBuildKeyHints
         SetHint(
             _gridHint,
             showBuildHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !areaToolActive && !snapPointToolActive,
-            ZoneGridSnap.IsActive
+            ZoneGridSnap.IsActive && InfinityHammerCompat.SuspendsGrid(player)
+                ? HomesteadLocalization.Text("hs_keyhint_grid_infinity_hammer")
+                : ZoneGridSnap.IsActive
                 ? HomesteadLocalization.Format("hs_keyhint_grid_on", PlacementControlConfig.GridSnapSize)
                 : HomesteadLocalization.Text("hs_keyhint_grid_off"),
             FormatShortcut(PlacementControlConfig.GridSnapToggleHotkey),
@@ -123,7 +127,7 @@ internal static class ZoneBuildKeyHints
         bool showLookAtLockHint = buildCameraActive && BuildCameraConfig.LookAtLockHotkey.MainKey != KeyCode.None;
         SetHint(
             _buildCameraHint,
-            showBuildHints && ZoneBuildCamera.IsEnabled(),
+            showBuildCamera,
             showLookAtLockHint
                 ? HomesteadLocalization.Text("hs_keyhint_build_camera_lock")
                 : HomesteadLocalization.Format("hs_keyhint_build_camera", buildCameraCondition),

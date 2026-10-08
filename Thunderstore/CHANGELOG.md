@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.1
+
+- Added optional Infinity Hammer position compatibility and the client-only `Position Control Priority` setting, shown first in Placement Controls and defaulting to `Homestead`. Select `InfinityHammer` to delegate ordinary hammer positioning; changes apply during play and existing saved settings are preserved.
+- Prevented overlapping movement, offsets, and position-freeze commands between Homestead and Infinity Hammer. Homestead blueprints, area tools, and Store previews retain their own positioning; ordinary rotation and ComfyGizmo compatibility remain unchanged.
+- Paused Homestead Grid Snap while Infinity Hammer owns positioning and has an offset or frozen position. HUD and key hints explain the pause and active position controls; snapping resumes when those offsets are cleared or priority returns to Homestead.
+- Removed the numeric `X Axis Rotation` and `Z Axis Rotation` settings while retaining side-button rotation, copy, and reset controls. Grouped the remaining settings by grid, position, and rotation beneath Position Control Priority.
+- Added the server-synced `Build Camera Tool Blacklist`, defaulting to `Hoe, Cultivator`. Blocked tools cannot enter Build Camera; switching to one exits the camera, restores placement distance, and hides camera guidance without disabling Grid Snap. Other mod-added building tools remain allowed unless listed by prefab name.
+- Highlighted Grid Snap on/off and paused status in yellow in the status HUD.
+
 ## 1.3.0
 
 - Restored Homestead Grid Snap and its guidance for cultivators, including setups without PlantEasily, while keeping ordinary hammer rotation and position offsets out of planting controls. Snapped placement still checks protected and no-build areas.

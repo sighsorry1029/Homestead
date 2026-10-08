@@ -42,6 +42,7 @@ public sealed class Probe : BaseUnityPlugin
         bool placementOnly = Environment.GetCommandLineArgs().Contains("-homestead-placement-probe");
         bool gridOnly = Environment.GetCommandLineArgs().Contains("-homestead-grid-probe");
         bool rotationOnly = Environment.GetCommandLineArgs().Contains("-homestead-rotation-probe");
+        bool infinityHammerOnly = Environment.GetCommandLineArgs().Contains("-homestead-infinityhammer-probe");
         if (!headless)
         {
             yield return new WaitForSeconds(6f);
@@ -59,7 +60,11 @@ public sealed class Probe : BaseUnityPlugin
                 profile.SetName("Homestead Probe");
                 profile.Save();
                 Game.SetProfile("homestead_probe", FileHelpers.FileSource.Local);
-                World world = World.GetCreateWorld("HomesteadProbe", FileHelpers.FileSource.Local);
+                // Rotation probes place networked pieces. A prior interrupted run
+                // can leave those pieces in the saved world and obstruct later rays.
+                string worldName = rotationOnly || infinityHammerOnly
+                    ? "HomesteadProbe-" + Guid.NewGuid().ToString("N") : "HomesteadProbe";
+                World world = World.GetCreateWorld(worldName, FileHelpers.FileSource.Local);
                 ZNet.SetServer(true, false, false, "HomesteadProbe", "", world);
                 AccessTools.Method(typeof(FejdStartup), "LoadMainScene").Invoke(startup, null);
             }
@@ -76,9 +81,9 @@ public sealed class Probe : BaseUnityPlugin
             while (Player.m_localPlayer.InCutscene() && Time.realtimeSinceStartup < deadline) yield return null;
             yield return new WaitForSeconds(1f);
         }
-        if ((placementOnly || gridOnly || rotationOnly) && !headless)
+        if ((placementOnly || gridOnly || rotationOnly || infinityHammerOnly) && !headless)
         {
-            IEnumerator placement = rotationOnly ? CheckRotationControls() : gridOnly ? CheckCultivatorGrid() : CheckCultivatorRotation();
+            IEnumerator placement = infinityHammerOnly ? CheckInfinityHammerPlacement() : rotationOnly ? CheckRotationControls() : gridOnly ? CheckCultivatorGrid() : CheckCultivatorRotation();
             int runtimeErrors = 0;
             Application.LogCallback onError = (message, stack, type) =>
             {
@@ -97,7 +102,7 @@ public sealed class Probe : BaseUnityPlugin
             finally { Application.logMessageReceived -= onError; }
             if (runtimeErrors != 0) { Fail(new Exception("Placement runtime logged " + runtimeErrors + " errors; inspect unity.log.")); yield break; }
             Check(true, "no Unity errors during placement checks");
-            File.AppendAllText(report, rotationOnly ? "COMPLETE rotation\n" : gridOnly ? "COMPLETE standalone grid\n" : "COMPLETE placement\n");
+            File.AppendAllText(report, infinityHammerOnly ? "COMPLETE Infinity Hammer\n" : rotationOnly ? "COMPLETE rotation\n" : gridOnly ? "COMPLETE standalone grid\n" : "COMPLETE placement\n");
             Application.Quit();
             yield break;
         }
@@ -219,6 +224,7 @@ public sealed class Probe : BaseUnityPlugin
         return false;
     }
     private static bool RotationScroll(ref float __result) { __result = rotationScroll; return false; }
+    private static bool PriorityNudge(ref Vector3 __result) { __result = Vector3.right; return false; }
 
     private IEnumerator CheckRotationControls()
     {
@@ -249,8 +255,6 @@ public sealed class Probe : BaseUnityPlugin
         Type adjust = mod.GetType("Homestead.ZonePlacementAdjust");
         Type config = mod.GetType("Homestead.PlacementControlConfig");
         BepInEx.Configuration.ConfigEntryBase Setting(string name) => (BepInEx.Configuration.ConfigEntryBase)config.GetField(name, Any).GetValue(null);
-        Setting("_placementXAxisRotation").BoxedValue = 0f;
-        Setting("_placementZAxisRotation").BoxedValue = 0f;
         Setting("_placementRotationStep").BoxedValue = 22.5f;
         var index = AccessTools.Field(typeof(Player), "m_placeRotation");
         var ghostField = AccessTools.Field(typeof(Player), "m_placementGhost");
@@ -314,7 +318,8 @@ public sealed class Probe : BaseUnityPlugin
             var snapPoints = new System.Collections.Generic.List<Transform>();
             Ghost().GetComponent<Piece>().GetSnapPoints(snapPoints);
             int mask = (int)AccessTools.Field(typeof(Player), "m_placeRayMask").GetValue(player);
-            Check(Physics.Raycast(camera.position, camera.forward, out RaycastHit snapHit, 50f, mask), "manual-snap fixture ray hits floor");
+            Check(Physics.Raycast(camera.position, camera.forward, out RaycastHit snapHit, 50f, mask) &&
+                  snapHit.collider == floor.GetComponent<Collider>(), "manual-snap fixture ray hits floor");
             Check(Vector3.Distance(Ghost().transform.TransformPoint(snapPoints[0].localPosition), snapHit.point) < 0.01f,
                 "native manual snap uses the tilted quaternion before computing position");
             snapIndex.SetValue(player, -1);
@@ -403,12 +408,8 @@ public sealed class Probe : BaseUnityPlugin
             Press(KeyCode.Mouse3, KeyCode.None, 1f);
             Check((int)index.GetValue(player) == beforeIndex + 1, "unbound axis modifier leaves native wheel available");
             Setting("_xRotationModifier").BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.Mouse3);
-            Setting("_placementXAxisRotation").BoxedValue = 15f;
-            GhostUpdate();
-            Quaternion nativeYaw = Quaternion.Euler(0, (int)index.GetValue(player) * 22.5f, 0);
-            Check(Same(Ghost().transform.rotation, nativeYaw * Quaternion.Euler(15, 0, 0)), "live X default clears temporary rotation");
             Press(KeyCode.None, KeyCode.RightBracket, 0f);
-            Check(Same(Ghost().transform.rotation, Quaternion.identity) && (float)Setting("_placementXAxisRotation").BoxedValue == 15f, "reset overrides nonzero default without writing it");
+            Check(Same(Ghost().transform.rotation, Quaternion.identity), "reset returns to zero without persistent X/Z defaults");
             foreach (string tool in new[] { "ZoneBlueprintSaveTool", "ZoneAreaDismantleTool", "ZoneBlueprintSnapPointTool" })
             {
                 Call(tool, "Activate", player);
@@ -431,6 +432,238 @@ public sealed class Probe : BaseUnityPlugin
             input.UnpatchSelf();
             if (target) target.GetComponent<ZNetView>().Destroy();
             if (placed) placed.GetComponent<ZNetView>().Destroy();
+            Destroy(floor);
+        }
+    }
+
+    private IEnumerator CheckInfinityHammerPlacement()
+    {
+        Check(BepInEx.Bootstrap.Chainloader.PluginInfos.TryGetValue("infinity_hammer", out var plugin), "original Infinity Hammer loaded");
+        Type position = plugin.Instance.GetType().Assembly.GetType("InfinityHammer.Position");
+        FieldInfo offset = position.GetField("Offset"), frozen = position.GetField("Override");
+        void Ih(string name, params object[] args) => AccessTools.Method(position, name, args.Select(a => a.GetType()).ToArray()).Invoke(null, args);
+        Vector3 Offset() => (Vector3)offset.GetValue(null);
+        PreparePlacementPlayer();
+        Player player = Player.m_localPlayer;
+        player.SetGodMode(true);
+        AccessTools.Field(typeof(Player), "m_noPlacementCost").SetValue(player, true);
+        GameObject hammerPrefab = ObjectDB.instance.GetItemPrefab("Hammer");
+        ItemDrop.ItemData hammer = hammerPrefab.GetComponent<ItemDrop>().m_itemData.Clone();
+        hammer.m_dropPrefab = hammerPrefab;
+        hammer.m_durability = hammer.GetMaxDurability();
+        Check(player.GetInventory().AddItem(hammer), "add Infinity Hammer fixture");
+        AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
+        Check(player.EquipItem(hammer), "equip Infinity Hammer fixture");
+        yield return new WaitForSeconds(1f);
+        Vector3 center = player.transform.position + Vector3.up * 1000f;
+        player.transform.position = center;
+        player.GetComponent<Rigidbody>().position = center;
+        player.GetComponent<Rigidbody>().linearVelocity = Vector3.zero;
+        Hud.CloseBuildUi();
+        Piece wall = ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>();
+        Check(player.SetSelectedPiece(wall), "Infinity Hammer fixture selects ordinary wall");
+        var floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        floor.name = "InfinityHammerProbeFloor";
+        floor.layer = LayerMask.NameToLayer("piece");
+        floor.transform.position = center + new Vector3(0, -1f, 3);
+        floor.transform.localScale = new Vector3(15, 0.2f, 15);
+        Transform camera = GameCamera.instance.transform;
+        camera.position = center + new Vector3(0, 2f, -2);
+        camera.LookAt(center + Vector3.forward * 3f);
+        Physics.SyncTransforms();
+        var ghostField = AccessTools.Field(typeof(Player), "m_placementGhost");
+        GameObject Ghost() => (GameObject)ghostField.GetValue(player);
+        void UpdateGhost() => AccessTools.Method(typeof(Player), "UpdatePlacementGhost").Invoke(player, new object[] { false });
+        Type adjust = mod.GetType("Homestead.ZonePlacementAdjust");
+        FieldInfo gridActive = mod.GetType("Homestead.ZoneGridSnap").GetField("_active", Any);
+        var enabled = plugin.Instance.Config.First(e => e.Key.Key == "Enabled").Value;
+        object oldEnabled = enabled.BoxedValue;
+        Type placementConfig = mod.GetType("Homestead.PlacementControlConfig");
+        var priority = (BepInEx.Configuration.ConfigEntryBase)placementConfig.GetField("_positionControlPriority", Any).GetValue(null);
+        var positionEnabled = (BepInEx.Configuration.ConfigEntryBase)placementConfig.GetField("_placementAdjustEnabled", Any).GetValue(null);
+        object oldPriority = priority.BoxedValue, oldPositionEnabled = positionEnabled.BoxedValue;
+        try
+        {
+            Check(priority.DefaultValue.ToString() == "Homestead", "position priority defaults to Homestead");
+            priority.BoxedValue = Enum.Parse(priority.SettingType, "InfinityHammer");
+            positionEnabled.BoxedValue = Enum.Parse(positionEnabled.SettingType, "On");
+            gridActive.SetValue(null, false);
+            Ih("Unfreeze"); Ih("Set", Vector3.zero);
+            UpdateGhost();
+            Check(Ghost() && Ghost().activeInHierarchy, "native ghost active with Infinity Hammer transpiler");
+            Check((bool)Call("InfinityHammerCompat", "OwnsOrdinaryPosition", player) && !(bool)Call("ZonePlacementAdjust", "CanAdjustPosition", player), "ordinary position belongs only to Infinity Hammer");
+            Vector3 baseline = Ghost().transform.position;
+            adjust.GetField("_horizontalOffset", Any).SetValue(null, Vector3.right * 0.5f);
+            adjust.GetField("_heightOffset", Any).SetValue(null, 0.5f);
+            Ih("MoveRight", 0.1f);
+            UpdateGhost();
+            Check(Vector3.Distance(Ghost().transform.position, baseline + Ghost().transform.rotation * Vector3.right * 0.1f) < 0.002f,
+                "original ghost update applies only IH 0.1m, without old Homestead offsets");
+            Check((Vector3)adjust.GetField("_horizontalOffset", Any).GetValue(null) == Vector3.zero && (float)adjust.GetField("_heightOffset", Any).GetValue(null) == 0f,
+                "delegation clears stale Homestead position state");
+            enabled.BoxedValue = false;
+            Ih("MoveRight", 0.1f);
+            Check(Mathf.Abs(Offset().x - 0.2f) < 0.001f && (bool)Call("InfinityHammerCompat", "OwnsOrdinaryPosition", player), "IH Enabled off still retains actual movement ownership");
+            enabled.BoxedValue = oldEnabled;
+            gridActive.SetValue(null, true);
+            Vector3 unsnapped = new Vector3(1.24f, 50.123f, -1.24f);
+            void CheckPaused(string reason)
+            {
+                Ghost().transform.position = unsnapped;
+                Call("ZoneGridSnap+PlayerUpdatePlacementGhostPatch", "Postfix", player);
+                Check(Ghost().transform.position == unsnapped && (bool)gridActive.GetValue(null), "grid preserves position and toggle: " + reason);
+            }
+            CheckPaused("IH offset");
+            Ih("Set", Vector3.up * 0.001f);
+            CheckPaused("small vertical offset");
+            Ih("Set", Vector3.zero);
+            Ih("Freeze", center);
+            CheckPaused("frozen position with zero offset");
+            Ih("Unfreeze"); Ih("Set", Vector3.zero);
+            Ghost().transform.position = unsnapped;
+            Call("ZoneGridSnap+PlayerUpdatePlacementGhostPatch", "Postfix", player);
+            Check(Ghost().transform.position == new Vector3(1f, unsnapped.y, -1f), "grid resumes after IH clears offset and freeze");
+            Ih("Set", new Vector3(0.1f, 0.2f, 0.3f));
+            Check((Vector3)Call("ZoneGridSnap", "SnapPosition", unsnapped) == new Vector3(1f, unsnapped.y, -1f), "shared blueprint grid remains available with IH offset");
+            UpdateGhost();
+            // Let the native HUD observe the newly selected piece before checking its help.
+            yield return null;
+            Call("ZoneAreaToolStatusHud", "ShowDefaultPlacement", Vector3.zero, 0f, 45f, 10f, 15f, true);
+            Type hudType = mod.GetType("Homestead.ZoneAreaToolStatusHud");
+            var hud = Hud.instance.GetComponents(hudType).Cast<Behaviour>().First(b => b.enabled);
+            hudType.GetField("_nextContextRefresh", Any).SetValue(hud, 0f);
+            hudType.GetMethod("Update", Any).Invoke(hud, null);
+            var label = (TMPro.TextMeshProUGUI)hudType.GetField("_text", Any).GetValue(hud);
+            label.ForceMeshUpdate();
+            File.AppendAllText(report, "Infinity Hammer HUD: " + label.text + "\n");
+            string pausedHelp = string.Format((string)Call("HomesteadLocalization", "Text", "hs_placement_tooltip_grid_infinity_hammer"), "G");
+            Check(label.text.Contains("Infinity Hammer") && label.text.Contains(pausedHelp) && label.text.Contains("θ 45") && !label.text.Contains("X 0 | Y 0"), "HUD explains delegated position and paused grid, retaining rotation");
+            CaptureUi(Hud.instance.m_buildHud.GetComponentInParent<Canvas>().rootCanvas, "infinityhammer-hud.png");
+            Ih("Freeze", center);
+            void CheckGuard(string context, bool customTool = true, bool canAdjust = true)
+            {
+                Vector3 savedOffset = Offset(), savedFrozen = (Vector3)frozen.GetValue(null);
+                Check((bool)Call("InfinityHammerCompat", "IsHomesteadToolContext", player) == customTool, "tool context matches: " + context);
+                foreach (string method in new[] { "SetX", "SetY", "SetZ", "MoveLeft", "MoveRight", "MoveDown", "MoveUp", "MoveBackward", "MoveForward" }) Ih(method, 3f);
+                Ih("Set", Vector3.one); Ih("Move", Vector3.one); Ih("Freeze", Vector3.one); Ih("Freeze"); Ih("ToggleFreeze");
+                Check(Offset() == savedOffset && (Vector3)frozen.GetValue(null) == savedFrozen, "IH movement and freeze commands preserve stored state: " + context);
+                Vector3 savedPosition = floor.transform.position;
+                Ih("Apply", floor);
+                Check(floor.transform.position == savedPosition, "IH ghost offset suppressed: " + context);
+                Check((bool)Call("ZonePlacementAdjust", "CanAdjustPosition", player) == canAdjust, "Homestead position availability matches: " + context);
+            }
+            Vector3 retainedOffset = Offset(), retainedFrozen = (Vector3)frozen.GetValue(null);
+            priority.BoxedValue = Enum.Parse(priority.SettingType, "Homestead");
+            Check(!(bool)Call("InfinityHammerCompat", "OwnsOrdinaryPosition", player), "live Homestead priority takes ordinary positioning");
+            CheckGuard("ordinary piece, Homestead priority", customTool: false);
+            gridActive.SetValue(null, false);
+            UpdateGhost();
+            Vector3 homesteadBase = Ghost().transform.position;
+            Check(Vector3.Distance(homesteadBase, retainedFrozen + Ghost().transform.rotation * retainedOffset) > 0.1f,
+                "Homestead priority removes IH frozen position from original ghost update");
+            var nudge = new Harmony("sighsorry.Homestead.PriorityInputProbe");
+            try
+            {
+                nudge.Patch(AccessTools.Method(mod.GetType("Homestead.ZonePlacementOffset"), "GetArrowKeyLocalNudge"),
+                    prefix: new HarmonyMethod(typeof(Probe), nameof(PriorityNudge)));
+                UpdateGhost();
+            }
+            finally { nudge.UnpatchSelf(); }
+            float step = (float)placementConfig.GetProperty("HorizontalStep").GetValue(null);
+            Check(Vector3.Distance(Ghost().transform.position, homesteadBase + Ghost().transform.rotation * Vector3.right * step) < 0.002f,
+                "Homestead input uses its own position step once without IH offset");
+            gridActive.SetValue(null, true);
+            Ghost().transform.position = unsnapped;
+            Call("ZoneGridSnap+PlayerUpdatePlacementGhostPatch", "Postfix", player);
+            Check(Ghost().transform.position == new Vector3(1f, unsnapped.y, -1f) && !(bool)Call("InfinityHammerCompat", "SuspendsGrid", player),
+                "Homestead grid stays active despite retained IH offset and freeze");
+            Call("ZoneAreaToolStatusHud", "ShowDefaultPlacement", Vector3.right * step, 0f, 45f, 0f, 0f, true);
+            hudType.GetField("_nextContextRefresh", Any).SetValue(hud, 0f);
+            hudType.GetMethod("Update", Any).Invoke(hud, null);
+            Check(label.text.Contains("PgUp/PgDn") && label.text.Contains("X +") && !label.text.Contains("Infinity Hammer"),
+                "Homestead priority restores XYZ and movement help without IH pause notice");
+            KeyHints hints = FindFirstObjectByType<KeyHints>();
+            FieldInfo hintsEnabled = AccessTools.Field(typeof(KeyHints), "m_keyHintsEnabled");
+            object previousHints = hintsEnabled.GetValue(hints);
+            hintsEnabled.SetValue(hints, true);
+            try
+            {
+                Call("ZoneBuildKeyHints", "UpdateHints", hints);
+                Type hintsType = mod.GetType("Homestead.ZoneBuildKeyHints");
+                Check(((GameObject)hintsType.GetField("_offsetHint", Any).GetValue(null)).activeSelf &&
+                      !((GameObject)hintsType.GetField("_gridHint", Any).GetValue(null)).GetComponentsInChildren<TMPro.TMP_Text>().Any(t => t.text.Contains("Infinity Hammer")),
+                    "Homestead priority restores movement and normal grid key hints");
+            }
+            finally { hintsEnabled.SetValue(hints, previousHints); }
+            positionEnabled.BoxedValue = Enum.Parse(positionEnabled.SettingType, "Off");
+            CheckGuard("Homestead priority with Position Adjust off", customTool: false, canAdjust: false);
+            gridActive.SetValue(null, false);
+            UpdateGhost();
+            Check((Vector3)adjust.GetField("_horizontalOffset", Any).GetValue(null) == Vector3.zero &&
+                  Vector3.Distance(Ghost().transform.position, homesteadBase) < 0.002f,
+                "Position Adjust off clears HS nudges without returning movement to IH");
+            positionEnabled.BoxedValue = Enum.Parse(positionEnabled.SettingType, "On");
+            adjust.GetField("_horizontalOffset", Any).SetValue(null, Vector3.right * step);
+            priority.BoxedValue = Enum.Parse(priority.SettingType, "InfinityHammer");
+            gridActive.SetValue(null, true);
+            UpdateGhost();
+            Check(Offset() == retainedOffset && (Vector3)frozen.GetValue(null) == retainedFrozen &&
+                  Vector3.Distance(Ghost().transform.position, retainedFrozen + Ghost().transform.rotation * retainedOffset) < 0.002f &&
+                  (Vector3)adjust.GetField("_horizontalOffset", Any).GetValue(null) == Vector3.zero,
+                "returning to IH resumes preserved position and removes HS nudges");
+            CheckPaused("live return to IH priority");
+            priority.BoxedValue = Enum.Parse(priority.SettingType, "Homestead");
+            player.UnequipAllItems();
+            Ih("MoveRight", 0.1f);
+            // IH's own unequip cleanup may reset offsets; setting an explicit value
+            // tests that the guard is scoped to ordinary placement, not global commands.
+            Ih("Set", Vector3.one);
+            Check(Offset() == Vector3.one, "Homestead priority releases IH commands outside placement");
+            priority.BoxedValue = Enum.Parse(priority.SettingType, "InfinityHammer");
+            AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
+            Check(player.EquipItem(hammer) && player.SetSelectedPiece(wall), "restore hammer after priority changes");
+            Ih("Set", retainedOffset); Ih("Freeze", retainedFrozen);
+            foreach (string tool in new[] { "ZoneBlueprintSaveTool", "ZoneAreaDismantleTool", "ZoneBlueprintSnapPointTool" })
+            {
+                Call(tool, "Activate", player);
+                try { CheckGuard(tool); }
+                finally { Call(tool, "Deactivate"); }
+            }
+            Call("ZoneBlueprintPlacementTool", "Activate", player, "sample_001");
+            try { CheckGuard("blueprint preview"); }
+            finally { Call("ZoneBlueprintPlacementTool", "Deactivate"); }
+            object blueprint = Call("ZoneBlueprintFileFormat", "ReadFile", Path.Combine(Paths.GameRootPath, "probe.blueprint"));
+            Call("ZoneBlueprintStorePreviewTool", "ActivateListing", "probe", blueprint);
+            try { CheckGuard("store listing preview while ordinary wall selected"); }
+            finally { Call("ZoneBlueprintStorePreviewTool", "DeactivateActive"); }
+            Check(!(bool)Call("InfinityHammerCompat", "IsHomesteadToolContext", player), "tool deactivation releases IH command guard");
+            Vector3 before = Offset();
+            Ih("MoveRight", 0.1f);
+            Check(Mathf.Abs(Offset().x - before.x - 0.1f) < 0.001f, "IH commands resume after Homestead tool use");
+            Ih("Unfreeze"); Ih("Set", Vector3.zero);
+            // Test the selection boundary before any tool Update, including a null native ghost.
+            Piece special = player.GetBuildTool().m_pieces.Select(p => p.GetComponent<Piece>()).First(p => p && p.GetComponent(mod.GetType("Homestead.ZoneBlueprintSaveToolMarker")));
+            Check(player.SetSelectedPiece(special), "select Homestead tool from actual hammer table");
+            Check((bool)Call("InfinityHammerCompat", "IsHomesteadToolContext", player), "selected marker protects the first tool frame");
+            Ih("MoveRight", 0.1f);
+            Check(Offset() == Vector3.zero, "selected Homestead tool cannot accumulate latent IH offset");
+            Check(player.SetSelectedPiece(wall), "return to ordinary piece after marked selection");
+            Call("ZoneBlueprintSaveTool", "Deactivate"); Call("ZoneAreaDismantleTool", "Deactivate"); Call("ZoneBlueprintSnapPointTool", "Deactivate"); Call("ZoneBlueprintPlacementTool", "Deactivate");
+            gridActive.SetValue(null, false);
+            Ih("Unfreeze"); Ih("Set", Vector3.zero);
+            IEnumerator rotation = CheckRotationControls();
+            while (rotation.MoveNext()) yield return rotation.Current;
+            Call("InfinityHammerCompat", "Shutdown");
+            Check(!(bool)Call("InfinityHammerCompat", "OwnsOrdinaryPosition", player), "compatibility shutdown releases delegated ownership");
+            Check(Harmony.GetPatchInfo(AccessTools.Method(position, "Apply", new[] { typeof(GameObject) }))?.Prefixes.Any(p => p.PatchMethod.DeclaringType == mod.GetType("Homestead.InfinityHammerCompat")) != true, "compatibility shutdown removes its own IH guard");
+        }
+        finally
+        {
+            enabled.BoxedValue = oldEnabled;
+            priority.BoxedValue = oldPriority;
+            positionEnabled.BoxedValue = oldPositionEnabled;
+            gridActive.SetValue(null, false);
+            frozen.SetValue(null, null); offset.SetValue(null, Vector3.zero);
             Destroy(floor);
         }
     }
@@ -641,8 +874,6 @@ public sealed class Probe : BaseUnityPlugin
         Check((float)step.GetValue(player) == 22.5f && (int)rotation.GetValue(player) == 4,
             "custom hammer step does not leak into subsequent plant resize");
 
-        Setting("_placementXAxisRotation").BoxedValue = 45f;
-        Setting("_placementZAxisRotation").BoxedValue = 30f;
         mod.GetType("Homestead.ZoneGridSnap").GetField("_active", Any).SetValue(null, true);
         Check(!(bool)Call("ZonePlacementAdjust", "IsLocalPlacementContext", player), "cultivator excludes hammer offsets and axis tilt");
         CheckGridSnap(player, false);
@@ -1015,7 +1246,7 @@ public sealed class Probe : BaseUnityPlugin
                 gridShortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.H, KeyCode.LeftShift); Refresh();
                 Check(label.GetParsedText().Contains("Shift+H: Grid on 0.75m"), "placement tooltip follows grid state, spacing and rebound shortcut");
                 positionAdjust.BoxedValue = Enum.Parse(positionAdjust.SettingType, "Off"); Refresh();
-                Check(!label.text.Contains("PgUp") && label.text.Contains("Grid on"), "disabled offset hides only position help");
+                Check(!label.text.Contains("PgUp") && label.GetParsedText().Contains("Grid on"), "disabled offset hides only position help");
                 gridShortcut.BoxedValue = new BepInEx.Configuration.KeyboardShortcut(KeyCode.None); Refresh();
                 Check(!label.text.Contains("PgUp") && !label.text.Contains("Grid ") && !label.text.Contains("Build camera") && label.text.Contains("Copy rotation"), "disabled helpers leave rotation help available");
                 positionAdjust.BoxedValue = Enum.Parse(positionAdjust.SettingType, "On");
@@ -1040,6 +1271,7 @@ public sealed class Probe : BaseUnityPlugin
                 Check(player.SetSelectedPiece(player.GetBuildTool().m_pieces.First(p => p && p.GetComponent<Plant>()).GetComponent<Piece>()), "select plant for tooltip");
                 Refresh();
                 Check(!label.text.Contains("PgUp") && label.GetParsedText().Contains("G: Grid off 0.5m"), "cultivator shows grid without hammer-only movement help");
+                CheckBuildCameraToolBlacklist(player, hammerItem, cultivator, Refresh, Label);
                 Check(player.EquipItem(hammerItem), "restore hammer after tooltip fixture");
                 Check(player.SetSelectedPiece(ZNetScene.instance.GetPrefab("woodwall").GetComponent<Piece>()), "restore wall after tooltip fixture");
                 player.GetInventory().RemoveItem(cultivator);
@@ -1127,6 +1359,121 @@ public sealed class Probe : BaseUnityPlugin
             LoadLanguage(language);
             hudX.BoxedValue = previousHudX; hudFont.BoxedValue = previousHudFont;
             if (station) ZNetScene.instance.Destroy(station);
+        }
+    }
+
+    private static ItemDrop.ItemData cameraSwitchTool;
+    private static int cameraPlacementCalls;
+    private static bool CameraFixtureSwitch(Player player) { player.EquipItem(cameraSwitchTool); return false; }
+    private static void CameraPlacementCounter() { cameraPlacementCalls++; }
+
+    private void CheckBuildCameraToolBlacklist(Player player, ItemDrop.ItemData hammer, ItemDrop.ItemData cultivator,
+        Action refresh, Func<TMPro.TextMeshProUGUI> label)
+    {
+        var config = mod.GetType("Homestead.BuildCameraConfig");
+        BepInEx.Configuration.ConfigEntryBase Setting(string name) => (BepInEx.Configuration.ConfigEntryBase)config.GetField(name, Any).GetValue(null);
+        var blacklist = Setting("_toolBlacklist");
+        var station = Setting("_requireCraftingStation");
+        var range = Setting("_maxPlaceDistance");
+        var comfortRange = Setting("_maxPlaceDistancePerComfortLevel");
+        object[] previous = { blacklist.BoxedValue, station.BoxedValue, range.BoxedValue, comfortRange.BoxedValue };
+        var hints = FindFirstObjectByType<KeyHints>();
+        var hintsEnabled = AccessTools.Field(typeof(KeyHints), "m_keyHintsEnabled");
+        object oldHints = hintsEnabled.GetValue(hints);
+        GameObject hoePrefab = ObjectDB.instance.GetItemPrefab("Hoe");
+        ItemDrop.ItemData hoe = hoePrefab.GetComponent<ItemDrop>().m_itemData.Clone();
+        hoe.m_dropPrefab = hoePrefab; hoe.m_durability = hoe.GetMaxDurability();
+        Check(player.GetInventory().AddItem(hoe), "add camera blacklist hoe fixture");
+        var cameraPatch = mod.GetType("Homestead.ZoneBuildCameraPlayerUpdatePatch");
+        bool RunCameraPrefix()
+        {
+            object[] args = { player, true };
+            AccessTools.Method(cameraPatch, "Prefix").Invoke(null, args);
+            return (bool)args[1];
+        }
+        bool Active() => (bool)Call("ZoneBuildCamera", "InBuildMode");
+        bool Enter() => (bool)Call("ZoneBuildCamera", "EnableBuildMode");
+        bool Allowed() => (bool)Call("ZoneBuildCamera", "ToolIsEquipped", player);
+        void Equip(ItemDrop.ItemData item)
+        {
+            AccessTools.Field(typeof(Character), "m_swimTimer").SetValue(player, 1f);
+            Check(player.EquipItem(item), "equip blacklist fixture " + item.m_dropPrefab.name);
+        }
+        var input = new Harmony("sighsorry.Homestead.CameraToolProbe");
+        GameObject customPrefab = new GameObject("ProbeConstructionTool");
+        GameObject originalHammerPrefab = hammer.m_dropPrefab;
+        try
+        {
+            Check((string)blacklist.DefaultValue == "Hoe, Cultivator", "camera blacklist defaults to Hoe and Cultivator");
+            station.BoxedValue = Enum.Parse(station.SettingType, "Off");
+            range.BoxedValue = 35f; comfortRange.BoxedValue = 0f;
+            blacklist.BoxedValue = blacklist.DefaultValue;
+            hintsEnabled.SetValue(hints, true);
+            foreach (var tool in new[] { hoe, cultivator })
+            {
+                Equip(tool); refresh();
+                Check(!Allowed() && !Enter(), "blocked tool rejects direct camera entry: " + tool.m_dropPrefab.name);
+                Check(!label().text.Contains("Build camera"), "blocked tool has no camera HUD help: " + tool.m_dropPrefab.name);
+                Call("ZoneBuildKeyHints", "UpdateHints", hints);
+                var hintsType = mod.GetType("Homestead.ZoneBuildKeyHints");
+                Check(!((GameObject)hintsType.GetField("_buildCameraHint", Any).GetValue(null)).activeSelf &&
+                      ((GameObject)hintsType.GetField("_gridHint", Any).GetValue(null)).activeSelf, "blocked camera key hint leaves grid key hint visible");
+            }
+            CheckGridSnap(player, hammer: false);
+            Check(!label().text.Contains("Build camera") && label().GetParsedText().Contains("Grid"), "cultivator grid HUD remains available");
+            blacklist.BoxedValue = " hoe, CULTIVATOR , hoe ,,; ";
+            Check(!Allowed(), "blacklist trims spaces, ignores case and tolerates duplicates");
+            blacklist.BoxedValue = "Cult";
+            Check(Allowed() && Enter(), "blacklist matches whole prefab names, not substrings");
+            Call("ZoneBuildCamera", "DisableBuildMode");
+            blacklist.BoxedValue = "";
+            Check(Enter(), "empty blacklist restores cultivator camera entry");
+            Call("ZoneBuildCamera", "DisableBuildMode");
+            blacklist.BoxedValue = blacklist.DefaultValue;
+            Equip(hammer);
+            float originalRange = player.m_maxPlaceDistance;
+            Check(Allowed() && Enter() && Mathf.Approximately(player.m_maxPlaceDistance, 35f), "Hammer enters camera and receives configured placement range");
+            blacklist.BoxedValue = "Hoe, Cultivator, hAMMer";
+            Check(RunCameraPrefix() && !Active() && Mathf.Approximately(player.m_maxPlaceDistance, originalRange), "live blacklist addition exits active camera and restores range");
+            blacklist.BoxedValue = blacklist.DefaultValue;
+            Check(Enter(), "live removal permits camera re-entry without restart");
+            cameraSwitchTool = hoe; cameraPlacementCalls = 0;
+            input.Patch(AccessTools.Method(cameraPatch, "UpdateHotbarAndHideInputs"), prefix: new HarmonyMethod(typeof(Probe), nameof(CameraFixtureSwitch)));
+            input.Patch(AccessTools.Method(typeof(Player), "UpdatePlacement"), prefix: new HarmonyMethod(typeof(Probe), nameof(CameraPlacementCounter)));
+            Check(!RunCameraPrefix() && !Active() && cameraPlacementCalls == 0 && Mathf.Approximately(player.m_maxPlaceDistance, originalRange),
+                "same-frame hotbar tool change exits before placement without processing native hotbar twice");
+            input.UnpatchSelf(); cameraSwitchTool = null;
+            Equip(hammer); refresh();
+            Check(label().text.Contains("Build camera"), "Hammer camera HUD restored");
+            Type hudType = mod.GetType("Homestead.ZoneAreaToolStatusHud");
+            Component hud = Hud.instance.GetComponents(hudType).Cast<Behaviour>().First(c => c.enabled);
+            hudType.GetField("_nextContextRefresh", Any).SetValue(hud, Time.unscaledTime + 30f);
+            Equip(hoe);
+            hudType.GetMethod("Update", Any).Invoke(hud, null);
+            Check(!label().text.Contains("Build camera"), "blocked camera HUD clears before station refresh interval");
+            Equip(hammer);
+            // Keep real Hammer data while exercising a mod's different prefab identity.
+            hammer.m_dropPrefab = customPrefab;
+            Check(Allowed() && Enter(), "unlisted mod tool identity does not require Hammer in its name");
+            Call("ZoneBuildCamera", "DisableBuildMode");
+            blacklist.BoxedValue = "probeconstructiontool";
+            Check(!Allowed() && !Enter(), "custom prefab can be blocked by exact case-insensitive name");
+            hammer.m_dropPrefab = originalHammerPrefab;
+            player.UnequipAllItems();
+            blacklist.BoxedValue = "";
+            Check(!Allowed() && !Enter(), "empty blacklist still requires an equipped build tool");
+        }
+        finally
+        {
+            input.UnpatchSelf(); cameraSwitchTool = null;
+            Call("ZoneBuildCamera", "DisableBuildMode");
+            hammer.m_dropPrefab = originalHammerPrefab;
+            blacklist.BoxedValue = previous[0]; station.BoxedValue = previous[1]; range.BoxedValue = previous[2]; comfortRange.BoxedValue = previous[3];
+            hintsEnabled.SetValue(hints, oldHints);
+            Equip(cultivator);
+            player.GetInventory().RemoveItem(hoe);
+            Destroy(customPrefab);
+            refresh();
         }
     }
 
