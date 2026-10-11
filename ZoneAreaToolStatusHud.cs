@@ -224,30 +224,7 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
     private void Update()
     {
         bool changed = UpdateContext();
-        if (!string.IsNullOrEmpty(_areaLine) && Time.unscaledTime > _areaHideAfter)
-        {
-            _areaLine = "";
-            changed = true;
-        }
-
-        if (!string.IsNullOrEmpty(_placementLine) && Time.unscaledTime > _placementHideAfter)
-        {
-            _placementLine = "";
-            changed = true;
-        }
-
-        if (!string.IsNullOrEmpty(_dvergrLine) && Time.unscaledTime > _dvergrHideAfter)
-        {
-            _dvergrLine = "";
-            changed = true;
-        }
-
-        if (!string.IsNullOrEmpty(_buildCameraLine) && Time.unscaledTime > _buildCameraHideAfter)
-        {
-            _buildCameraLine = "";
-            changed = true;
-        }
-
+        changed |= PruneExpiredLines();
         if (changed)
         {
             RefreshText();
@@ -635,29 +612,35 @@ internal sealed class ZoneAreaToolStatusHud : MonoBehaviour
         return line;
     }
 
-    private void PruneExpiredLines()
+    private bool PruneExpiredLines()
     {
         float now = Time.unscaledTime;
+        bool changed = false;
         if (!string.IsNullOrEmpty(_areaLine) && now > _areaHideAfter)
         {
             _areaLine = "";
+            changed = true;
         }
 
         if (!string.IsNullOrEmpty(_placementLine) && now > _placementHideAfter)
         {
             _placementLine = "";
+            changed = true;
         }
 
         if (!string.IsNullOrEmpty(_dvergrLine) && now > _dvergrHideAfter)
         {
             _dvergrLine = "";
+            changed = true;
         }
 
         if (!string.IsNullOrEmpty(_buildCameraLine) && now > _buildCameraHideAfter)
         {
             _buildCameraLine = "";
+            changed = true;
         }
 
+        return changed;
     }
 
     private static bool HasNonZeroPlacementValue(Vector3 horizontalOffset, float heightOffset, float degree)
