@@ -65,31 +65,13 @@ internal static partial class ZoneDvergrCirclet
             ? equipped
             : null;
 
-        if (!active)
+        if (!active || !player || player.IsDead() || !PatchItemData(item, initializeDurability: true))
         {
             if (player)
             {
                 PublishLocalCircletState(player, null, null);
             }
 
-            CleanupFallbackVisuals();
-            return;
-        }
-
-        if (!player || player.IsDead())
-        {
-            if (player)
-            {
-                PublishLocalCircletState(player, null, null);
-            }
-
-            CleanupFallbackVisuals();
-            return;
-        }
-
-        if (!PatchItemData(item, initializeDurability: true))
-        {
-            PublishLocalCircletState(player, null, null);
             CleanupFallbackVisuals();
             return;
         }
