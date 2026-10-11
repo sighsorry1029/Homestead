@@ -82,11 +82,8 @@ internal static class ZoneBuildKeyHints
         }
 
         Player player = Player.m_localPlayer;
-        bool showBuildHints = keyHints.m_keyHintsEnabled &&
-                              player != null &&
-                              player.InPlaceMode() &&
-                              !ZInput.IsGamepadActive();
-        if (ZoneBlueprintSaveToolMenu.IsStoreToolSelected(player))
+        if (!keyHints.m_keyHintsEnabled || player == null || !player.InPlaceMode() ||
+            ZInput.IsGamepadActive() || ZoneBlueprintSaveToolMenu.IsStoreToolSelected(player))
         {
             HideHomesteadHints();
             return;
@@ -94,11 +91,11 @@ internal static class ZoneBuildKeyHints
 
         bool areaToolActive = ZoneBlueprintSaveTool.IsActive || ZoneAreaDismantleTool.IsActive;
         bool snapPointToolActive = ZoneBlueprintSnapPointTool.IsActive;
-        bool showPlacementHints = showBuildHints && ZonePlacementInput.IsHammerPlacement(player);
-        bool showBuildCamera = showBuildHints && player != null && ZoneBuildCamera.IsEnabled() &&
+        bool showPlacementHints = ZonePlacementInput.IsHammerPlacement(player);
+        bool showBuildCamera = ZoneBuildCamera.IsEnabled() &&
                                ZoneBuildCamera.ToolIsEquipped(player);
         string buildCameraCondition = "";
-        if (showBuildCamera && player != null)
+        if (showBuildCamera)
         {
             buildCameraCondition = ZoneBuildCamera.GetConditionText(player);
         }
@@ -113,7 +110,7 @@ internal static class ZoneBuildKeyHints
 
         SetHint(
             _gridHint,
-            showBuildHints && PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !areaToolActive && !snapPointToolActive,
+            PlacementControlConfig.GridSnapToggleHotkey.MainKey != KeyCode.None && !areaToolActive && !snapPointToolActive,
             ZoneGridSnap.IsActive && InfinityHammerCompat.SuspendsGrid(player)
                 ? HomesteadLocalization.Text("hs_keyhint_grid_infinity_hammer")
                 : ZoneGridSnap.IsActive
@@ -147,7 +144,6 @@ internal static class ZoneBuildKeyHints
     {
         HintWidgets widgets = GetHintWidgets(hint);
         SetActiveIfChanged(hint, visible);
-        widgets.LastVisible = visible;
 
         if (!visible)
         {
@@ -212,7 +208,6 @@ internal static class ZoneBuildKeyHints
             Key1Root = key1Root,
             Key0Text = key0Root != null ? FindKeyText(key0Root) : null,
             Key1Text = key1Root != null ? FindKeyText(key1Root) : null,
-            LastVisible = hint.activeSelf,
             LastPreferredWidth = float.NaN
         };
         HintWidgetCache[id] = widgets;
@@ -335,7 +330,6 @@ internal static class ZoneBuildKeyHints
         public Transform? Key1Root;
         public TextMeshProUGUI? Key0Text;
         public TextMeshProUGUI? Key1Text;
-        public bool LastVisible;
         public string LastLabel = "";
         public string LastKey0 = "";
         public string LastKey1 = "";
