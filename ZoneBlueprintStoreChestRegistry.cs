@@ -125,7 +125,8 @@ internal static class ZoneBlueprintStoreChestRegistry
         resolvedBlueprintFile = "";
         foreach (ZoneBlueprintStoreChest chest in EnumerateModeChests(ZoneBlueprintStoreChest.ModePrice))
         {
-            if (chest.TryResolvePriceDraftRestore(listingId, blueprintFile, out name, out resolvedBlueprintFile))
+            chest.TryGetZdo(out ZDO? zdo);
+            if (TryResolvePriceDraftRestore(zdo, listingId, blueprintFile, out name, out resolvedBlueprintFile))
             {
                 return true;
             }
@@ -260,7 +261,7 @@ internal static class ZoneBlueprintStoreChestRegistry
         return string.Equals(currentOfferId ?? "", requestedOfferId ?? "", StringComparison.Ordinal);
     }
 
-    private static bool TryResolvePriceDraftRestore(ZDO zdo, string requestListingId, string requestBlueprintFile, out string name, out string blueprintFile)
+    private static bool TryResolvePriceDraftRestore(ZDO? zdo, string requestListingId, string requestBlueprintFile, out string name, out string blueprintFile)
     {
         name = "";
         blueprintFile = "";

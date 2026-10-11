@@ -1024,35 +1024,6 @@ internal sealed class ZoneBlueprintStoreChest : MonoBehaviour
         return false;
     }
 
-    internal bool TryResolvePriceDraftRestore(string requestListingId, string requestBlueprintFile, out string name, out string blueprintFile)
-    {
-        name = "";
-        blueprintFile = "";
-        ZDO? zdo = _nview != null && _nview.IsValid() ? _nview.GetZDO() : null;
-        if (zdo == null ||
-            !string.Equals(zdo.GetString(ModeKey, ""), ModePrice, StringComparison.Ordinal) ||
-            zdo.GetBool(ConfirmedKey, false) ||
-            !zdo.GetBool(DraftOwnedByChestKey, false))
-        {
-            return false;
-        }
-
-        string zdoListingId = zdo.GetString(ListingIdKey, "");
-        string zdoBlueprintFile = Path.GetFileName(zdo.GetString(BlueprintFileKey, ""));
-        bool listingMatches = !string.IsNullOrWhiteSpace(requestListingId) &&
-                              string.Equals(zdoListingId, requestListingId, StringComparison.Ordinal);
-        bool fileMatches = !string.IsNullOrWhiteSpace(requestBlueprintFile) &&
-                           string.Equals(zdoBlueprintFile, Path.GetFileName(requestBlueprintFile), StringComparison.OrdinalIgnoreCase);
-        if (!listingMatches && !fileMatches)
-        {
-            return false;
-        }
-
-        name = zdo.GetString(BlueprintNameKey, "");
-        blueprintFile = zdoBlueprintFile;
-        return !string.IsNullOrWhiteSpace(blueprintFile);
-    }
-
     private void TryClaimLocalPreview()
     {
         if (!ZoneBlueprintStorePreviewPayload.CanCreateLocalPreview)

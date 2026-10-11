@@ -139,6 +139,7 @@ public sealed class Probe : BaseUnityPlugin
             Check(Localization.instance.Localize("$hs_area_save_name") != "$hs_area_save_name", "localization registered");
             CheckPrefabs();
             CheckContents();
+            PriceDraftRestoreChecks.Run(mod, Check);
             if (!headless && !uiOnly) CheckClient();
         }
         catch (Exception ex) { Fail(ex); yield break; }
