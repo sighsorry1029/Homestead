@@ -10,6 +10,7 @@ using ServerSync;
 namespace Homestead;
 
 [BepInPlugin(ModGUID, ModName, ModVersion)]
+[BepInDependency(ZoneBlueprintSaveAccess.ClanPluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency("com.maxsch.valheim.contentswithin", BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency("sighsorry.InventorySlots", BepInDependency.DependencyFlags.SoftDependency)]
 [BepInDependency("sighsorry.VeiledRecipes", BepInDependency.DependencyFlags.SoftDependency)]
@@ -21,7 +22,7 @@ namespace Homestead;
 public partial class HomesteadPlugin : BaseUnityPlugin
 {
     internal const string ModName = "Homestead";
-    internal const string ModVersion = "1.3.2";
+    internal const string ModVersion = "1.3.3";
     internal const string Author = "sighsorry";
     internal const string ModGUID = $"{Author}.{ModName}";
     internal const string DataStorageFolder = "Homestead";

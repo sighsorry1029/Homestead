@@ -100,6 +100,10 @@ Area Save and Area Dismantle use the same rectangle controls:
 
 `06 - Area Tools / Area Save Creator Mode` defaults to `AllCreators`, allowing Area Save to include pieces built by you, other players, or no recorded creator. Existing config values and server-synced settings are preserved.
 
+With **Clan 1.1.4 / API 6** installed on both client and server, `OwnedOnly` also allows pieces built by current members of your primary clan (Leader, Officer, or Member). `OwnedAndCreatorless` allows those same pieces plus pieces with no creator. Offline creators are supported; Guest links do not grant access or override primary membership. Membership is checked on the server when selecting and again when saving, so leaving a clan or changing roles can exclude previously selected pieces. Missing Clan, unavailable membership data, or missing creator platform history disables only the extra clan allowance. Area Dismantle permissions, piece creators, and blueprint file formats are unchanged.
+
+Clan checks are grouped by creator, not by piece count. If an area requires checking more than 512 distinct creator identities, reduce the selection; Homestead reports this instead of silently saving a partial result. `AllCreators` does not require these checks. Area Save remains a client-side file operation; this integration is not an anti-copy protection against modified clients or other blueprint tools.
+
 Area Dismantle is intentionally conservative:
 
 - only matching player-owned pieces are dismantled

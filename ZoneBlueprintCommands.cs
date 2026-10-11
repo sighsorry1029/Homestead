@@ -56,7 +56,7 @@ internal static class ZoneBlueprintCommands
         MissingPrefabWarnings.Clear();
     }
 
-    internal static HomesteadCommandResult SaveSelectedBlueprint(string name, Player player)
+    internal static HomesteadCommandResult SaveSelectedBlueprint(string name, Player player, HashSet<(long Creator, int Index)> clanGrants)
     {
         EnsureWorldReady();
         name = (name ?? "").Trim();
@@ -68,6 +68,7 @@ internal static class ZoneBlueprintCommands
         if (!ZoneBlueprintSaveTool.TryGetSelectedBlueprint(
                 name,
                 player,
+                clanGrants,
                 out ZoneBlueprintFile blueprint,
                 out IReadOnlyCollection<ZDOID> selectedZdos,
                 out string selectionError))
@@ -423,7 +424,6 @@ internal static class ZoneBlueprintCommands
 
     internal static List<ZDO> FindBlueprintWearNTearZdos(Player player, ZoneAreaSelection selection)
     {
-        long playerId = player.GetPlayerID();
         List<ZDO> zdos = [];
         List<ZDO> nearby = [];
 
@@ -441,12 +441,6 @@ internal static class ZoneBlueprintCommands
             }
 
             if (!selection.Contains(zdo.GetPosition()))
-            {
-                continue;
-            }
-
-            long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
-            if (!BlueprintConfig.AreaSaveAllowsCreator(playerId, creator))
             {
                 continue;
             }

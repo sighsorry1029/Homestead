@@ -9,7 +9,7 @@ using UnityEngine;
 
 [BepInPlugin("sighsorry.Homestead.CompatibilityProbe", "Homestead test probe", "1.0.0")]
 [BepInDependency("sighsorry.Homestead")]
-public sealed class Probe : BaseUnityPlugin
+public sealed partial class Probe : BaseUnityPlugin
 {
     private Assembly mod;
     private string report;
@@ -44,6 +44,7 @@ public sealed class Probe : BaseUnityPlugin
         bool rotationOnly = Environment.GetCommandLineArgs().Contains("-homestead-rotation-probe");
         bool infinityHammerOnly = Environment.GetCommandLineArgs().Contains("-homestead-infinityhammer-probe");
         bool zenOnly = Environment.GetCommandLineArgs().Contains("-homestead-zen-probe");
+        bool clanOnly = Environment.GetCommandLineArgs().Contains("-homestead-clan-probe");
         if (!headless)
         {
             yield return new WaitForSeconds(6f);
@@ -63,7 +64,7 @@ public sealed class Probe : BaseUnityPlugin
                 Game.SetProfile("homestead_probe", FileHelpers.FileSource.Local);
                 // Rotation probes place networked pieces. A prior interrupted run
                 // can leave those pieces in the saved world and obstruct later rays.
-                string worldName = rotationOnly || infinityHammerOnly || zenOnly
+                string worldName = rotationOnly || infinityHammerOnly || zenOnly || clanOnly
                     ? "HomesteadProbe-" + Guid.NewGuid().ToString("N") : "HomesteadProbe";
                 World world = World.GetCreateWorld(worldName, FileHelpers.FileSource.Local);
                 ZNet.SetServer(true, false, false, "HomesteadProbe", "", world);
@@ -81,6 +82,14 @@ public sealed class Probe : BaseUnityPlugin
             if (valkyrie && Player.m_localPlayer.InIntro()) valkyrie.DropPlayer();
             while (Player.m_localPlayer.InCutscene() && Time.realtimeSinceStartup < deadline) yield return null;
             yield return new WaitForSeconds(1f);
+        }
+        if (clanOnly)
+        {
+            try { CheckClanSaveAccess(); }
+            catch (Exception ex) { Fail(ex); yield break; }
+            File.AppendAllText(report, "COMPLETE Clan Area Save\n");
+            Application.Quit();
+            yield break;
         }
         if ((placementOnly || gridOnly || rotationOnly || infinityHammerOnly || zenOnly) && !headless)
         {

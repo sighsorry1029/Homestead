@@ -13,6 +13,8 @@ param(
     [string]$InfinityHammerAssemblyPath,
     [switch]$ZenRedecorateOnly,
     [string]$ZenRedecorateAssemblyPath,
+    [switch]$ClanOnly,
+    [string]$ClanAssemblyPath,
     [string]$GizmoAssemblyPath,
     [string]$PlantEasilyAssemblyPath,
     [string]$AssemblyPath,
@@ -62,6 +64,13 @@ if ($PlacementOnly) {
     if (-not (Test-Path -LiteralPath $PlantEasilyAssemblyPath -PathType Leaf)) { throw 'Supply the PlantEasily DLL for the placement probe.' }
     $root = Join-Path $project 'artifacts/runtime-placement-client'
 }
+if ($ClanOnly) {
+    if ($ZenRedecorateOnly -or $InfinityHammerOnly -or $RotationOnly -or $PlacementOnly -or $GridOnly -or $CameraTooltipOnly -or $UiOnly -or $IconOnly) { throw 'Clan probe must run separately.' }
+    if ($ClanAssemblyPath -and -not (Test-Path -LiteralPath $ClanAssemblyPath -PathType Leaf)) { throw 'Clan DLL not found.' }
+    $variant = if ($ClanAssemblyPath) { 'clan' } else { 'no-clan' }
+    $root = Join-Path $project "artifacts/runtime-$variant-$Role"
+    if (-not $ClanAssemblyPath -and (Test-Path "$root/BepInEx/plugins/Clan.dll")) { throw 'No-Clan fixture contains Clan.dll.' }
+}
 $install = if ($Role -eq 'server') { $ServerInstall } else { $ClientInstall }
 $exe = if ($Role -eq 'server') { 'valheim_server.exe' } else { 'valheim.exe' }
 $data = if ($Role -eq 'server') { 'valheim_server_Data' } else { 'valheim_Data' }
@@ -82,6 +91,7 @@ if ([string]::IsNullOrWhiteSpace($AssemblyPath)) { $AssemblyPath = "$project/bin
 Copy-Item -LiteralPath $AssemblyPath -Destination "$root/BepInEx/plugins/Homestead.dll" -Force
 Copy-Item -LiteralPath "$PSScriptRoot/RuntimeProbe/bin/Debug/net48/RuntimeProbe.dll" -Destination "$root/BepInEx/plugins" -Force
 if ($PlacementOnly) { Copy-Item -LiteralPath $PlantEasilyAssemblyPath -Destination "$root/BepInEx/plugins/Advize_PlantEasily.dll" -Force }
+if ($ClanOnly -and $ClanAssemblyPath) { Copy-Item -LiteralPath $ClanAssemblyPath -Destination "$root/BepInEx/plugins/Clan.dll" -Force }
 if ($RotationOnly -and $GizmoAssemblyPath) { Copy-Item -LiteralPath $GizmoAssemblyPath -Destination "$root/BepInEx/plugins/ComfyGizmo.dll" -Force }
 if ($loadInfinityHammer) {
     Copy-Item -LiteralPath $InfinityHammerAssemblyPath -Destination "$root/BepInEx/plugins/InfinityHammer.dll" -Force
@@ -102,6 +112,7 @@ if ($GridOnly) { $arguments += '-homestead-grid-probe' }
 if ($RotationOnly) { $arguments += '-homestead-rotation-probe' }
 if ($InfinityHammerOnly) { $arguments += '-homestead-infinityhammer-probe' }
 if ($ZenRedecorateOnly) { $arguments += '-homestead-zen-probe' }
+if ($ClanOnly) { $arguments += '-homestead-clan-probe' }
 if ($Role -eq 'server') {
     $arguments += @('-nographics', '-name', 'HomesteadCompatibility', '-port', '2499', '-world', 'HomesteadCompatibility', '-password', 'codex-test-only', '-public', '0')
 } else {

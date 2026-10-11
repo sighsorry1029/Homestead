@@ -14,6 +14,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneSessionResetRegistry.Initialize(logger);
         ZoneBlueprintCommands.Initialize(logger);
         ZoneBlueprintSaveTool.Initialize(logger);
+        ZoneBlueprintSaveAccess.Initialize();
         ZoneAreaDismantleTool.Initialize(logger);
         ZoneBlueprintSnapPointTool.Initialize(logger);
         ZoneBlueprintPlacementTool.Initialize(logger);
@@ -45,6 +46,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneSessionResetRegistry.Register("Icon render queue", HomesteadIconRenderer.Instance.Shutdown);
         ZoneSessionResetRegistry.Register("Blueprint RPC queue", ZoneBlueprintNetworkPayload.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint plan ghost cleanup", ZoneBlueprintCommands.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Area Save Clan access", ZoneBlueprintSaveAccess.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Area dismantle tool", ZoneAreaDismantleTool.Deactivate);
         ZoneSessionResetRegistry.Register("Blueprint snap point tool", ZoneBlueprintSnapPointTool.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint placement tool", ZoneBlueprintPlacementTool.Deactivate);
@@ -64,6 +66,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneBlueprintNetworkPayload.Update();
         ZoneBlueprintChestZdoRegistry.Update();
         ZoneBlueprintCommands.Update();
+        ZoneBlueprintSaveAccess.Update();
         ZoneBlueprintChestCommands.RegisterRpcs();
         ZoneBlueprintChestVfx.Update();
         ZoneAreaDismantleTool.RegisterRpcs();

@@ -44,6 +44,8 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
     private string _saveName = "";
     private string _saveStatus = "";
     private bool _saveInputBlocked;
+    private bool _savePending;
+    private int _accessGeneration;
     private float _selectionPreviewYawOffset;
 
     public static bool HasSelection => _instance?._selection != null;
@@ -128,6 +130,7 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
     public static bool TryGetSelectedBlueprint(
         string name,
         Player player,
+        HashSet<(long Creator, int Index)> clanGrants,
         out ZoneBlueprintFile blueprint,
         out IReadOnlyCollection<ZDOID> selectedZdos,
         out string reason)
@@ -149,14 +152,15 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         }
 
         SaveSelection selection = _instance._selection;
-        selectedZdos = selection.Zdos;
+        List<ZDOID> allowedIds = [];
         List<ZDO> zdos = [];
         foreach (ZDOID id in selection.Zdos)
         {
             ZDO zdo = ZDOMan.instance.GetZDO(id);
-            if (zdo != null && zdo.IsValid())
+            if (zdo != null && zdo.IsValid() && ZoneBlueprintSaveAccess.Allows(player, zdo, clanGrants))
             {
                 zdos.Add(zdo);
+                allowedIds.Add(id);
             }
         }
 
@@ -166,7 +170,8 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
             return false;
         }
 
-        List<Vector3> snapPointPositions = ZoneBlueprintSnapPointTool.CollectWorldPositionsForSelection(selection.Zdos);
+        selectedZdos = allowedIds;
+        List<Vector3> snapPointPositions = ZoneBlueprintSnapPointTool.CollectWorldPositionsForSelection(allowedIds);
         blueprint = ZoneBlueprintCommands.CaptureBlueprintFromZdos(
             name,
             player,
@@ -197,6 +202,9 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
 
     private void DeactivateInternal()
     {
+        _accessGeneration++;
+        _savePending = false;
+        ZoneBlueprintSaveAccess.CancelSelection();
         _areaTool?.Deactivate();
         _saveStatus = "";
         _selectionPreviewYawOffset = 0f;
@@ -209,6 +217,9 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
 
     private void ClearSelectionInternal()
     {
+        _accessGeneration++;
+        _savePending = false;
+        ZoneBlueprintSaveAccess.CancelSelection();
         _selection = null;
         _saveStatus = "";
         _selectionPreviewYawOffset = 0f;
@@ -235,6 +246,8 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
 
     private void OnDestroy()
     {
+        _accessGeneration++;
+        ZoneBlueprintSaveAccess.CancelSelection();
         SetSaveUiInputBlocked(false);
         DestroySavePanel();
         _areaTool?.Destroy();
@@ -260,6 +273,18 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
         }
 
         List<ZDO> zdos = ZoneBlueprintCommands.FindBlueprintWearNTearZdos(player, area);
+        int generation = ++_accessGeneration;
+        _savePending = false;
+        if (!ZoneBlueprintSaveAccess.TryCheckSelection(player, zdos, grants =>
+        {
+            if (!this || generation != _accessGeneration || player != Player.m_localPlayer || _areaTool?.Active != true) return;
+            zdos.RemoveAll(zdo => !zdo.IsValid() || !ZoneBlueprintSaveAccess.Allows(player, zdo, grants));
+            CompleteSelection(player, area, zdos);
+        })) Message(player, HomesteadLocalization.Text("hs_blueprint_too_many_creators"));
+    }
+
+    private void CompleteSelection(Player player, ZoneAreaSelection area, List<ZDO> zdos)
+    {
         if (zdos.Count == 0)
         {
             _selection = null;
@@ -288,12 +313,43 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
     private void SaveSelectionFromUi()
     {
         Player player = Player.m_localPlayer;
-        if (player == null || _selection == null)
+        if (player == null || _selection == null || _savePending || ZDOMan.instance == null)
         {
             return;
         }
 
-        HomesteadCommandResult result = ZoneBlueprintCommands.SaveSelectedBlueprint(_saveName, player);
+        SaveSelection selection = _selection;
+        int generation = _accessGeneration;
+        string name = _saveName;
+        List<ZDO> zdos = [];
+        foreach (ZDOID id in selection.Zdos)
+        {
+            ZDO zdo = ZDOMan.instance.GetZDO(id);
+            if (zdo != null && zdo.IsValid()) zdos.Add(zdo);
+        }
+        _savePending = true;
+        _saveStatus = HomesteadLocalization.Text("hs_blueprint_checking_access");
+        if (!ZoneBlueprintSaveAccess.TryCheckSelection(player, zdos, grants =>
+        {
+            if (!this || generation != _accessGeneration || _selection != selection || player != Player.m_localPlayer) return;
+            _savePending = false;
+            HomesteadCommandResult result;
+            try { result = ZoneBlueprintCommands.SaveSelectedBlueprint(name, player, grants); }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning($"Area Save failed: {ex}");
+                result = HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_save_failed"));
+            }
+            CompleteSave(player, result);
+        }))
+        {
+            _savePending = false;
+            CompleteSave(player, HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_too_many_creators")));
+        }
+    }
+
+    private void CompleteSave(Player player, HomesteadCommandResult result)
+    {
         _saveStatus = result.Success ? "Saved." : result.Message;
         Message(player, result.Message, result.Success ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
         if (result.Success)
@@ -334,13 +390,11 @@ internal sealed class ZoneBlueprintSaveTool : MonoBehaviour
                 continue;
             }
 
-            long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
-            if (BlueprintConfig.AreaSaveAllowsCreator(playerId, creator))
-            {
-                _targetCandidateZdos.Add(zdo);
-            }
+            _targetCandidateZdos.Add(zdo);
         }
 
+        ZoneBlueprintSaveAccess.RefreshPreview(player, _targetCandidateZdos);
+        _targetCandidateZdos.RemoveAll(zdo => !ZoneBlueprintSaveAccess.AllowsPreview(player, zdo));
         return _targetCandidateZdos;
     }
 

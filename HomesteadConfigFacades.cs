@@ -250,8 +250,8 @@ internal static class BlueprintConfig
     public static string AreaSaveEligibleTargetLabel => AreaSaveCreatorMode switch
     {
         BlueprintAreaSaveCreatorMode.AllCreators => "WearNTear",
-        BlueprintAreaSaveCreatorMode.OwnedAndCreatorless => "owned or creatorless WearNTear",
-        _ => "owned WearNTear"
+        BlueprintAreaSaveCreatorMode.OwnedAndCreatorless => "own, clan-owned or creatorless WearNTear",
+        _ => "own or clan-owned WearNTear"
     };
     public static Color AreaSaveBoundaryColor => new(1f, 0.9f, 0.2f, 0.9f);
     public static float AreaDismantleMaxSide => Mathf.Clamp(_areaDismantleMaxSide.Value, 1f, 128f);
@@ -493,7 +493,7 @@ internal static class BlueprintConfig
             "06 - Area Tools",
             "Area Save Creator Mode",
             BlueprintAreaSaveCreatorMode.AllCreators,
-            "Controls which WearNTear objects the Area Save tool can select. AllCreators saves your own, creator=0, and other creators' WearNTear. OwnedAndCreatorless saves your own plus creator=0 WearNTear. OwnedOnly saves only WearNTear with your playerID.");
+            "Controls which WearNTear objects Area Save can select and save. AllCreators allows every creator. OwnedOnly allows your own pieces and, with Clan on client and server, pieces by current members of your primary clan (Leader/Officer/Member, including offline creators; Guest links excluded). OwnedAndCreatorless also allows creator=0. Clan membership is checked again when saving; if unavailable, only the extra clan allowance is disabled. Does not affect Area Dismantle or change piece creators.");
         _areaDismantleMaxSide = plugin.config(
             "06 - Area Tools",
             "Area Dismantle Max Side Length",

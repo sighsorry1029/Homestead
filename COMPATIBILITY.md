@@ -1,5 +1,68 @@
 # Valheim 호환성 기록
 
+## Area Save의 선택적 Clan 소유권 허용 (2026-10-11, 1.3.3)
+
+기준 `main` / `8db5097`(1.3.2). 기존 세 enum 이름·값·순서와 기본값
+`AllCreators`를 유지하고 `OwnedOnly`, `OwnedAndCreatorless`에 같은 Primary Clan의
+Leader/Officer/Member를 추가 허용한다. Guest 연결은 허용 근거로 쓰지 않으며 다른
+클랜의 Guest여도 원래 Primary 소속은 유효하다. Area Dismantle, 제작자 ZDO,
+청사진 저장 형식, Clan 프로젝트는 수정하지 않았다.
+
+- 선택적 BepInEx 의존성과 캐시한 공개 `ClanApi.ResolveWardAuthorization` 메서드를
+  사용한다. 이 API의 정책은 Primary 정식 역할만 허용하므로 Area Save에 필요한
+  판정과 같다. 클라이언트의 Guest 우선 roster나 온라인 명단을 사용하지 않는다.
+- 서버가 요청자 peer의 플랫폼/캐릭터 신원을 확인하고 대표 ZDO의 creator와
+  `creatorIndex → World.m_playerHistory`로 제작자를 조회한다. 오프라인 제작자도
+  Clan 서버 레지스트리로 판정한다. API/정보/이력 누락은 클랜 추가 허용만 중단한다.
+- 미리보기 캐시는 2초, 요청 제한 시간은 5초다. 선택과 저장은 매번 새 조회하며,
+  저장에서 제외된 부품은 스냅포인트 수집·소비에서도 제외한다. 세션·플레이어·설정
+  변경과 취소, 오래된/중복/비서버 응답을 처리한다. 한 판정의 추가 조회 제작자가
+  512명을 넘으면 영역 축소 안내를 표시하고 부분 승인 결과를 저장하지 않는다.
+- 현재 원본 Valheim **1.0.17** 메타데이터의 공개 접근을 확인했다. 비공개
+  `ZRoutedRpc.GetServerPeerID`를 새 경로에서 직접 호출하지 않고 공개 RPC
+  오버로드와 `ZNet.GetServerPeer`를 사용한다. 기존 컴파일용 publicizer/최종 병합
+  구성은 유지했으며 원본 DLL은 수정하지 않았다.
+
+### 검증
+
+- 변경 전 기준 Debug 빌드 및 회귀 검사 통과. 최종 Debug 빌드·ILRepack 병합
+  경고/오류 0개, `tests/Run-RegressionChecks.ps1`의 7개 검사 그룹 통과.
+- 실제 원본 Unity/Mono 격리 로컬 호스트에서 Clan 1.1.4 / API 6과 함께 34개 검사
+  통과. 오프라인 역할, Primary+Guest, 플랫폼/캐릭터 불일치, 제작자 이력 누락,
+  저장 버튼을 통한 실제 파일 저장, 탈퇴 후 재검사, 원래 제작자 보존을 포함한다.
+- 같은 DLL을 사용하는 격리 데디케이트 서버의 Clan 판정 17개 검사 통과.
+  Clan 없는 별도 서버와 로컬 호스트에서도 로딩·기존 creator 정책·추가 허용 없음과
+  로컬 호스트의 실제 저장 경로를 확인했다.
+- 응답 위조·지연·중복·타임아웃·설정 변경·취소·세션 초기화는 실제 게임 런타임에서
+  peer/클라이언트 역할을 fixture로 주입하여 검사했다. **두 프로세스 간 실제 접속,
+  Steam/PlayFab 멀티플레이, 일반 사용자의 입력/UI 조작, 512명 상한의 실행 검증은
+  수행하지 않았다.** 서버 신원 확인 경계는 코드/원본 메타데이터로 검토했다.
+- fixture의 초기 프리팹 지정 오류를 수정한 뒤 저장 검사를 재실행해 통과했다.
+  최종 Clan 호스트/서버 및 Clan 없는 호스트 BepInEx 로그에 오류가 없었다.
+- 최종 Debug DLL과 로컬 plugins DLL SHA-256 일치:
+  `5DDB3CB5A43D86B05A40D2FEF103AA9E8DC2C34D5760F426CA9AC9E18A255F6F`.
+  위 구현 단계 검증은 버전 1.3.2 작업 DLL로 수행했으며 당시에는
+  Release/ZIP/커밋/push를 수행하지 않았다. 이 변경은 1.3.3에 포함된다.
+
+재현 명령(각 실행이 끝난 뒤 해당 fixture의 `probe.txt`와 로그를 확인):
+
+```powershell
+dotnet build Homestead.sln -c Debug -p:DeployToGame=true
+./tests/Run-RegressionChecks.ps1
+dotnet build tests/RuntimeProbe/RuntimeProbe.csproj -c Debug
+./tests/Start-RuntimeProbe.ps1 -Role server -ClanOnly -ClanAssemblyPath C:/Users/blizz/RiderProjects/Clan/bin/Debug/Clan.dll
+./tests/Start-RuntimeProbe.ps1 -Role client -ClanOnly -ClanAssemblyPath C:/Users/blizz/RiderProjects/Clan/bin/Debug/Clan.dll
+./tests/Start-RuntimeProbe.ps1 -Role server -ClanOnly
+./tests/Start-RuntimeProbe.ps1 -Role client -ClanOnly
+```
+
+Clan 기준 DLL SHA-256:
+`5D1C256BB590DC0FFA1DF28E7DE9DC978F8D22F803047D4A2D63A420A783A432`.
+클라이언트 원본 assembly_valheim SHA-256:
+`25A0A107DCE4D834C44C2B72D0EAFD5CB7793933BDA81816ACCFA1EA9543DACE`.
+서버 원본 assembly_valheim SHA-256:
+`0DFC7E81436F822121148EFED859BA1E661D58B9484BD45E3B6F33B6DD86BFAD`.
+
 ## Homestead 1.3.2 릴리스 검증 (2026-10-09)
 
 `main`의 기준 `e4c2349`(1.3.1) 이후 ZenRedecorate 이동 미리보기 초기화 수정과

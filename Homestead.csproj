@@ -201,6 +201,7 @@
         <Compile Include="ZoneBlueprintPlanChest.cs"/>
         <Compile Include="ZoneBlueprintPreviewBuilder.cs"/>
         <Compile Include="ZoneBlueprintSaveTool.cs"/>
+        <Compile Include="ZoneBlueprintSaveAccess.cs"/>
         <Compile Include="ZoneBlueprintSnapPointTool.cs"/>
         <Compile Include="ZoneBlueprintChestVfx.cs"/>
         <Compile Include="ZoneChestPlacement.cs"/>

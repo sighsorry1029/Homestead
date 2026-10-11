@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.3
+
+- Added optional Clan 1.1.4 / API 6 support to Area Save when installed on both client and server, without adding creator modes. `OwnedOnly` and `OwnedAndCreatorless` now include current primary-clan Leader/Officer/Member creators, including offline players; Guest links do not authorize saving. The default remains `AllCreators`.
+- Recheck creator access when saving a selected area and use the final allowed pieces for snap-point capture/consumption. Clan lookup failures preserve the existing own/creatorless policy. Area Dismantle and stored piece creators are unchanged.
+- Skip build key-hint text updates while hints are hidden, retaining hint initialization and mouse-wheel icons.
+- Consolidated status HUD expiration, inactive circlet cleanup, and price-draft chest restoration checks without changing display timing, cleanup order, or loaded/unloaded chest matching rules.
+
 ## 1.3.2
 
 - Fixed ZenRedecorate Ctrl-click movement failing when started from repair mode and leaving the player stuck in its moving/encumbered state. Homestead now checks the source prefab before the movement preview exists; ZenRedecorate's normal carrying penalty and movement restrictions remain unchanged.
