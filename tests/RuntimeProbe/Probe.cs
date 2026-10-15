@@ -1114,16 +1114,21 @@ public sealed partial class Probe : BaseUnityPlugin
         Inventory inventory = new Inventory("probe", null, 4, 4);
         ZPackage empty = new ZPackage(); inventory.Save(empty);
         Check(!(bool)Call("ZoneAreaDismantleTool", "HasStoredContainerItems", empty.GetArray()), "empty native inventory allowed");
-        foreach (byte[] bad in new[] { new byte[0], new byte[] { 109, 0, 0, 0, 0 }, new byte[] { 110, 0, 0, 0, 0, 0 } })
+        foreach (byte version in new byte[] { 109, 110 })
+            Check(!(bool)Call("ZoneAreaDismantleTool", "HasStoredContainerItems", new byte[] { version, 0, 0, 0, 0, 0 }), "known empty inventory allowed: " + version);
+        foreach (byte[] bad in new[] { null, new byte[0], new byte[] { 110, 0, 0, 0, 0 }, new byte[] { 111, 0, 0, 0, 0, 0 }, new byte[] { 110, 0, 0, 0, 0, 0, 0 } })
             Check((bool)Call("ZoneAreaDismantleTool", "HasStoredContainerItems", bad), "unknown/truncated payload protected");
         inventory.AddItem(ObjectDB.instance.GetItemPrefab("Wood").GetComponent<ItemDrop>().m_itemData.Clone());
         ZPackage full = new ZPackage(); inventory.Save(full);
+        Check((bool)Call("ZoneAreaDismantleTool", "HasStoredContainerItems", full.GetArray()), "nonempty native inventory protected");
         ZDO zdo = ZDOMan.instance.CreateNewZDO(new Vector3(0, 5000, 0), chest.name.GetStableHashCode());
         try
         {
             zdo.Set(ZDOVars.s_items, "unsupported payload");
             Check((bool)Call("ZoneAreaDismantleTool", "HasProtectedContentsOrAttachments", zdo, chest), "unsupported string inventory protected");
             zdo.Set(ZDOVars.s_items, "");
+            zdo.Set(ZDOVars.s_items, empty.GetArray());
+            Check(!(bool)Call("ZoneAreaDismantleTool", "HasProtectedContentsOrAttachments", zdo, chest), "unloaded empty native container allowed");
             zdo.Set(ZDOVars.s_items, full.GetArray());
             Check(ZNetScene.instance.FindInstance(zdo) == null, "container fixture unloaded");
             Check((bool)Call("ZoneAreaDismantleTool", "HasProtectedContentsOrAttachments", zdo, chest), "unloaded container protected");

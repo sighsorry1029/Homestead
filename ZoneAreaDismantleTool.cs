@@ -493,11 +493,11 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
 
     internal static bool HasStoredContainerItems(byte[] payload)
     {
-        // 1.0.7 Inventory.Save: Int32 version 109, UInt16 item count.
+        // Inventory.Save v109/v110: Int32 version, UInt16 item count.
         // Unknown/truncated payloads must never authorize destructive operations.
         if (payload == null || payload.Length < 6) return true;
         int version = BitConverter.ToInt32(payload, 0);
-        if (version != 109) return true;
+        if (version != 109 && version != 110) return true;
         return BitConverter.ToUInt16(payload, 4) != 0 || payload.Length != 6;
     }
 

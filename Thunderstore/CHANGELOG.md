@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4
+
+- Fixed Area Dismantle treating empty containers saved by Valheim 1.0.20 as containing items. Empty inventory payloads in formats 109 and 110 are now recognized.
+- Kept protection for containers with contents, attached items, malformed data, or unsupported save versions, without changing dismantle permissions.
+- Extended the isolated dedicated-server runtime checks to cover the new save format and unloaded container data.
+
 ## 1.3.3
 
 - Added optional Clan 1.1.4 / API 6 support to Area Save when installed on both client and server, without adding creator modes. `OwnedOnly` and `OwnedAndCreatorless` now include current primary-clan Leader/Officer/Member creators, including offline players; Guest links do not authorize saving. The default remains `AllCreators`.
