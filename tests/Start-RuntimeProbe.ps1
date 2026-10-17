@@ -15,6 +15,8 @@ param(
     [string]$ZenRedecorateAssemblyPath,
     [switch]$ClanOnly,
     [string]$ClanAssemblyPath,
+    [switch]$PathOfValheimanOnly,
+    [string]$PathOfValheimanAssemblyPath,
     [string]$GizmoAssemblyPath,
     [string]$PlantEasilyAssemblyPath,
     [string]$AssemblyPath,
@@ -24,6 +26,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $root = Join-Path $project "artifacts/runtime-$Role"
+if ($PathOfValheimanOnly) {
+    if ($ClanOnly -or $ZenRedecorateOnly -or $InfinityHammerOnly -or $RotationOnly -or $PlacementOnly -or $GridOnly -or $CameraTooltipOnly -or $UiOnly -or $IconOnly) { throw 'Path of Valheiman probe must run separately.' }
+    if (-not (Test-Path -LiteralPath $PathOfValheimanAssemblyPath -PathType Leaf)) { throw 'Supply the original Path of Valheiman DLL.' }
+    $root = Join-Path $project "artifacts/runtime-pov-$Role"
+}
 $loadInfinityHammer = $InfinityHammerOnly -or ($ZenRedecorateOnly -and $InfinityHammerAssemblyPath)
 if ($loadInfinityHammer) {
     if ($Role -ne 'client' -or $RotationOnly -or $PlacementOnly -or $GridOnly -or $CameraTooltipOnly -or $UiOnly -or $IconOnly -or ($InfinityHammerOnly -and $ZenRedecorateOnly)) { throw 'Infinity Hammer probe requires a separate graphical client.' }
@@ -103,6 +110,7 @@ if ($ZenRedecorateOnly) {
 }
 Copy-Item -LiteralPath "$project/samples/sample_001.blueprint" -Destination "$root/probe.blueprint" -Force
 Set-Content -LiteralPath "$root/homestead-probe.enabled" -Value 'Isolated test only'
+if ($PathOfValheimanOnly) { Set-Content -LiteralPath "$root/pov-path.txt" -Value $PathOfValheimanAssemblyPath }
 $arguments = @('-batchmode', '-savedir', "`"$root/saves`"", '-logFile', "`"$root/unity.log`"")
 if ($UiOnly) { $arguments += '-homestead-ui-probe' }
 if ($IconOnly) { $arguments += '-homestead-icon-probe' }
@@ -113,6 +121,7 @@ if ($RotationOnly) { $arguments += '-homestead-rotation-probe' }
 if ($InfinityHammerOnly) { $arguments += '-homestead-infinityhammer-probe' }
 if ($ZenRedecorateOnly) { $arguments += '-homestead-zen-probe' }
 if ($ClanOnly) { $arguments += '-homestead-clan-probe' }
+if ($PathOfValheimanOnly) { $arguments += '-homestead-pov-probe' }
 if ($Role -eq 'server') {
     $arguments += @('-nographics', '-name', 'HomesteadCompatibility', '-port', '2499', '-world', 'HomesteadCompatibility', '-password', 'codex-test-only', '-public', '0')
 } else {

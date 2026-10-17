@@ -34,6 +34,7 @@ internal static class HomesteadFeatureBootstrap
         harmony.PatchAll(Assembly.GetExecutingAssembly());
         PlantEasilyCompat.Initialize(logger, harmony);
         InfinityHammerCompat.Initialize(logger, harmony);
+        PathOfValheimanCompat.Initialize(logger, harmony);
         ZoneBuildCameraFirstPersonCompat.Initialize(logger, harmony);
         VeiledRecipesCompat.Initialize(logger);
         AzuCraftyBoxesCompat.Initialize(logger, harmony);
@@ -55,6 +56,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneSessionResetRegistry.Register("Blueprint plan RPC", ZoneBlueprintPlanRpc.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Blueprint store", ZoneBlueprintStore.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Build camera", ZoneBuildCamera.ResetForWorldSession);
+        ZoneSessionResetRegistry.Register("Path of Valheiman passive queries", PathOfValheimanCompat.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Placement adjustments", ZonePlacementAdjust.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("ContentsWithin preview", ZoneContentsWithinBlueprintChestPreview.ResetForWorldSession);
         ZoneSessionResetRegistry.Register("Dvergr circlet", ZoneDvergrCirclet.ResetForWorldSession);
@@ -86,6 +88,7 @@ internal static class HomesteadFeatureBootstrap
         ZoneBuildCameraFirstPersonCompat.Shutdown();
         PlantEasilyCompat.Shutdown();
         InfinityHammerCompat.Shutdown();
+        PathOfValheimanCompat.Shutdown();
         ZoneBlueprintChestMapPins.Shutdown();
         ZoneBlueprintChestZdoRegistry.Shutdown();
         ZoneBlueprintStoreDraftRepository.Flush(force: true);

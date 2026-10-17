@@ -108,6 +108,12 @@ internal static class ZoneBuildCamera
             return false;
         }
 
+        if (!PathOfValheimanCompat.CameraUnlocked(player))
+        {
+            player.Message(MessageHud.MessageType.Center, HomesteadLocalization.Text("hs_build_camera_need_pov"));
+            return false;
+        }
+
         if (BuildCameraConfig.RequireCraftingStation && !BuildStationInRange(player))
         {
             return false;
@@ -160,7 +166,8 @@ internal static class ZoneBuildCamera
 
     internal static bool ShouldDeactivateBuildMode(Player player)
     {
-        return !ToolIsEquipped(player) || (ShouldRestrictCameraEntry() && !MeetsComfortGate());
+        return !PathOfValheimanCompat.CameraUnlocked(player) || !ToolIsEquipped(player) ||
+               (ShouldRestrictCameraEntry() && !MeetsComfortGate());
     }
 
     internal static bool BeginBuildActionNoiseSuppression(Player player)
@@ -210,6 +217,23 @@ internal static class ZoneBuildCamera
     {
         NearbyCraftingStation? station = GetNearestBuildStation(GetBuildInteractionOrigin(player));
         return station.HasValue && station.Value.Distance <= station.Value.RangeBuild;
+    }
+
+    // PoV refreshes the ordinary building range on passive changes. Let it see
+    // the ordinary value, then retain its result for camera exit without using
+    // the camera's extended range as PoV's first baseline.
+    internal static bool BeginOrdinaryDistanceRefresh(Player player)
+    {
+        if (!player || player != _activePlayer || !_hasOriginalMaxPlaceDistance) return false;
+        player.m_maxPlaceDistance = _originalMaxPlaceDistance;
+        return true;
+    }
+
+    internal static void EndOrdinaryDistanceRefresh(Player player, bool success)
+    {
+        if (!player || player != _activePlayer || !_hasOriginalMaxPlaceDistance) return;
+        if (success) _originalMaxPlaceDistance = player.m_maxPlaceDistance;
+        ApplyMaxPlaceDistanceOverride(player);
     }
 
     internal static Vector3 GetBuildInteractionOrigin(Player player)
@@ -272,6 +296,11 @@ internal static class ZoneBuildCamera
         if (!IsEnabled() || !player)
         {
             return "";
+        }
+
+        if (!PathOfValheimanCompat.CameraUnlocked(player))
+        {
+            return HomesteadLocalization.Text("hs_build_camera_need_pov");
         }
 
         if (InBuildMode())
@@ -375,6 +404,11 @@ internal static class ZoneBuildCamera
 
         if (InBuildMode())
         {
+            if (!PathOfValheimanCompat.CameraUnlocked(player))
+            {
+                DisableBuildMode();
+                return;
+            }
             ApplyMaxPlaceDistanceOverride(player);
             return;
         }

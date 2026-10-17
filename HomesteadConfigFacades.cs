@@ -47,7 +47,7 @@ internal static class AreaRepairConfig
             "Area Repair Base Radius",
             0f,
             new ConfigDescription(
-                "Base radius in meters for Homestead area repair. This part does not require cozy comfort. Set both area repair radius values to 0 to disable area repair.",
+                "Base radius in meters for Homestead area repair. This part does not require cozy comfort. Set both area repair radius values to 0 to disable area repair. With Path of Valheiman, its repair-radius effect unlocks this feature; these Homestead settings determine the radius, not further passive radius bonuses.",
                 new AcceptableValueRange<float>(0f, 10f),
                 new ConfigurationManagerAttributes { Order = 990 }));
         _comfortRadiusScale = plugin.config(
@@ -678,7 +678,7 @@ internal static class BuildCameraConfig
             "Enabled",
             HomesteadPlugin.Toggle.On,
             new ConfigDescription(
-                "If on, Homestead includes BuildCameraCHE-style free build camera mode. Disable this if the standalone BuildCameraCHE mod is installed.",
+                "If on, Homestead includes BuildCameraCHE-style free build camera mode. Disable this if the standalone BuildCameraCHE mod is installed. With Path of Valheiman, Hugin's Flight unlocks this camera; Homestead controls its hotkey, range and conditions. Off also keeps the PoV camera inactive while compatibility is active.",
                 null,
                 new ConfigurationManagerAttributes { Order = 1000 }));
         _toolBlacklist = plugin.config(

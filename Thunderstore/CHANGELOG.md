@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.5
+
+- Added optional Path of Valheiman compatibility: Hugin's Flight unlocks Homestead's Build Camera, and an effective repair-radius passive unlocks Homestead's Area Repair. Homestead controls the hotkeys, ranges, conditions, and repair costs; additional PoV repair-radius bonuses do not stack.
+- Suppressed PoV's duplicate camera and mass-repair execution while compatibility is active, including when the Homestead feature is disabled. Basic single-piece repair remains available. Refunding the unlocking passives locks the features again and exits an active camera while preserving PoV's ordinary building-range bonuses.
+- Fixed Area Dismantle refunds for PoV-discounted and free buildings by reading the original piece's saved payment, including unloaded pieces and worlds where PoV has since been removed.
+- Excluded Homestead construction, price, purchase, and payout chests from PoV's nearby crafting materials. Blueprint confirmation retains its existing full-cost transaction without applying normal-build discounts or experience hooks.
+- Added English/Korean unlock guidance and isolated client/dedicated-server regression checks against the supplied PoV 5.0.4 DLL. Integration checks API contracts rather than requiring an exact PoV version; full-mod multiplayer validation remains separate.
+
 ## 1.3.4
 
 - Fixed Area Dismantle treating empty containers saved by Valheim 1.0.20 as containing items. Empty inventory payloads in formats 109 and 110 are now recognized.

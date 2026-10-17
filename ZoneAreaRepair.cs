@@ -37,6 +37,9 @@ internal static class ZoneAreaRepair
             return "";
         }
 
+        if (!PathOfValheimanCompat.AreaRepairUnlocked(player))
+            return HomesteadLocalization.Text("hs_area_repair_need_pov");
+
         int comfort = GetComfortBonusLevel(player);
         float radius = GetRadius(comfort);
         if (radius <= 0f)
@@ -57,6 +60,7 @@ internal static class ZoneAreaRepair
     {
         if (!AreaRepairConfig.Enabled ||
             HasExternalAreaRepair() ||
+            !PathOfValheimanCompat.AreaRepairUnlocked(player) ||
             toolItem == null ||
             repairPiece == null ||
             !player.InPlaceMode() ||

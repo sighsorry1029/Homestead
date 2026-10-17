@@ -45,6 +45,7 @@ public sealed partial class Probe : BaseUnityPlugin
         bool infinityHammerOnly = Environment.GetCommandLineArgs().Contains("-homestead-infinityhammer-probe");
         bool zenOnly = Environment.GetCommandLineArgs().Contains("-homestead-zen-probe");
         bool clanOnly = Environment.GetCommandLineArgs().Contains("-homestead-clan-probe");
+        bool povOnly = Environment.GetCommandLineArgs().Contains("-homestead-pov-probe");
         if (!headless)
         {
             yield return new WaitForSeconds(6f);
@@ -64,7 +65,7 @@ public sealed partial class Probe : BaseUnityPlugin
                 Game.SetProfile("homestead_probe", FileHelpers.FileSource.Local);
                 // Rotation probes place networked pieces. A prior interrupted run
                 // can leave those pieces in the saved world and obstruct later rays.
-                string worldName = rotationOnly || infinityHammerOnly || zenOnly || clanOnly
+                string worldName = rotationOnly || infinityHammerOnly || zenOnly || clanOnly || povOnly
                     ? "HomesteadProbe-" + Guid.NewGuid().ToString("N") : "HomesteadProbe";
                 World world = World.GetCreateWorld(worldName, FileHelpers.FileSource.Local);
                 ZNet.SetServer(true, false, false, "HomesteadProbe", "", world);
@@ -82,6 +83,14 @@ public sealed partial class Probe : BaseUnityPlugin
             if (valkyrie && Player.m_localPlayer.InIntro()) valkyrie.DropPlayer();
             while (Player.m_localPlayer.InCutscene() && Time.realtimeSinceStartup < deadline) yield return null;
             yield return new WaitForSeconds(1f);
+        }
+        if (povOnly)
+        {
+            try { CheckPathOfValheiman(); }
+            catch (Exception ex) { Fail(ex); yield break; }
+            File.AppendAllText(report, "COMPLETE Path of Valheiman\n");
+            Application.Quit();
+            yield break;
         }
         if (clanOnly)
         {

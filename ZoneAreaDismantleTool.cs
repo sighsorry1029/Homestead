@@ -360,7 +360,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
         Dictionary<string, MaterialRefund> refunds = [];
         foreach (DismantleTarget target in targets)
         {
-            CollectRefundMaterials(target.Prefab, refunds);
+            CollectRefundMaterials(target.Prefab, target.Zdo, refunds);
         }
 
         int destroyed = 0;
@@ -538,7 +538,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
         return true;
     }
 
-    private static void CollectRefundMaterials(GameObject prefab, Dictionary<string, MaterialRefund> refunds)
+    private static void CollectRefundMaterials(GameObject prefab, ZDO zdo, Dictionary<string, MaterialRefund> refunds)
     {
         Piece piece = prefab.GetComponent<Piece>();
         if (piece == null)
@@ -553,7 +553,7 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
                 continue;
             }
 
-            int amount = requirement.GetAmount(0);
+            int amount = PathOfValheimanCompat.GetRefundAmount(zdo, requirement);
             if (amount <= 0)
             {
                 continue;
