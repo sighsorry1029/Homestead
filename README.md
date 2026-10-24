@@ -67,7 +67,7 @@ Selecting repair shows its actual radius below the camera ranges, even with the 
 
 When **Path of Valheiman** is installed, its **Hugin's Flight** passive unlocks Homestead's build camera, and its effective **repair radius** unlocks Homestead's area repair. Homestead controls the hotkeys, ranges, comfort/station/tool conditions and repair costs. PoV's separate camera and mass-repair execution are suppressed; turning the Homestead feature off does not fall back to PoV's implementation. Basic single-piece repair remains available. Further PoV repair-radius bonuses do not increase Homestead's radius. Refunding the unlocking passives locks the feature again and exits an active camera; PoV's ordinary building-range bonuses remain in effect outside the camera. The HUD shows missing unlocks. This is a gameplay integration, not server-side verification of a modified client's passive tree.
 
-PoV compatibility also respects saved building discounts/free-build markers during Area Dismantle and excludes Homestead construction, price, purchase and payout chests from PoV's nearby crafting materials. Refunds use the original piece's saved payment, including unloaded pieces, not the dismantler's current nodes. Blueprint confirmation still uses its existing full-cost transaction and does not replay normal-build discount, free-build or experience hooks; old payment markers are not copied into newly built blueprints. The optional bridge targets the contracts checked in PoV 5.0.4 and does not require PoV when used alone.
+PoV compatibility also respects saved building discounts/free-build markers during Area Dismantle and excludes Homestead construction, price, purchase and payout chests from PoV's nearby crafting materials. Refunds use the original piece's saved payment, including unloaded pieces, not the dismantler's current nodes. Blueprint confirmation follows vanilla world cost settings but does not replay PoV's normal-build discount, free-build or experience hooks; old payment markers are not copied into newly built blueprints. The optional bridge targets the contracts checked in PoV 5.0.4 and does not require PoV when used alone.
 
 Any player can confirm a construction plan chest; there is no creator-only confirmation setting. Shop listing/purchase/payout authorization is unchanged. Finished pieces keep the original chest creator. The person confirming supplies the existing knowledge/station/no-cost checks and optional inventory/AzuCraftyBoxes material pull.
 
@@ -118,6 +118,12 @@ Area Dismantle is intentionally conservative:
 ## Blueprint Building
 
 Blueprint placement uses a temporary blueprint chest. The chest shows missing requirements, accepts only needed materials, and finalizes the build when everything is ready.
+
+Vanilla **Hammer mode / No Build Cost** is supported automatically. Blueprint pieces use their vanilla free-cost setting, including the separate No Craft Cost setting for applicable pieces. Recipe discovery, crafting station requirements (unless No Workbench is enabled), ward access and building limits still apply. Store purchases keep their listed prices.
+
+Free construction does not collect materials from your inventory or nearby containers. Materials already deposited for costs that are now waived are returned at the plan chest when construction finishes. Unused materials remain recorded until returned; a chest with a pending return is kept for retry. If world cost settings change during confirmation, the build is canceled and rolled back while its deposits remain available.
+
+Area Dismantle follows vanilla's current world settings: while a piece's free-cost setting is enabled, dismantling it returns no construction materials, including pieces built before the setting was enabled. Disabling that setting restores normal refunds, subject to any saved PoV payment history.
 
 ## Blueprint Store
 

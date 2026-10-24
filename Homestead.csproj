@@ -139,6 +139,7 @@
         <Compile Include="AzuCraftyBoxesCompat.cs"/>
         <Compile Include="AzuExtendedPlayerInventoryCompat.cs"/>
         <Compile Include="BlueprintTerrainContactSampler.cs"/>
+        <Compile Include="BlueprintBuildCostPolicy.cs"/>
         <Compile Include="HomesteadCommandResult.cs"/>
         <Compile Include="HomesteadConfigFacades.cs"/>
         <Compile Include="HomesteadFeatureBootstrap.cs"/>

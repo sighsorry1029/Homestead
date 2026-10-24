@@ -23,6 +23,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private const string ConfirmedKey = "hs_plan_confirmed";
     private const string MaterialPrefix = "hs_plan_material_";
     private const string RefundPayloadKey = "hs_plan_refund_payload";
+    private const string ConfirmedRefundKey = "hs_plan_confirmed_refund";
     private const int RefundPayloadVersion = 1;
     private const string ProgressSfxPrefab = "sfx_build_hammer_wood";
     private const string ConfirmSfxPrefab = "vfx_StaminaUpgrade";
@@ -38,6 +39,9 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private ZoneBlueprintFile? _blueprint;
     private ZoneBlueprintCommands.BlueprintLoadPlan? _plan;
     private List<ZoneBlueprintRequirement> _requirements = [];
+    private List<ZoneBlueprintRequirement> _payableRequirements = [];
+    private BlueprintBuildCostPolicy? _payablePolicy;
+    private BlueprintBuildCostPolicy? _confirmationCostPolicy;
     private List<ZoneBlueprintCraftingStationRequirement> _stationRequirements = [];
     private string _loadedBlueprintName = "";
     private readonly ZoneBlueprintGhostOwner _previewGhost = new();
@@ -141,6 +145,8 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     public string GetPlanHoverText()
     {
         string name = GetBlueprintName();
+        if (_nview?.GetZDO()?.GetBool(ConfirmedKey, false) == true)
+            return name + "\n" + HomesteadLocalization.Text("hs_blueprint_refund_pending");
         if (!ReloadPlan())
         {
             return HomesteadLocalization.MaybeLocalize(HomesteadLocalization.Text("hs_blueprint_chest_data_missing"));
@@ -150,6 +156,8 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         int deposited = GetDepositedTotal();
         bool ready = required == 0 || deposited >= required;
         string text = HomesteadLocalization.Format("hs_blueprint_chest_header", name, deposited, required);
+        if (required == 0 && _requirements.Count > 0)
+            text += HomesteadLocalization.Text("hs_blueprint_materials_free") + "\n";
         text += HomesteadLocalization.Format("hs_hover_action", "$KEY_Use", HomesteadLocalization.Text("hs_blueprint_open_materials")) + "\n";
         text += HomesteadLocalization.Format("hs_hover_action", FormatShortcut(BlueprintConfig.ChestConfirmHotkey), HomesteadLocalization.Text("hs_blueprint_confirm_build")) + "\n";
         if (!ready)
@@ -227,6 +235,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
                 Message(player, HomesteadLocalization.Format("hs_blueprint_not_available", name), MessageHud.MessageType.Center);
                 yield break;
             }
+            _confirmationCostPolicy = BlueprintBuildCostPolicy.Capture(player);
             AbsorbContainerMaterials();
             if (BlueprintConfig.AzuCraftyBoxesPullOnConfirm) TryPullAvailableMaterials(player, "confirm", message: true);
             yield return ConfirmAsync(player, name, _blueprint, anchor, rotation, GetDepositedMaterials());
@@ -235,6 +244,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         {
             if (_confirmationPermit != null) ZoneBlueprintConfirmation.End(_confirmationPermit, _confirmationCommitted);
             _confirmationPermit = null;
+            _confirmationCostPolicy = null;
             _confirmInProgress = false;
         }
     }
@@ -255,6 +265,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
                 anchorPosition,
                 anchorRotation,
                 deposited,
+                _confirmationCostPolicy ?? BlueprintBuildCostPolicy.Capture(player),
                 _confirmationPermit!.Creator,
                 string.IsNullOrEmpty(_confirmationPermit.CreatorName) && _confirmationPermit.Creator == player.GetPlayerID()
                     ? player.GetPlayerName() : _confirmationPermit.CreatorName,
@@ -284,7 +295,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         {
             if (_nview.IsOwner())
             {
-                _nview.Destroy();
+                CompleteCommittedConfirmation();
             }
 
             return;
@@ -440,6 +451,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         _blueprint = blueprint;
         _plan = plan;
         _requirements = requirements;
+        _payablePolicy = null;
         _stationRequirements = stationRequirements;
         _loadedBlueprintName = name;
         _lastReadySignature = "";
@@ -451,6 +463,8 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         _blueprint = null;
         _plan = null;
         _requirements = [];
+        _payableRequirements = [];
+        _payablePolicy = null;
         _stationRequirements = [];
         _loadedBlueprintName = "";
         _lastReadySignature = "";
@@ -560,7 +574,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         Inventory inventory = player.GetInventory();
         string readyBefore = CaptureReadySignature();
         int accepted = 0;
-        accepted = ZoneMaterialEscrow.AddAmountsSaturating(accepted, CreateMaterialSession().AcceptAllNeeded(
+        accepted = ZoneMaterialEscrow.AddAmountsSaturating(accepted, CreateMaterialSession(player).AcceptAllNeeded(
             inventory,
             item => item.m_shared.m_questItem || player.IsItemEquiped(item)));
 
@@ -580,7 +594,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     public int TryPullAvailableMaterials(Player player, string trigger, bool message)
     {
-        if (player == null || _nview == null || !_nview.IsValid() || !ReloadPlan())
+        if (player == null || !CanAcceptMaterials() || !ReloadPlan())
         {
             return 0;
         }
@@ -611,12 +625,12 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     public int TryPullFromAzuCraftyBoxes(Player player, string trigger, bool message, bool playProgressSfx = true)
     {
-        if (_nview == null || !_nview.IsValid() || !ReloadPlan())
+        if (!CanAcceptMaterials() || !ReloadPlan())
         {
             return 0;
         }
 
-        ZoneMaterialEscrow.Session session = CreateMaterialSession();
+        ZoneMaterialEscrow.Session session = CreateMaterialSession(player);
         List<ZoneBlueprintRequirement> missing = session.GetMissingRequirements();
         if (missing.Count == 0)
         {
@@ -649,7 +663,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
     private int AcceptAllFromPlayerInventory(Player player)
     {
         Inventory inventory = player.GetInventory();
-        return CreateMaterialSession().AcceptAllNeeded(
+        return CreateMaterialSession(player).AcceptAllNeeded(
             inventory,
             item => item.m_shared.m_questItem || player.IsItemEquiped(item));
     }
@@ -865,6 +879,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
 
         Dictionary<string, int> budget = GetDepositedMaterials();
+        BlueprintBuildCostPolicy policy = _confirmationCostPolicy ?? BlueprintBuildCostPolicy.Capture(Player.m_localPlayer);
         if (!TryGetAnchorTransform(out Vector3 anchor, out _))
         {
             signature = "";
@@ -883,7 +898,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
         foreach ((ZoneBlueprintCommands.BlueprintLoadEntry entry, int index) in orderedEntries)
         {
-            Dictionary<string, ZoneBlueprintRequirement> entryRequirements = ZoneBlueprintCommands.GetEntryRequirements(entry);
+            Dictionary<string, ZoneBlueprintRequirement> entryRequirements = ZoneBlueprintCommands.GetEntryRequirements(entry, policy);
             if (entryRequirements.Values.Any(requirement =>
                     !budget.TryGetValue(requirement.ItemName, out int available) ||
                     available < requirement.Amount))
@@ -915,12 +930,12 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     private int GetRequiredTotal()
     {
-        return _requirements.Sum(requirement => requirement.Amount);
+        return GetPayableRequirements().Sum(requirement => requirement.Amount);
     }
 
     private int GetDepositedTotal()
     {
-        return _requirements.Sum(requirement => Mathf.Min(requirement.Amount, GetDeposited(requirement.ItemName)));
+        return GetPayableRequirements().Sum(requirement => Mathf.Min(requirement.Amount, GetDeposited(requirement.ItemName)));
     }
 
     private Dictionary<string, int> GetDepositedMaterials()
@@ -941,10 +956,26 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             : 0;
     }
 
-    private ZoneMaterialEscrow.Session CreateMaterialSession()
+    private List<ZoneBlueprintRequirement> GetPayableRequirements(Player? player = null)
     {
-        return new ZoneMaterialEscrow.Session(_requirements, GetDeposited, AcceptMaterialAmount);
+        BlueprintBuildCostPolicy policy = _confirmationCostPolicy ?? BlueprintBuildCostPolicy.Capture(player ?? Player.m_localPlayer);
+        if (!_payablePolicy.HasValue || !_payablePolicy.Value.Equals(policy))
+        {
+            _payableRequirements = _plan != null ? ZoneBlueprintCommands.CollectRequirements(_plan, policy) : _requirements;
+            _payablePolicy = policy;
+        }
+        return _payableRequirements;
     }
+
+    private ZoneMaterialEscrow.Session CreateMaterialSession(Player? player = null)
+    {
+        // Keep the original recipe and escrow intact; only the amount currently
+        // payable changes with the world. Store payments never use this policy.
+        return new ZoneMaterialEscrow.Session(CanAcceptMaterials() ? GetPayableRequirements(player) : [], GetDeposited, AcceptMaterialAmount);
+    }
+
+    private bool CanAcceptMaterials() => _nview != null && _nview.IsValid() &&
+        !_nview.GetZDO().GetBool(ConfirmedKey, false);
 
     private void SetDeposited(string itemName, int amount)
     {
@@ -989,7 +1020,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         WriteRefundMaterials(materials);
     }
 
-    private List<RefundMaterial> ReadRefundMaterials()
+    private List<RefundMaterial> ReadRefundMaterials(string key = RefundPayloadKey)
     {
         ZDO? zdo = _nview?.GetZDO();
         if (zdo == null)
@@ -997,7 +1028,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return [];
         }
 
-        string payload = zdo.GetString(RefundPayloadKey, "");
+        string payload = zdo.GetString(key, "");
         if (string.IsNullOrWhiteSpace(payload))
         {
             return [];
@@ -1009,6 +1040,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             int version = package.ReadInt();
             if (version != RefundPayloadVersion)
             {
+                if (key == ConfirmedRefundKey) throw new InvalidOperationException("Unsupported blueprint refund settlement version.");
                 return [];
             }
 
@@ -1026,13 +1058,13 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
             return materials;
         }
-        catch (Exception)
+        catch (Exception) when (key != ConfirmedRefundKey)
         {
             return [];
         }
     }
 
-    private void WriteRefundMaterials(IEnumerable<RefundMaterial> materials)
+    private void WriteRefundMaterials(IEnumerable<RefundMaterial> materials, string key = RefundPayloadKey)
     {
         ZDO? zdo = _nview?.GetZDO();
         if (zdo == null)
@@ -1047,7 +1079,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
         if (activeMaterials.Count == 0)
         {
-            zdo.Set(RefundPayloadKey, "");
+            zdo.Set(key, "");
             return;
         }
 
@@ -1061,7 +1093,7 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             package.Write(material.Amount);
         }
 
-        zdo.Set(RefundPayloadKey, package.GetBase64());
+        zdo.Set(key, package.GetBase64());
     }
 
     private void ClearRefundMaterials()
@@ -1110,11 +1142,30 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         TryRefundDepositedMaterials("WearNTear.m_onDestroyed");
     }
 
-    internal void HandleDestroyPrefix(string source)
+    internal bool HandleDestroyPrefix(string source)
     {
         _confirmationCanceled = true;
+        bool ownedCommitted = _nview != null && _nview.IsValid() && _nview.IsOwner() &&
+                              _nview.GetZDO()?.GetBool(ConfirmedKey, false) == true;
+        if (ownedCommitted)
+        {
+            // A committed plan can remain while a missing prefab or failed drop
+            // prevents settlement. Do not destroy its only persisted refund
+            // record. Non-owner unloads and ordinary plans retain their behavior.
+            try
+            {
+                if (!TryReturnCommittedMaterials()) return false;
+            }
+            catch (Exception ex)
+            {
+                HomesteadPlugin.HomesteadLogger.LogWarning(
+                    $"Blueprint destruction deferred until its committed materials can be returned ({source}): {ex.Message}");
+                return false;
+            }
+        }
         ReleaseAzuCraftyBoxesContainer(source);
-        TryRefundDepositedMaterials(source);
+        if (!ownedCommitted) TryRefundDepositedMaterials(source);
+        return true;
     }
 
     private bool CanContinueConfirmation(string name, Vector3 anchorPosition, Quaternion anchorRotation)
@@ -1151,6 +1202,16 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
             return false;
         }
 
+        // Prepare an independent settlement before committing. Until confirmed,
+        // cancellation still refunds the untouched original escrow in full.
+        Dictionary<string, int> paid = GetPayableRequirements().ToDictionary(item => item.ItemName, item => item.Amount);
+        List<RefundMaterial> unused = ReadRefundMaterials();
+        foreach (RefundMaterial material in unused)
+        {
+            paid.TryGetValue(material.ItemName, out int amount);
+            material.Amount = Math.Max(0, material.Amount - amount);
+        }
+        WriteRefundMaterials(unused, ConfirmedRefundKey);
         zdo.Set(ConfirmedKey, true);
         _confirmationCommitted = zdo.GetBool(ConfirmedKey, false);
         return _confirmationCommitted;
@@ -1158,14 +1219,20 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
 
     private void CompleteCommittedConfirmation()
     {
+        if (_nview == null || !_nview.IsValid() || !_nview.IsOwner() ||
+            !_nview.GetZDO().GetBool(ConfirmedKey, false)) return;
         try
         {
+            // Keep the committed chest until unused deposits and physical
+            // contents have actually been returned. Tick resumes after reload.
+            if (!TryReturnCommittedMaterials()) return;
             ClearDepositedMaterials();
         }
         catch (Exception ex)
         {
             HomesteadPlugin.HomesteadLogger.LogWarning(
                 $"Blueprint confirmation committed, but escrow cleanup failed: {ex.Message}");
+            return;
         }
 
         try
@@ -1205,13 +1272,19 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         }
 
         ZDO zdo = _nview.GetZDO();
-        if (zdo == null || zdo.GetBool(ConfirmedKey, false))
+        if (zdo == null)
         {
             return;
         }
 
         if (!_nview.IsValid() || !_nview.IsOwner())
         {
+            return;
+        }
+
+        if (zdo.GetBool(ConfirmedKey, false))
+        {
+            TryReturnCommittedMaterials();
             return;
         }
 
@@ -1224,6 +1297,53 @@ internal sealed class ZoneBlueprintPlanAnchor : MonoBehaviour
         {
             HomesteadPlugin.HomesteadLogger.LogWarning($"Blueprint refund failed during {source}: {ex}");
         }
+    }
+
+    private bool TryReturnCommittedMaterials()
+    {
+        if (_nview == null || !_nview.IsValid() || !_nview.IsOwner() ||
+            !_nview.GetZDO().GetBool(ConfirmedKey, false)) return false;
+
+        if (_container != null)
+        {
+            // Load skips open containers. Wait for the user to close the chest
+            // before settling, then use the latest replicated physical contents.
+            if (_container.IsInUse()) return false;
+            LoadContainer(_container);
+        }
+
+        List<RefundMaterial> remaining = ReadRefundMaterials(ConfirmedRefundKey);
+        foreach (RefundMaterial material in remaining)
+        {
+            if (material.Amount <= 0) continue;
+            GameObject? prefab = FindPrefab(material.PrefabName);
+            ItemDrop? prototype = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
+            if (prototype == null) return false;
+            while (material.Amount > 0)
+            {
+                int amount = Math.Min(material.Amount, Math.Max(1, prototype.m_itemData.m_shared.m_maxStackSize));
+                ItemDrop.ItemData item = prototype.m_itemData.Clone();
+                item.m_dropPrefab = prefab;
+                item.m_stack = amount;
+                if (!ItemDrop.DropItem(item, 0, transform.position + Vector3.up * 0.75f, Random.rotation)) return false;
+                material.Amount -= amount;
+                WriteRefundMaterials(remaining, ConfirmedRefundKey);
+            }
+        }
+
+        // Items inserted through another container UI during confirmation are
+        // also retained. Preserve their exact item data instead of rebuilding it.
+        Inventory? inventory = _container?.m_inventory;
+        if (inventory != null)
+        {
+            foreach (ItemDrop.ItemData item in inventory.GetAllItems().ToList())
+            {
+                if (!ItemDrop.DropItem(item.Clone(), 0, transform.position + Vector3.up * 0.75f, Random.rotation)) return false;
+                inventory.RemoveItem(item);
+                _container!.Save();
+            }
+        }
+        return true;
     }
 
     private void RefundDepositedMaterials()

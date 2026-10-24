@@ -16,6 +16,7 @@ param(
     [switch]$ClanOnly,
     [string]$ClanAssemblyPath,
     [switch]$PathOfValheimanOnly,
+    [switch]$HammerModeOnly,
     [string]$PathOfValheimanAssemblyPath,
     [string]$GizmoAssemblyPath,
     [string]$PlantEasilyAssemblyPath,
@@ -26,6 +27,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $root = Join-Path $project "artifacts/runtime-$Role"
+if ($HammerModeOnly) {
+    if ($PathOfValheimanOnly -or $ClanOnly -or $ZenRedecorateOnly -or $InfinityHammerOnly -or $RotationOnly -or $PlacementOnly -or $GridOnly -or $CameraTooltipOnly -or $UiOnly -or $IconOnly) { throw 'Hammer mode probe must run separately.' }
+    $root = Join-Path $project "artifacts/runtime-hammer-$Role"
+}
 if ($PathOfValheimanOnly) {
     if ($ClanOnly -or $ZenRedecorateOnly -or $InfinityHammerOnly -or $RotationOnly -or $PlacementOnly -or $GridOnly -or $CameraTooltipOnly -or $UiOnly -or $IconOnly) { throw 'Path of Valheiman probe must run separately.' }
     if (-not (Test-Path -LiteralPath $PathOfValheimanAssemblyPath -PathType Leaf)) { throw 'Supply the original Path of Valheiman DLL.' }
@@ -122,6 +127,7 @@ if ($InfinityHammerOnly) { $arguments += '-homestead-infinityhammer-probe' }
 if ($ZenRedecorateOnly) { $arguments += '-homestead-zen-probe' }
 if ($ClanOnly) { $arguments += '-homestead-clan-probe' }
 if ($PathOfValheimanOnly) { $arguments += '-homestead-pov-probe' }
+if ($HammerModeOnly) { $arguments += '-homestead-hammer-probe' }
 if ($Role -eq 'server') {
     $arguments += @('-nographics', '-name', 'HomesteadCompatibility', '-port', '2499', '-world', 'HomesteadCompatibility', '-password', 'codex-test-only', '-public', '0')
 } else {

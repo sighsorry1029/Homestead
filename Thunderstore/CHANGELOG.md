@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.6
+
+- Added automatic vanilla Hammer mode / No Build Cost support for blueprints, including the separate No Craft Cost setting for applicable pieces. Recipe discovery, crafting station requirements, ward access, building limits and Blueprint Store prices are preserved.
+- Updated material requirements and previews to follow world cost settings. Free construction no longer collects unnecessary materials from player inventories or nearby containers.
+- Preserved previously deposited materials when construction becomes free. Unused deposits are returned on completion, with persistent retry records, duplicate-return protection and protection against further deposits or destruction while a return is pending.
+- Updated Area Dismantle to follow vanilla's current world cost settings, suppressing material returns while the corresponding free-cost setting is enabled. Saved Path of Valheiman payment history still applies when refunds are enabled.
+- Cancel and roll back confirmation if world cost settings change during construction. Added English/Korean status messages and original-game isolated client/server regression coverage for costs, access checks, deposits, refunds and store payments.
+
 ## 1.3.5
 
 - Added optional Path of Valheiman compatibility: Hugin's Flight unlocks Homestead's Build Camera, and an effective repair-radius passive unlocks Homestead's Area Repair. Homestead controls the hotkeys, ranges, conditions, and repair costs; additional PoV repair-radius bonuses do not stack.

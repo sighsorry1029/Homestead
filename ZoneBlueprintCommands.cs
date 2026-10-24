@@ -138,6 +138,7 @@ internal static class ZoneBlueprintCommands
         Vector3 anchor,
         Quaternion anchorRotation,
         Dictionary<string, int> depositedMaterials,
+        BlueprintBuildCostPolicy costPolicy,
         long creatorId,
         string creatorName,
         int creatorPlatformIndex,
@@ -145,6 +146,8 @@ internal static class ZoneBlueprintCommands
         Func<bool> tryCommit,
         Action<HomesteadCommandResult> onComplete)
     {
+        Func<bool> reservationCanContinue = canContinue;
+        canContinue = () => costPolicy.MatchesCurrent(player) && reservationCanContinue();
         if (!canContinue())
         {
             onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")));
@@ -190,8 +193,8 @@ internal static class ZoneBlueprintCommands
             yield break;
         }
 
-        bool noCost = player.NoCostCheat();
-        if (!noCost)
+        bool debugBypass = costPolicy.DebugNoCost;
+        if (!debugBypass)
         {
             string accessReason = "";
             yield return ValidateBuildAccessWithoutInventoryAsync(player, plan.Entries, value => accessReason = value);
@@ -208,7 +211,7 @@ internal static class ZoneBlueprintCommands
             }
 
             List<ZoneBlueprintRequirement> requirements = [];
-            yield return CollectRequirementsAsync(plan.Entries, value => requirements = value);
+            yield return CollectRequirementsAsync(plan.Entries, costPolicy, value => requirements = value);
             if (!canContinue())
             {
                 onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")));
@@ -244,7 +247,7 @@ internal static class ZoneBlueprintCommands
                 yield return HomesteadTerrainSupport.ApplyWorldSupportContactsAsync(
                     plan.SupportContacts,
                     player.GetPlayerID(),
-                    noCost,
+                    debugBypass,
                     canContinue,
                     (success, changed, rollback) =>
                     {
@@ -641,11 +644,41 @@ internal static class ZoneBlueprintCommands
         return CollectRequirements(plan.Entries);
     }
 
+    internal static List<ZoneBlueprintRequirement> CollectRequirements(BlueprintLoadPlan plan, BlueprintBuildCostPolicy policy)
+    {
+        Dictionary<string, ZoneBlueprintRequirement> requirements = [];
+        foreach (BlueprintLoadEntry entry in plan.Entries)
+        {
+            AccumulateEntryRequirements(requirements, entry, policy);
+        }
+
+        return requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList();
+    }
+
     internal static Dictionary<string, ZoneBlueprintRequirement> GetEntryRequirements(BlueprintLoadEntry entry)
     {
         Dictionary<string, ZoneBlueprintRequirement> requirements = [];
         AccumulateEntryRequirements(requirements, entry);
         return requirements;
+    }
+
+    internal static Dictionary<string, ZoneBlueprintRequirement> GetEntryRequirements(BlueprintLoadEntry entry, BlueprintBuildCostPolicy policy)
+    {
+        Dictionary<string, ZoneBlueprintRequirement> requirements = [];
+        AccumulateEntryRequirements(requirements, entry, policy);
+        return requirements;
+    }
+
+    private static void AccumulateEntryRequirements(
+        Dictionary<string, ZoneBlueprintRequirement> requirements,
+        BlueprintLoadEntry entry,
+        BlueprintBuildCostPolicy policy)
+    {
+        Piece piece = entry.Prefab.GetComponent<Piece>();
+        if (piece != null && !policy.IsFree(piece))
+        {
+            AccumulateEntryRequirements(requirements, entry);
+        }
     }
 
     private static void AccumulateEntryRequirements(
@@ -1328,14 +1361,14 @@ internal static class ZoneBlueprintCommands
         return requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList();
     }
 
-    private static IEnumerator CollectRequirementsAsync(IEnumerable<BlueprintLoadEntry> entries, Action<List<ZoneBlueprintRequirement>> onComplete)
+    private static IEnumerator CollectRequirementsAsync(IEnumerable<BlueprintLoadEntry> entries, BlueprintBuildCostPolicy policy, Action<List<ZoneBlueprintRequirement>> onComplete)
     {
         Dictionary<string, ZoneBlueprintRequirement> requirements = [];
         int processedSinceYield = 0;
 
         foreach (BlueprintLoadEntry entry in entries)
         {
-            AccumulateEntryRequirements(requirements, entry);
+            AccumulateEntryRequirements(requirements, entry, policy);
 
             processedSinceYield++;
             if (processedSinceYield >= BlueprintPlanBatchSize)

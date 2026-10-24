@@ -546,6 +546,13 @@ internal sealed class ZoneAreaDismantleTool : MonoBehaviour
             return;
         }
 
+        // Match Piece.DropResources at dismantle time, including unloaded ZDOs.
+        // FreeBuildKey keeps NoBuildCost separate from food/item NoCraftCost.
+        if (ZoneSystem.instance != null && ZoneSystem.instance.GetGlobalKey(piece.FreeBuildKey()))
+        {
+            return;
+        }
+
         foreach (Piece.Requirement requirement in piece.m_resources)
         {
             if (!requirement.m_resItem || requirement.m_amount <= 0 || !requirement.m_recover)
