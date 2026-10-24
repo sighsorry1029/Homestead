@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.7
+
+- Changed blueprint confirmation in vanilla Hammer mode / No Build Cost to skip recipe discovery and crafting station requirements with `Alt + E`. Station previews around the blueprint chest remain visible; DLC requirements, ward access, building limits and Blueprint Store prices are preserved.
+- Restored the original material list, progress and piece preview behavior in free-build modes. Manual deposits and configured automatic material collection remain available, while confirmation can finish without the materials covered by each piece's vanilla free-cost setting.
+- Simplified successful construction to consume deposited materials even in Hammer mode. Destroying an unfinished plan still returns its deposits, and interrupted or rejected confirmation keeps the plan and its deposits available.
+- Extended isolated client/server checks for undiscovered recipes, missing workbenches, station visuals, empty and partially funded plans, ordinary-world requirements, store payments and Area Dismantle refunds.
+
 ## 1.3.6
 
 - Added automatic vanilla Hammer mode / No Build Cost support for blueprints, including the separate No Craft Cost setting for applicable pieces. Recipe discovery, crafting station requirements, ward access, building limits and Blueprint Store prices are preserved.

@@ -9,26 +9,26 @@ internal static class ZoneBlueprintStoreDestroyPatches
     [HarmonyPatch(typeof(WearNTear), nameof(WearNTear.Destroy))]
     private static class WearNTearDestroyPatch
     {
-        private static bool Prefix(WearNTear __instance)
+        private static void Prefix(WearNTear __instance)
         {
-            return CleanupBeforeDestroy(__instance.gameObject, "WearNTear.Destroy");
+            CleanupBeforeDestroy(__instance.gameObject, "WearNTear.Destroy");
         }
     }
 
     [HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Destroy))]
     private static class ZNetSceneDestroyPatch
     {
-        private static bool Prefix(GameObject go)
+        private static void Prefix(GameObject go)
         {
-            return CleanupBeforeDestroy(go, "ZNetScene.Destroy");
+            CleanupBeforeDestroy(go, "ZNetScene.Destroy");
         }
     }
 
-    private static bool CleanupBeforeDestroy(GameObject go, string source)
+    private static void CleanupBeforeDestroy(GameObject go, string source)
     {
         if (!go)
         {
-            return true;
+            return;
         }
 
         ZoneBlueprintPlanAnchor anchor = go.GetComponent<ZoneBlueprintPlanAnchor>();
@@ -36,7 +36,7 @@ internal static class ZoneBlueprintStoreDestroyPatches
         {
             try
             {
-                return anchor.HandleDestroyPrefix($"PlanChest.{source} prefix");
+                anchor.HandleDestroyPrefix($"PlanChest.{source} prefix");
             }
             catch (System.Exception ex)
             {
@@ -44,13 +44,13 @@ internal static class ZoneBlueprintStoreDestroyPatches
                     $"Failed to clean up blueprint plan anchor before destruction ({source}): {ex}");
             }
 
-            return true;
+            return;
         }
 
         ZoneBlueprintStoreChest chest = go.GetComponent<ZoneBlueprintStoreChest>();
         if (chest == null)
         {
-            return true;
+            return;
         }
 
         try
@@ -82,7 +82,6 @@ internal static class ZoneBlueprintStoreDestroyPatches
             HomesteadPlugin.HomesteadLogger.LogWarning(
                 $"Failed to clean up blueprint store draft before destruction ({source}): {ex.Message}");
         }
-        return true;
     }
 }
 

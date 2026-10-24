@@ -47,7 +47,42 @@ public sealed partial class Probe
         else ZoneSystem.instance.RemoveGlobalKey(key);
         if (ZoneSystem.instance.GetGlobalKey(key) != value) throw new Exception("World modifier did not synchronize: " + key);
     }
-    private static bool HammerFailDrop() => throw new InvalidOperationException("Injected refund drop failure.");
+    private object HammerPayableRequirements(IList entries, object policy)
+    {
+        Type listType = typeof(List<>).MakeGenericType(HammerType("ZoneBlueprintRequirement"));
+        Delegate callback = Delegate.CreateDelegate(typeof(Action<>).MakeGenericType(listType), this,
+            GetType().GetMethod(nameof(HammerRecordResult), Any).MakeGenericMethod(listType));
+        hammerResult = null;
+        HammerDrain((IEnumerator)HammerInvoke(HammerType("ZoneBlueprintCommands"), "CollectRequirementsAsync", entries, policy, callback));
+        return hammerResult;
+    }
+    private int HammerReadyCount(Component anchor)
+    {
+        object[] args = { "" };
+        return ((IEnumerable)HammerInvoke(anchor, "GetReadyEntryIndices", args)).Cast<object>().Count();
+    }
+    private bool HammerPreviewHasPendingMaterial(Component anchor)
+    {
+        HammerInvoke(anchor, "UpdatePreview");
+        object ghost = anchor.GetType().GetField("_previewGhost", Any).GetValue(anchor);
+        GameObject root = (GameObject)ghost.GetType().GetProperty("Root", Any).GetValue(ghost);
+        Check(root && root.transform.childCount == 1 && root.GetComponentsInChildren<Renderer>(true).Length > 0,
+            "blueprint preview contains the original floor mesh");
+        return root.transform.GetChild(0).GetComponent(HammerType("ZoneBlueprintGhostOwner+ZoneBlueprintGhostMaterialSet")) != null;
+    }
+    private void CheckHammerStationPreview(Component anchor, string context)
+    {
+        HammerInvoke(anchor, "UpdatePreview");
+        object ghost = anchor.GetType().GetField("_stationGhost", Any).GetValue(anchor);
+        GameObject root = (GameObject)ghost.GetType().GetProperty("Root", Any).GetValue(ghost);
+        Check(root && root.transform.childCount > 0 && root.GetComponentsInChildren<Renderer>(true).Length > 0,
+            context + " retains the required station mesh visual");
+        Check(root.GetComponentsInChildren<CraftingStation>(true).Length == 0 &&
+            root.transform.Cast<Transform>().All(child =>
+                Vector2.Distance(new Vector2(child.position.x, child.position.z),
+                    new Vector2(anchor.transform.position.x, anchor.transform.position.z)) > 1f),
+            context + " keeps station previews around the chest without creating functional workstations");
+    }
     private static IEnumerator HammerRejectTerrain(Action<bool, bool, Func<int>> completed)
     {
         completed(false, false, null);
@@ -156,10 +191,10 @@ public sealed partial class Probe
                 new object[] { entries, new List<Vector3>(), new List<Vector3>() });
             int Total(object requirements) => ((IEnumerable)requirements).Cast<object>().Sum(r => (int)r.GetType().GetProperty("Amount").GetValue(r));
             int raw = Total(HammerInvoke(HammerType("ZoneBlueprintCommands"), "CollectRequirements", mixed));
-            int payable = Total(HammerInvoke(HammerType("ZoneBlueprintCommands"), "CollectRequirements", mixed, free));
+            int payable = Total(HammerPayableRequirements(entries, free));
             Check(raw == payable * 2 && payable > 0, "mixed plan retains craft costs and immutable full recipe quantities");
             HammerSetKey(GlobalKeys.NoCraftCost, true);
-            Check(Total(HammerInvoke(HammerType("ZoneBlueprintCommands"), "CollectRequirements", mixed, HammerPolicy(player))) == 0,
+            Check(Total(HammerPayableRequirements(entries, HammerPolicy(player))) == 0,
                 "both native world keys waive their corresponding pieces");
             HammerSetKey(GlobalKeys.NoCraftCost, false);
 
@@ -172,100 +207,124 @@ public sealed partial class Probe
             HammerSetKey(GlobalKeys.NoBuildCost, false);
             Component anchor = HammerChest(name, center, fixtures);
             ZDO chestZdo = anchor.GetComponent<ZNetView>().GetZDO();
+            int woodCost = floor.m_resources.Where(r => r.m_resItem && r.m_resItem.m_itemData.m_shared.m_name == "$item_wood").Sum(r => r.m_amount);
+            Check(woodCost > 1 && woodCost == floor.m_resources.Sum(r => r.m_amount), "floor fixture has a single multi-wood recipe");
             Inventory source = new Inventory("HammerSource", null, 4, 2);
-            ItemDrop.ItemData wood = HammerWood(5);
-            Check(source.AddItem(wood), "source inventory prepared for deposit preservation");
+            ItemDrop.ItemData wood = HammerWood(woodCost + 3);
+            Check(source.AddItem(wood), "source inventory prepared for ordinary deposits");
             Check((int)HammerInvoke(anchor, "AcceptMaterialFromInventory", source, wood, 1) == 1,
                 "normal construction accepts an actual partial deposit");
             string depositedPayload = chestZdo.GetString("hs_plan_refund_payload", "");
-            Check(depositedPayload.Length > 0 && source.CountItems("$item_wood") == 4, "partial deposit is durably recorded once");
-            HammerSetKey(GlobalKeys.NoBuildCost, true);
-            Check(((IList)HammerInvoke(anchor, "GetMissingRequirementList")).Count == 0, "existing chest updates payable requirements after world mode change");
-            Check((int)HammerInvoke(anchor, "AcceptMaterialFromInventory", source, wood, 1) == 0 && source.CountItems("$item_wood") == 4,
-                "world-free chest refuses additional material consumption");
-            Check(chestZdo.GetString("hs_plan_refund_payload", "") == depositedPayload, "world mode change preserves earlier deposit ledger");
-            object[] readyArgs = { "" };
-            Check(((IEnumerable)HammerInvoke(anchor, "GetReadyEntryIndices", readyArgs)).Cast<object>().Count() == 1, "free plan preview is material-ready");
+            Check(depositedPayload.Length > 0 && source.CountItems("$item_wood") == woodCost + 2, "partial deposit is recorded once");
+            Check((int)HammerInvoke(anchor, "GetRequiredTotal") == woodCost && (int)HammerInvoke(anchor, "GetDepositedTotal") == 1 &&
+                Total(HammerInvoke(anchor, "GetMissingRequirementList")) == woodCost - 1 && HammerReadyCount(anchor) == 0,
+                "normal chest progress and preview follow the real recipe and deposited amount");
             if (player)
             {
-                ItemDrop.ItemData carried = HammerWood(7);
-                Check(player.GetInventory().AddItem(carried), "carry spare building materials for automatic pull check");
-                int beforePull = player.GetInventory().CountItems("$item_wood");
-                foreach (string trigger in new[] { "open", "confirm" })
-                    Check((int)HammerInvoke(anchor, "TryPullAvailableMaterials", player, trigger, false) == 0 &&
-                        player.GetInventory().CountItems("$item_wood") == beforePull, "free " + trigger + " does not auto-pull player/nearby materials");
+                Check(HammerPreviewHasPendingMaterial(anchor), "incomplete normal blueprint keeps its pending mesh material");
+                CheckHammerStationPreview(anchor, "normal plan");
             }
+            HammerSetKey(GlobalKeys.NoBuildCost, true);
+            Check((int)HammerInvoke(anchor, "GetRequiredTotal") == woodCost && (int)HammerInvoke(anchor, "GetDepositedTotal") == 1 &&
+                Total(HammerInvoke(anchor, "GetMissingRequirementList")) == woodCost - 1 && HammerReadyCount(anchor) == 0,
+                "Hammer mode does not zero the requirement UI or make incomplete previews ready");
+            Check(chestZdo.GetString("hs_plan_refund_payload", "") == depositedPayload, "world mode change leaves the partial deposit untouched");
+            if (player)
+            {
+                Check(HammerPreviewHasPendingMaterial(anchor), "incomplete Hammer blueprint retains the same pending mesh material");
+                CheckHammerStationPreview(anchor, "Hammer plan");
+                debug.SetValue(player, true);
+                Check((int)HammerInvoke(anchor, "GetRequiredTotal") == woodCost && HammerReadyCount(anchor) == 0 &&
+                    HammerPreviewHasPendingMaterial(anchor), "personal debug no-cost also preserves the old material-progress visual");
+                debug.SetValue(player, false);
+            }
+            Check((int)HammerInvoke(anchor, "AcceptMaterialFromInventory", source, wood, woodCost - 1) == woodCost - 1 &&
+                source.CountItems("$item_wood") == 3, "Hammer mode still accepts individual materials normally");
+            Check(Total(HammerInvoke(anchor, "GetMissingRequirementList")) == 0 && HammerReadyCount(anchor) == 1,
+                "deposits advance the Hammer preview to its original material-ready state");
+            if (player) Check(!HammerPreviewHasPendingMaterial(anchor), "fully funded Hammer preview uses the normal mesh material");
 
-            // Simulate a persisted committed chest resumed after interrupted cleanup.
-            chestZdo.Set("hs_plan_confirmed_refund", depositedPayload);
+            // Original successful settlement consumes deposits, even in a free world.
+            ItemDrop[] beforeConsumed = FindObjectsByType<ItemDrop>(FindObjectsSortMode.None);
             chestZdo.Set("hs_plan_confirmed", true);
-            ItemDrop[] beforeRefund = FindObjectsByType<ItemDrop>(FindObjectsSortMode.None);
-            Container refundContainer = anchor.GetComponent<Container>();
-            AccessTools.Field(typeof(Container), "m_inUse").SetValue(refundContainer, true);
-            Check(!(bool)HammerInvoke(anchor, "TryReturnCommittedMaterials") && HammerNewWood(beforeRefund) == 0 &&
-                chestZdo.GetString("hs_plan_confirmed_refund", "") == depositedPayload,
-                "open confirmed chest defers refund until its inventory can synchronize");
-            AccessTools.Field(typeof(Container), "m_inUse").SetValue(refundContainer, false);
-            hooks.Patch(AccessTools.Method(typeof(ItemDrop), "DropItem"), prefix: new HarmonyMethod(typeof(Probe), nameof(HammerFailDrop)));
             HammerInvoke(anchor, "CompleteCommittedConfirmation");
-            Check(anchor && chestZdo.IsValid() &&
-                chestZdo.GetString("hs_plan_confirmed_refund", "") == depositedPayload && HammerNewWood(beforeRefund) == 0,
-                "failed refund leaves the committed durable claim intact");
-            hooks.UnpatchSelf();
-            HammerSetKey(GlobalKeys.NoBuildCost, false);
-            Check((int)HammerInvoke(anchor, "AcceptMaterialFromInventory", source, wood, 1) == 0 && source.CountItems("$item_wood") == 4,
-                "committed chest awaiting refund refuses further deposits after world becomes paid");
-            if (player)
-            {
-                int beforePull = player.GetInventory().CountItems("$item_wood");
-                Check((int)HammerInvoke(anchor, "TryPullAvailableMaterials", player, "confirm", false) == 0 &&
-                    player.GetInventory().CountItems("$item_wood") == beforePull, "committed chest awaiting refund cannot auto-pull more materials");
-            }
-            ZPackage missingRefund = new ZPackage();
-            missingRefund.Write(1); missingRefund.Write(1); missingRefund.Write("$item_wood");
-            missingRefund.Write("HomesteadMissingRefundFixture"); missingRefund.Write(1);
-            string missingPayload = missingRefund.GetBase64();
-            chestZdo.Set("hs_plan_confirmed_refund", missingPayload);
-            Check(!(bool)HammerInvoke(anchor, "TryReturnCommittedMaterials") &&
-                chestZdo.GetString("hs_plan_confirmed_refund", "") == missingPayload && HammerNewWood(beforeRefund) == 0,
-                "missing refund prefab preserves the pending claim without destroying the chest");
-            ZNetScene.instance.Destroy(anchor.gameObject);
-            Check(anchor && chestZdo.IsValid() && chestZdo.GetString("hs_plan_confirmed_refund", "") == missingPayload,
-                "actual scene destruction cannot erase an unresolved committed refund");
-            chestZdo.Set("hs_plan_confirmed_refund", depositedPayload);
-            HammerSetKey(GlobalKeys.NoBuildCost, true);
-            Check((bool)HammerInvoke(anchor, "TryReturnCommittedMaterials") && HammerNewWood(beforeRefund) == 1,
-                "committed refund retry returns exactly the original deposited quantity");
-            Check((bool)HammerInvoke(anchor, "TryReturnCommittedMaterials") && HammerNewWood(beforeRefund) == 1 &&
-                chestZdo.GetString("hs_plan_confirmed_refund", "").Length == 0,
-                "repeated committed cleanup does not duplicate deposited material");
-            HammerInvoke(anchor, "CompleteCommittedConfirmation");
+            yield return null;
+            Check(!anchor && HammerNewWood(beforeConsumed) == 0, "confirmed plan consumes its deposits and chest without a free-build refund");
 
             if (player)
             {
-                CheckHammerPlayerValidation(player, floor, blueprint, center, known, stations, SetSetting, hooks);
-                // Actual chest reservation -> free build -> durable unused-material refund.
+                ItemDrop.ItemData carried = HammerWood(woodCost * 3 + 3);
+                Check(player.GetInventory().AddItem(carried), "carry materials for configured automatic collection");
+                foreach (string trigger in new[] { "open", "confirm" })
+                {
+                    Component pullChest = HammerChest(name, center + Vector3.forward * (trigger == "open" ? 10f : 20f), fixtures);
+                    int beforePull = player.GetInventory().CountItems("$item_wood");
+                    Check((int)HammerInvoke(pullChest, "TryPullAvailableMaterials", player, trigger, false) == woodCost &&
+                        player.GetInventory().CountItems("$item_wood") == beforePull - woodCost &&
+                        (int)HammerInvoke(pullChest, "GetDepositedTotal") == woodCost,
+                        "configured " + trigger + " collection keeps the original material-deposit behavior in Hammer mode");
+                    Check((int)HammerInvoke(pullChest, "TryPullAvailableMaterials", player, trigger, false) == 0 &&
+                        player.GetInventory().CountItems("$item_wood") == beforePull - woodCost,
+                        "repeated " + trigger + " collection does not exceed the recipe requirement");
+                    pullChest.GetComponent<ZNetView>().GetZDO().Set("hs_plan_confirmed", true);
+                    HammerInvoke(pullChest, "CompleteCommittedConfirmation");
+                }
+
+                SetSetting("_azuCraftyBoxesPullMode", "Off");
                 HammerSetKey(GlobalKeys.NoBuildCost, false);
-                HammerSetKey(GlobalKeys.NoWorkbench, true);
-                Component finish = HammerChest(name, center + Vector3.right * 10f, fixtures);
-                ItemDrop.ItemData one = HammerWood(1);
-                Inventory depositSource = new Inventory("HammerFinalDeposit", null, 2, 1);
-                depositSource.AddItem(one);
-                Check((int)HammerInvoke(finish, "AcceptMaterialFromInventory", depositSource, one, 1) == 1, "end-to-end plan receives one paid material before Hammer mode");
-                HammerSetKey(GlobalKeys.NoBuildCost, true);
-                ItemDrop[] beforeBuildDrops = FindObjectsByType<ItemDrop>(FindObjectsSortMode.None);
-                int inventoryBeforeBuild = player.GetInventory().CountItems("$item_wood");
-                long creator = player.GetPlayerID() + 50;
-                finish.GetComponent<ZNetView>().GetZDO().Set(ZDOVars.s_creator, creator);
-                Check((bool)HammerInvoke(finish, "TryConfirm", player), "Hammer plan starts normal server-reserved confirmation");
-                float deadline = Time.realtimeSinceStartup + 15f;
-                while (finish && Time.realtimeSinceStartup < deadline) yield return null;
-                Check(!finish, "Hammer plan finishes with no additional materials");
-                Check(HammerNewWood(beforeBuildDrops) == 1 && player.GetInventory().CountItems("$item_wood") == inventoryBeforeBuild,
-                    "actual free confirmation refunds earlier deposit and leaves carried materials untouched");
-                Piece[] built = FindObjectsByType<Piece>(FindObjectsSortMode.None).Where(p => p && p.GetComponent<ZNetView>() &&
-                    p.GetComponent<ZNetView>().IsValid() && p.GetComponent<ZNetView>().GetZDO().GetLong(ZDOVars.s_creator, 0) == creator).ToArray();
-                Check(built.Length == 1, "actual free confirmation creates exactly one piece with original creator");
+                Component rejected = HammerChest(name, center + Vector3.back * 10f, fixtures);
+                Inventory rejectedSource = new Inventory("HammerRejectedDeposit", null, 2, 1);
+                ItemDrop.ItemData rejectedWood = HammerWood(1);
+                rejectedSource.AddItem(rejectedWood);
+                Check((int)HammerInvoke(rejected, "AcceptMaterialFromInventory", rejectedSource, rejectedWood, 1) == 1,
+                    "failed-confirmation fixture holds an actual deposit");
+                string rejectedPayload = rejected.GetComponent<ZNetView>().GetZDO().GetString("hs_plan_refund_payload", "");
+                known.Clear();
+                ItemDrop[] beforeRejected = FindObjectsByType<ItemDrop>(FindObjectsSortMode.None);
+                Check((bool)HammerInvoke(rejected, "TryConfirm", player), "undiscovered normal-world plan starts its confirmation attempt");
+                float rejectedDeadline = Time.realtimeSinceStartup + 15f;
+                while (rejected && (bool)rejected.GetType().GetField("_confirmInProgress", Any).GetValue(rejected) &&
+                    Time.realtimeSinceStartup < rejectedDeadline) yield return null;
+                Check(rejected && !(bool)rejected.GetType().GetField("_confirmInProgress", Any).GetValue(rejected) &&
+                    (int)HammerInvoke(rejected, "GetDepositedTotal") == 1 &&
+                    rejected.GetComponent<ZNetView>().GetZDO().GetString("hs_plan_refund_payload", "") == rejectedPayload &&
+                    HammerNewWood(beforeRejected) == 0, "rejected normal-world confirmation leaves its chest and deposit available without consumption");
+                rejected.GetComponent<ZNetView>().GetZDO().Set("hs_plan_confirmed", true);
+                HammerInvoke(rejected, "CompleteCommittedConfirmation");
+
+                CheckHammerPlayerValidation(player, floor, blueprint, center, known, stations, SetSetting, hooks);
+                HammerSetKey(GlobalKeys.NoWorkbench, false);
+                known.Clear(); stations.Clear();
+                for (int deposit = 0; deposit <= 1; deposit++)
+                {
+                    // Real reservation -> finalizer -> original settlement, with
+                    // both empty and partially funded construction chests.
+                    Component finish = HammerChest(name, center + Vector3.right * (10f + deposit * 10f), fixtures);
+                    if (deposit > 0)
+                    {
+                        ItemDrop.ItemData one = HammerWood(deposit);
+                        Inventory depositSource = new Inventory("HammerFinalDeposit", null, 2, 1);
+                        depositSource.AddItem(one);
+                        Check((int)HammerInvoke(finish, "AcceptMaterialFromInventory", depositSource, one, deposit) == deposit,
+                            "end-to-end Hammer plan accepts its optional manual deposit");
+                    }
+                    Check((int)HammerInvoke(finish, "GetDepositedTotal") == deposit && HammerReadyCount(finish) == 0,
+                        "unfinished preview remains material-incomplete before free confirmation (deposit " + deposit + ")");
+                    CheckHammerStationPreview(finish, "Hammer confirmation fixture with undiscovered recipe/station (deposit " + deposit + ")");
+                    ItemDrop[] beforeBuildDrops = FindObjectsByType<ItemDrop>(FindObjectsSortMode.None);
+                    int inventoryBeforeBuild = player.GetInventory().CountItems("$item_wood");
+                    long creator = player.GetPlayerID() + 50 + deposit;
+                    finish.GetComponent<ZNetView>().GetZDO().Set(ZDOVars.s_creator, creator);
+                    Check((bool)HammerInvoke(finish, "TryConfirm", player), "Hammer plan starts normal server-reserved confirmation (deposit " + deposit + ")");
+                    float deadline = Time.realtimeSinceStartup + 15f;
+                    while (finish && Time.realtimeSinceStartup < deadline) yield return null;
+                    Check(!finish, "Hammer plan finishes without known recipe, known/nearby workbench, or full materials (deposit " + deposit + ")");
+                    Check(HammerNewWood(beforeBuildDrops) == 0 && player.GetInventory().CountItems("$item_wood") == inventoryBeforeBuild,
+                        "free confirmation consumes optional deposits without refunds or disabled automatic pulls (deposit " + deposit + ")");
+                    Piece[] built = FindObjectsByType<Piece>(FindObjectsSortMode.None).Where(p => p && p.GetComponent<ZNetView>() &&
+                        p.GetComponent<ZNetView>().IsValid() && p.GetComponent<ZNetView>().GetZDO().GetLong(ZDOVars.s_creator, 0) == creator).ToArray();
+                    Check(built.Length == 1, "free confirmation creates exactly one piece with its original creator (deposit " + deposit + ")");
+                }
                 CheckConfirmationPermissions(player);
             }
         }
@@ -382,22 +441,50 @@ public sealed partial class Probe
             return hammerResult;
         }
         bool Success(object result) => (bool)result.GetType().GetProperty("Success").GetValue(result);
+        bool Failure(object result, string key) => !Success(result) &&
+            (string)result.GetType().GetProperty("Message").GetValue(result) ==
+            (string)HammerInvoke(HammerType("HomesteadLocalization"), "Format", key, new object[] { floor.name });
+        HammerSetKey(GlobalKeys.NoBuildCost, false);
+        HammerSetKey(GlobalKeys.NoCraftCost, false);
         known.Clear(); stations.Clear();
         if (floor.m_craftingStation) stations[floor.m_craftingStation.m_name] = 1;
         HammerSetKey(GlobalKeys.NoWorkbench, true);
-        Check(!Success(Run()) && commits == 0, "Hammer confirmation keeps undiscovered material/recipe restriction");
+        Check(Failure(Run(), "hs_blueprint_missing_known_station_or_materials") && commits == 0,
+            "normal-world confirmation still rejects an undiscovered recipe");
+        HammerSetKey(GlobalKeys.NoCraftCost, true);
+        Check(Failure(Run(), "hs_blueprint_missing_known_station_or_materials") && commits == 0,
+            "NoCraftCost alone does not bypass recipe discovery");
+        HammerSetKey(GlobalKeys.NoCraftCost, false);
         foreach (Piece.Requirement req in floor.m_resources) if (req.m_resItem) known.Add(req.m_resItem.m_itemData.m_shared.m_name);
-        HammerSetKey(GlobalKeys.NoBuildCost, false);
-        Check(!Success(Run()) && commits == 0, "normal confirmation still requires paid materials despite known recipe and NoWorkbench");
-        HammerSetKey(GlobalKeys.NoBuildCost, true);
+        stations.Clear();
+        Check(Failure(Run(), "hs_blueprint_missing_known_station_or_materials") && commits == 0,
+            "normal-world confirmation still requires discovery of the required station");
+        if (floor.m_craftingStation) stations[floor.m_craftingStation.m_name] = 1;
         HammerSetKey(GlobalKeys.NoWorkbench, false);
         Check(floor.m_craftingStation && !CraftingStation.HaveBuildStationInRange(floor.m_craftingStation.m_name, player.transform.position),
             "station fixture has no nearby required workbench");
-        Check(!Success(Run()) && commits == 0, "Hammer confirmation keeps actual nearby-workbench restriction");
+        Check(Failure(Run(), "hs_blueprint_missing_crafting_station") && commits == 0,
+            "normal-world confirmation still requires an actual nearby workbench");
+        HammerSetKey(GlobalKeys.NoCraftCost, true);
+        Check(Failure(Run(), "hs_blueprint_missing_crafting_station") && commits == 0,
+            "NoCraftCost alone does not bypass the nearby workbench requirement");
+        HammerSetKey(GlobalKeys.NoCraftCost, false);
         HammerSetKey(GlobalKeys.NoWorkbench, true);
+        Check(!Success(Run()) && commits == 0, "normal confirmation still requires paid materials despite known recipe and NoWorkbench");
+        HammerSetKey(GlobalKeys.NoBuildCost, true);
+        HammerSetKey(GlobalKeys.NoWorkbench, false);
+        known.Clear(); stations.Clear();
+        string originalDlc = floor.m_dlc;
+        try
+        {
+            floor.m_dlc = "HomesteadProbeMissingDlc_" + Guid.NewGuid().ToString("N");
+            Check(!Success(Run()) && commits == 0, "Hammer confirmation retains the unrelated DLC ownership requirement");
+        }
+        finally { floor.m_dlc = originalDlc; }
         int before = FindObjectsByType<Piece>(FindObjectsSortMode.None).Count(p => p.GetComponent<ZNetView>() &&
             p.GetComponent<ZNetView>().IsValid() && p.GetComponent<ZNetView>().GetZDO().GetBool("sighsorry.Homestead.blueprint_piece", false));
-        Check(!Success(Run()) && commits == 1, "separate NoWorkbench key allows build to reach commit without material payment");
+        Check(!Success(Run()) && commits == 1,
+            "Hammer confirmation reaches commit without known recipe, station discovery, nearby workbench, or paid materials");
         int after = FindObjectsByType<Piece>(FindObjectsSortMode.None).Count(p => p.GetComponent<ZNetView>() &&
             p.GetComponent<ZNetView>().IsValid() && p.GetComponent<ZNetView>().GetZDO().GetBool("sighsorry.Homestead.blueprint_piece", false));
         Check(after == before, "failed commit rolls back the free structure instead of leaving unpaid pieces");

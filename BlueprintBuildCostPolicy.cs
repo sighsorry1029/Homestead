@@ -2,8 +2,8 @@ using System;
 
 namespace Homestead;
 
-// The world modifier waives material costs only. DebugNoCost remains separate
-// because the existing debug path also bypasses knowledge/stations and wards.
+// Hammer mode also bypasses blueprint knowledge and station requirements.
+// DebugNoCost remains separate because only the debug path bypasses wards.
 internal readonly struct BlueprintBuildCostPolicy : IEquatable<BlueprintBuildCostPolicy>
 {
     internal readonly bool DebugNoCost;

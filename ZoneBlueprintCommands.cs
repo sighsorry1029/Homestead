@@ -197,7 +197,7 @@ internal static class ZoneBlueprintCommands
         if (!debugBypass)
         {
             string accessReason = "";
-            yield return ValidateBuildAccessWithoutInventoryAsync(player, plan.Entries, value => accessReason = value);
+            yield return ValidateBuildAccessWithoutInventoryAsync(player, plan.Entries, costPolicy.NoBuildCost, value => accessReason = value);
             if (!canContinue())
             {
                 onComplete(HomesteadCommandResult.Fail(HomesteadLocalization.Text("hs_blueprint_confirmation_incomplete")));
@@ -644,28 +644,10 @@ internal static class ZoneBlueprintCommands
         return CollectRequirements(plan.Entries);
     }
 
-    internal static List<ZoneBlueprintRequirement> CollectRequirements(BlueprintLoadPlan plan, BlueprintBuildCostPolicy policy)
-    {
-        Dictionary<string, ZoneBlueprintRequirement> requirements = [];
-        foreach (BlueprintLoadEntry entry in plan.Entries)
-        {
-            AccumulateEntryRequirements(requirements, entry, policy);
-        }
-
-        return requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList();
-    }
-
     internal static Dictionary<string, ZoneBlueprintRequirement> GetEntryRequirements(BlueprintLoadEntry entry)
     {
         Dictionary<string, ZoneBlueprintRequirement> requirements = [];
         AccumulateEntryRequirements(requirements, entry);
-        return requirements;
-    }
-
-    internal static Dictionary<string, ZoneBlueprintRequirement> GetEntryRequirements(BlueprintLoadEntry entry, BlueprintBuildCostPolicy policy)
-    {
-        Dictionary<string, ZoneBlueprintRequirement> requirements = [];
-        AccumulateEntryRequirements(requirements, entry, policy);
         return requirements;
     }
 
@@ -1381,7 +1363,7 @@ internal static class ZoneBlueprintCommands
         onComplete(requirements.Values.OrderBy(requirement => requirement.ItemName, StringComparer.Ordinal).ToList());
     }
 
-    private static IEnumerator ValidateBuildAccessWithoutInventoryAsync(Player player, IEnumerable<BlueprintLoadEntry> entries, Action<string> onComplete)
+    private static IEnumerator ValidateBuildAccessWithoutInventoryAsync(Player player, IEnumerable<BlueprintLoadEntry> entries, bool skipKnowledgeAndStations, Action<string> onComplete)
     {
         int processedSinceYield = 0;
 
@@ -1390,13 +1372,22 @@ internal static class ZoneBlueprintCommands
             Piece piece = entry.Prefab.GetComponent<Piece>();
             if (piece != null)
             {
-                if (!player.HaveRequirements(piece, Player.RequirementMode.IsKnown))
+                // IsKnown also checks DLC ownership. Preserve that condition when
+                // Hammer mode skips only recipe discovery and crafting stations.
+                if (skipKnowledgeAndStations && !string.IsNullOrEmpty(piece.m_dlc) &&
+                    (DLCMan.instance == null || !DLCMan.instance.IsDLCInstalled(piece.m_dlc)))
+                {
+                    onComplete(HomesteadLocalization.Format("hs_blueprint_missing_dlc", entry.Entry.Prefab));
+                    yield break;
+                }
+
+                if (!skipKnowledgeAndStations && !player.HaveRequirements(piece, Player.RequirementMode.IsKnown))
                 {
                     onComplete(HomesteadLocalization.Format("hs_blueprint_missing_known_station_or_materials", entry.Entry.Prefab));
                     yield break;
                 }
 
-                if (piece.m_craftingStation != null &&
+                if (!skipKnowledgeAndStations && piece.m_craftingStation != null &&
                     !CraftingStation.HaveBuildStationInRange(piece.m_craftingStation.m_name, player.transform.position) &&
                     !ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoWorkbench))
                 {
